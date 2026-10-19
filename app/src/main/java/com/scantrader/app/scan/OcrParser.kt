@@ -126,7 +126,8 @@ object OcrParser {
     private fun extractName(lines: List<String>, game: Game): String? {
         val candidates = lines.filter { line ->
             val lower = line.lowercase()
-            line.length in 3..48 &&
+            val minLength = if (line.any { it.code > 0x2E80 }) 1 else 3
+            line.length in minLength..48 &&
                 line.any { it.isLetter() } &&
                 skipName.none { lower == it || lower.startsWith("$it ") || lower.contains(" $it") } &&
                 !Regex("""(?i)^fase\s*\d""").containsMatchIn(line) &&
@@ -138,7 +139,8 @@ object OcrParser {
         }
         return when (game) {
             Game.MTG -> candidates.firstOrNull()
-            Game.POKEMON -> candidates.firstOrNull { !it.contains("HP", ignoreCase = true) }
+            Game.POKEMON -> candidates.firstOrNull { line -> line.any { it.code > 0x2E80 } }
+                ?: candidates.firstOrNull { !it.contains("HP", ignoreCase = true) }
                 ?: candidates.firstOrNull()
         }
     }

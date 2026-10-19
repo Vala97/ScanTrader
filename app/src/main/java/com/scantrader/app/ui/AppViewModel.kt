@@ -14,6 +14,8 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.prefs.ScanDefaults
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -75,6 +77,7 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
             SharingStarted.WhileSubscribed(5_000),
             ScanDefaults(CardLanguage.ENGLISH, CardCondition.NEAR_MINT),
         )
+    val neuralPackState = app.neuralPack.state
 
     fun setLanguage(language: CardLanguage) {
         viewModelScope.launch { app.prefs.setLanguage(language) }
@@ -82,6 +85,20 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun setCondition(condition: CardCondition) {
         viewModelScope.launch { app.prefs.setCondition(condition) }
+    }
+
+    fun downloadNeuralPack() {
+        viewModelScope.launch {
+            app.neuralPack.downloadAndInstall()
+        }
+    }
+
+    fun deleteNeuralPack() {
+        app.neuralPack.delete()
+    }
+
+    fun loadNeuralPack() {
+        viewModelScope.launch { app.neuralPack.ensureLoaded() }
     }
 
     companion object {
@@ -210,14 +227,79 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         app.scanSession.resetResults()
         app.scanSession.game = game.value
         return withContext(Dispatchers.IO) {
+            val t0 = System.currentTimeMillis()
+            com.scantrader.app.scan.ScanDebug.d(
+                "analyze start game=${game.value} requireMatch=$requireMatch " +
+                    "bitmap=${bitmap.width}x${bitmap.height} panelExpanded=$panelExpanded " +
+                    "neuralInstalled=${app.neuralPack.isInstalled()} neuralReady=${app.neuralPack.isReady()}",
+            )
             val cropped = com.scantrader.app.scan.CardFrameGeometry.cropBitmap(bitmap, panelExpanded)
-            val text = app.ocr.recognize(cropped)
+            val fingerprint = runCatching {
+                com.scantrader.app.vision.ImageFingerprint.fromCardCrop(cropped)
+            }.onFailure { com.scantrader.app.scan.ScanDebug.w("fingerprint failed", it) }
+                .getOrNull()
+            val text = app.ocr.recognize(cropped, cjk = game.value == com.scantrader.app.data.model.Game.POKEMON)
             // Bottom strip holds set+number for both MTG and Pokémon.
             val bottomText = runCatching {
                 app.ocr.recognize(com.scantrader.app.scan.CardFrameGeometry.bottomStrip(cropped))
-            }.getOrDefault("")
+            }.onFailure { com.scantrader.app.scan.ScanDebug.w("bottom OCR failed", it) }
+                .getOrDefault("")
             val parsed = com.scantrader.app.scan.OcrParser.parse(text, game.value, bottomText)
-            val candidates = app.catalog.identify(game.value, parsed)
+            com.scantrader.app.scan.ScanDebug.d(
+                "OCR fullChars=${text.length} bottomChars=${bottomText.length} " +
+                    "parsed name=${parsed.nameGuess} cn=${parsed.collectorNumber} " +
+                    "set=${parsed.setCode} count=${parsed.setCardCount}",
+            )
+            if (text.isNotBlank()) {
+                com.scantrader.app.scan.ScanDebug.d("OCR full snippet=${text.take(180).replace("\n", " | ")}")
+            }
+            if (bottomText.isNotBlank()) {
+                com.scantrader.app.scan.ScanDebug.d("OCR bottom snippet=${bottomText.take(120).replace("\n", " | ")}")
+            }
+            val (catalogHits, galleryHits) = coroutineScope {
+                val ocrJob = async {
+                    runCatching { app.catalog.identify(game.value, parsed) }
+                        .onFailure { com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", it) }
+                        .getOrDefault(emptyList())
+                }
+                val galleryJob = async {
+                    if (game.value != Game.MTG) {
+                        com.scantrader.app.scan.ScanDebug.d("gallery skipped (not MTG)")
+                        emptyList()
+                    } else if (!app.neuralPack.isInstalled()) {
+                        com.scantrader.app.scan.ScanDebug.d("gallery skipped (neural pack not installed)")
+                        emptyList()
+                    } else {
+                        runCatching { app.galleryMatcher.matchMtg(cropped, parsed) }
+                            .onFailure { com.scantrader.app.scan.ScanDebug.e("gallery.matchMtg failed", it) }
+                            .getOrDefault(emptyList())
+                    }
+                }
+                ocrJob.await() to galleryJob.await()
+            }
+            com.scantrader.app.scan.ScanDebug.d(
+                "catalogHits=${catalogHits.size} galleryHits=${galleryHits.size} " +
+                    "galleryTop=${galleryHits.firstOrNull()?.let { "${it.name} v=${it.visualScore}" }}",
+            )
+            val fingerprintRanked = if (fingerprint != null && catalogHits.isNotEmpty()) {
+                runCatching { app.visualRanker.rank(fingerprint, catalogHits) }
+                    .onFailure { com.scantrader.app.scan.ScanDebug.w("visualRanker failed", it) }
+                    .getOrDefault(catalogHits)
+            } else {
+                catalogHits
+            }
+            val merged = com.scantrader.app.vision.mergeHybridCandidates(fingerprintRanked, galleryHits)
+            val candidates = com.scantrader.app.vision.MatchFusion.fuse(merged, parsed)
+                .distinctBy { it.scryfallId ?: "${it.setCode}-${it.collectorNumber}-${it.name}" }
+                .take(12)
+            val top = candidates.firstOrNull()
+            val autoOk = com.scantrader.app.vision.MatchFusion.isConfidentAutoMatch(top)
+            com.scantrader.app.scan.ScanDebug.d(
+                "result candidates=${candidates.size} top=${top?.name} " +
+                    "set=${top?.setCode} cn=${top?.collectorNumber} " +
+                    "ocr=${top?.ocrScore} visual=${top?.visualScore} conf=${top?.matchConfidence} " +
+                    "autoOk=$autoOk requireMatch=$requireMatch ms=${System.currentTimeMillis() - t0}",
+            )
             app.scanSession.ocrText = buildString {
                 append(text)
                 if (bottomText.isNotBlank()) {
@@ -226,6 +308,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 }
             }
             app.scanSession.parsed = parsed
+            app.scanSession.queryFingerprint = fingerprint
             app.scanSession.candidates = candidates
             if (candidates.isEmpty() && text.isBlank() && bottomText.isBlank()) {
                 app.scanSession.errorMessage =
@@ -236,7 +319,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             } else {
                 app.scanSession.errorMessage = null
             }
-            if (requireMatch) candidates.isNotEmpty() else true
+            if (requireMatch) autoOk else true
         }
     }
 
@@ -271,7 +354,16 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
             try {
                 val parsedText = app.scanSession.parsed
                     ?: com.scantrader.app.data.model.ParsedCardText(query, null, null)
-                candidates.value = app.catalog.identify(app.scanSession.game, parsedText, query)
+                val hits = app.catalog.identify(app.scanSession.game, parsedText, query)
+                val fingerprint = app.scanSession.queryFingerprint
+                val ranked = if (fingerprint != null && hits.isNotEmpty()) {
+                    runCatching { app.visualRanker.rank(fingerprint, hits) }.getOrDefault(hits)
+                } else {
+                    hits
+                }
+                val fused = com.scantrader.app.vision.MatchFusion.fuse(ranked, parsedText)
+                candidates.value = fused
+                app.scanSession.candidates = fused
             } catch (_: Throwable) {
                 candidates.value = emptyList()
             } finally {

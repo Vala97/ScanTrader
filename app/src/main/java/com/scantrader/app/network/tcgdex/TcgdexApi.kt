@@ -5,6 +5,10 @@ import retrofit2.http.GET
 import retrofit2.http.Path
 import retrofit2.http.Query
 
+/**
+ * Pokémon catalog for en, it, ja, zh-cn and zh-tw.
+ * The same card id is shared by English and Italian. Japanese and Chinese are separate sets.
+ */
 interface TcgdexApi {
     @GET("v2/{lang}/cards")
     suspend fun search(
@@ -22,23 +26,23 @@ interface TcgdexApi {
 
 data class TcgdexCardBrief(
     val id: String,
-    val localId: String,
-    val name: String,
+    val localId: String = "",
+    val name: String = "",
     val image: String? = null,
 )
 
 data class TcgdexCard(
     val id: String,
-    val localId: String,
-    val name: String,
+    val localId: String = "",
+    val name: String = "",
     val image: String? = null,
     val set: TcgdexSet? = null,
     val pricing: TcgdexPricing? = null,
 )
 
 data class TcgdexSet(
-    val id: String,
-    val name: String,
+    val id: String = "",
+    val name: String = "",
     val cardCount: TcgdexCardCount? = null,
 )
 

@@ -46,7 +46,19 @@ data class IdentifiedCard(
     val priceEur: String? = null,
     /** Cardmarket EUR foil from Scryfall. */
     val priceEurFoil: String? = null,
+    /** Catalog/OCR prior in 0..1 (set+number strong, name weak). */
+    val ocrScore: Float? = null,
+    /** On-device art similarity vs scan crop in 0..1. */
+    val visualScore: Float? = null,
+    /** Fused confidence used for ranking and auto-scan. */
+    val matchConfidence: Float? = null,
 ) {
     fun priceForExport(foil: Boolean): String? =
         if (foil) priceEurFoil?.takeIf { it.isNotBlank() } ?: priceEur else priceEur
+
+    fun confidenceLabel(): String? {
+        val c = matchConfidence ?: return null
+        val pct = (c * 100f).toInt().coerceIn(0, 100)
+        return "$pct%"
+    }
 }

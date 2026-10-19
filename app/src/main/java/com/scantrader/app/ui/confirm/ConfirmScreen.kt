@@ -146,6 +146,15 @@ fun ConfirmScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        current.confidenceLabel()?.let { pct ->
+                            val visual = current.visualScore?.let { v -> " · arte ${(v * 100).toInt()}%" }.orEmpty()
+                            Text(
+                                "Match $pct$visual",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
                         Text(
                             text = when {
                                 displayedPrice != null && foil -> "Prezzo Cardmarket (foil): €$displayedPrice"
@@ -305,6 +314,13 @@ fun ConfirmScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Medium,
+                                )
+                            }
+                            card.confidenceLabel()?.let { pct ->
+                                Text(
+                                    "Match $pct",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.tertiary,
                                 )
                             }
                         }

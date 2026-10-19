@@ -14,6 +14,7 @@ okhttp = "4.12.0"
 coil = "2.7.0"
 datastore = "1.1.1"
 mlkitText = "16.0.1"
+onnxruntime = "1.27.0"
 junit = "4.13.2"
 
 [libraries]
@@ -43,6 +44,9 @@ okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor",
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitText" }
+mlkit-text-recognition-chinese = { group = "com.google.mlkit", name = "text-recognition-chinese", version.ref = "mlkitText" }
+mlkit-text-recognition-japanese = { group = "com.google.mlkit", name = "text-recognition-japanese", version.ref = "mlkitText" }
+onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

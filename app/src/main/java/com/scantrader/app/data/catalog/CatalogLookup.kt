@@ -7,7 +7,12 @@ import com.scantrader.app.network.scryfall.ScryfallApi
 import com.scantrader.app.network.scryfall.ScryfallCard
 import com.scantrader.app.network.tcgdex.TcgdexApi
 import com.scantrader.app.network.tcgdex.TcgdexCard
+import com.scantrader.app.network.tcgdex.TcgdexCardBrief
 import com.scantrader.app.scan.OcrParser
+import java.util.Locale
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import retrofit2.HttpException
 
 class CatalogLookup(
@@ -19,7 +24,7 @@ class CatalogLookup(
         return when (game) {
             Game.MTG -> lookupMtg(parsed, queryName)
             Game.POKEMON -> lookupPokemon(parsed, queryName)
-        }.distinctBy { it.scryfallId ?: "${it.setCode}-${it.collectorNumber}-${it.name}" }
+        }.distinctBy { it.scryfallId ?: "${it.imageUrl}-${it.setCode}-${it.collectorNumber}-${it.name}" }
             .take(12)
     }
 
@@ -33,7 +38,7 @@ class CatalogLookup(
             for (number in numberCandidates) {
                 val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.getOrNull()
                 if (card != null) {
-                    results += card.toIdentified()
+                    results += card.toIdentified(ocrScore = 0.98f)
                     break@outer
                 }
             }
@@ -44,7 +49,10 @@ class CatalogLookup(
             val setPart = setCandidates.firstOrNull()?.let { "s:$it" }.orEmpty()
             val q = listOf("cn:\"$cn\"", setPart).filter { it.isNotBlank() }.joinToString(" ")
             runCatching { scryfall.search(q) }
-                .onSuccess { response -> results += response.data.map { it.toIdentified() } }
+                .onSuccess { response ->
+                    val prior = if (setCandidates.isNotEmpty()) 0.78f else 0.62f
+                    results += response.data.map { it.toIdentified(ocrScore = prior) }
+                }
         }
 
         if (!name.isNullOrBlank()) {
@@ -60,7 +68,9 @@ class CatalogLookup(
             for (q in queries) {
                 if (results.size >= 8) break
                 runCatching { scryfall.search(q) }
-                    .onSuccess { response -> results += response.data.map { it.toIdentified() } }
+                    .onSuccess { response ->
+                        results += response.data.map { it.toIdentified(ocrScore = 0.45f) }
+                    }
                     .onFailure { if (it !is HttpException) throw it }
             }
         }
@@ -68,106 +78,132 @@ class CatalogLookup(
     }
 
     private suspend fun lookupPokemon(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
-        val scored = mutableListOf<Pair<IdentifiedCard, Int>>()
-        val seen = mutableSetOf<String>()
-        val numberCandidates = OcrParser.collectorCandidates(parsed.collectorNumber)
-        val setIds = PokemonSets.idCandidates(parsed.setCode)
-        val nameTokens = name.orEmpty().lowercase()
-            .split(Regex("""[^a-z0-9àèéìòù]+"""))
-            .filter { it.length >= 3 && it !in setOf("del", "della", "team", "the", "and") }
-
-        suspend fun addBrief(lang: String, brief: com.scantrader.app.network.tcgdex.TcgdexCardBrief, baseScore: Int) {
-            if (!seen.add(brief.id)) return
-            val detail = runCatching { tcgdex.card(lang, brief.id) }.getOrNull()
-            val card = (detail ?: TcgdexCard(brief.id, brief.localId, brief.name, brief.image, null)).toIdentified()
-            var score = baseScore
-            if (pokemonNumberMatches(brief.localId, numberCandidates)) score += 50
-            if (pokemonSetMatches(brief.id, setIds)) score += 30
-            if (nameTokens.any { token -> brief.name.lowercase().contains(token) }) score += 20
-            if (parsed.setCardCount != null && detail?.set?.cardCount?.official == parsed.setCardCount) score += 25
-            scored += card to score
+        val number = OcrParser.collectorCandidates(parsed.collectorNumber).firstOrNull()
+        val langs = PokemonCatalog.languages(name, parsed.setCode)
+        val cards = coroutineScope {
+            langs.map { lang ->
+                async { searchPokemonLanguage(lang, name, number, parsed) }
+            }.awaitAll().flatten()
         }
-
-        // 1) Italian + English name search (Italian cards OCR in Italian).
-        for (query in buildPokemonNameQueries(name)) {
-            for (lang in listOf("it", "en")) {
-                val briefs = runCatching { tcgdex.search(lang = lang, name = query) }.getOrDefault(emptyList())
-                for (brief in briefs) {
-                    // Soft: if we have a number, prefer matching ones but keep others with lower score.
-                    val base = if (pokemonNumberMatches(brief.localId, numberCandidates) || numberCandidates.isEmpty()) 40 else 5
-                    addBrief(lang, brief, base)
-                }
+        return cards
+            .distinctBy { "${it.image}-${it.id}" }
+            .map { card ->
+                val setIds = PokemonSets.idsFor(parsed.setCode, cardLang(card))
+                val raw = PokemonCatalog.score(
+                    cardName = card.name,
+                    cardNumber = card.localId,
+                    setId = card.set?.id ?: card.id.substringBefore('-'),
+                    printedTotal = card.set?.cardCount?.official,
+                    queryName = name,
+                    queryNumber = number,
+                    querySetIds = setIds,
+                    setCardCount = parsed.setCardCount,
+                )
+                card.toIdentified().copy(ocrScore = (raw / 145f).coerceIn(0.05f, 1f))
             }
-        }
-
-        // 2) Direct set+number only as a candidate (may be wrong if set OCR misread).
-        for (setId in setIds) {
-            for (number in numberCandidates) {
-                for (lang in listOf("it", "en")) {
-                    for (id in listOf("$setId-$number", "$setId-${number.padStart(3, '0')}")) {
-                        val card = runCatching { tcgdex.card(lang, id) }.getOrNull() ?: continue
-                        if (!seen.add(card.id)) continue
-                        var score = 35
-                        if (nameTokens.any { token -> card.name.lowercase().contains(token) }) score += 40
-                        scored += card.toIdentified() to score
-                    }
-                }
-            }
-        }
-
-        // 3) Collector-number search ranked by name overlap / set count.
-        if (scored.none { it.second >= 40 } && numberCandidates.isNotEmpty()) {
-            val localId = numberCandidates.first()
-            for (lang in listOf("it", "en")) {
-                val briefs = runCatching { tcgdex.search(lang = lang, localId = localId) }.getOrDefault(emptyList())
-                for (brief in briefs) {
-                    addBrief(lang, brief, 10)
-                }
-            }
-        }
-
-        return scored
-            .sortedByDescending { it.second }
-            .map { it.first }
-            .distinctBy { it.setCode + "-" + it.collectorNumber + "-" + it.name }
+            .sortedByDescending { it.ocrScore ?: 0f }
             .take(12)
     }
 
-    private fun buildPokemonNameQueries(name: String?): List<String> {
-        val full = name?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
-        val out = linkedSetOf(full)
-        // "Muk del Team Rocket" → also try "Muk", "Team Rocket"
-        val parts = full.split(Regex("""\s+""")).filter { it.length >= 3 }
-        parts.firstOrNull()?.let { out += it }
-        if (parts.size >= 2) {
-            out += parts.take(2).joinToString(" ")
-            out += parts.takeLast(2).joinToString(" ")
+    private suspend fun searchPokemonLanguage(
+        lang: String,
+        name: String?,
+        number: String?,
+        parsed: ParsedCardText,
+    ): List<TcgdexCard> {
+        val setIds = if (lang == PokemonCatalog.EN || lang == PokemonCatalog.IT) {
+            val mapped = OcrParser.setCodeCandidates(parsed.setCode)
+                .flatMap { PokemonSets.recognizedIds(it) }
+                .distinct()
+            mapped.ifEmpty { PokemonSets.idsFor(parsed.setCode, lang) }
+        } else {
+            PokemonSets.idsFor(parsed.setCode, lang)
         }
-        // Drop articles that hurt English search
-        out += full.replace(Regex("""(?i)\b(del|della|dei|delle|di|the|of)\b"""), " ")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-        return out.filter { it.length >= 3 }.distinct()
+        val found = linkedMapOf<String, TcgdexCard>()
+
+        if (!number.isNullOrBlank()) {
+            for (setId in setIds.take(4)) {
+                for (id in PokemonCatalog.cardIds(setId, number)) {
+                    val card = runCatching { tcgdex.card(lang, id) }.getOrNull() ?: continue
+                    found[card.id] = card
+                }
+                if (found.isNotEmpty()) break
+            }
+        }
+        if (found.values.any { it.matches(name, number, setIds) }) return found.values.toList()
+
+        if (!name.isNullOrBlank()) {
+            for (query in PokemonCatalog.nameQueries(name)) {
+                val briefs = runCatching { tcgdex.search(lang, name = query) }.getOrDefault(emptyList())
+                fetchBriefs(lang, pickBriefs(briefs, number, setIds), found)
+                if (found.values.any { it.matches(name, number, setIds) }) break
+            }
+        }
+
+        if (found.values.none { it.matches(name, number, setIds) } && !number.isNullOrBlank()) {
+            val localIds = listOf(number, number.trimStart('0').ifBlank { number }.padStart(3, '0')).distinct()
+            for (localId in localIds) {
+                val briefs = runCatching { tcgdex.search(lang, localId = localId) }.getOrDefault(emptyList())
+                if (briefs.isEmpty()) continue
+                fetchBriefs(lang, pickBriefs(briefs, number, setIds), found)
+                break
+            }
+        }
+        return found.values.toList()
     }
 
-    private fun pokemonNumberMatches(localId: String, candidates: List<String>): Boolean {
-        if (candidates.isEmpty()) return true
-        val normalized = localId.trimStart('0').ifBlank { localId }
-        return candidates.any {
-            localId.equals(it, ignoreCase = true) ||
-                normalized.equals(it.trimStart('0').ifBlank { it }, ignoreCase = true)
+    private suspend fun fetchBriefs(
+        lang: String,
+        briefs: List<TcgdexCardBrief>,
+        into: MutableMap<String, TcgdexCard>,
+    ) {
+        val missing = briefs.filter { it.id.isNotBlank() && it.id !in into }.take(6)
+        if (missing.isEmpty()) return
+        val detailed = coroutineScope {
+            missing.map { brief ->
+                async {
+                    runCatching { tcgdex.card(lang, brief.id) }.getOrNull()
+                        ?: TcgdexCard(brief.id, brief.localId, brief.name, brief.image)
+                }
+            }.awaitAll()
+        }
+        detailed.forEach { card ->
+            if (card.id.isNotBlank() && card.name.isNotBlank()) into.putIfAbsent(card.id, card)
         }
     }
 
-    private fun pokemonSetMatches(cardId: String, setIds: List<String>): Boolean {
-        if (setIds.isEmpty()) return true
-        return setIds.any { setId ->
-            cardId.startsWith("$setId-", ignoreCase = true) ||
-                cardId.startsWith(setId, ignoreCase = true)
-        }
+    private fun pickBriefs(
+        briefs: List<TcgdexCardBrief>,
+        number: String?,
+        setIds: List<String>,
+    ): List<TcgdexCardBrief> {
+        if (briefs.isEmpty()) return emptyList()
+        fun setHit(brief: TcgdexCardBrief) =
+            setIds.isEmpty() || setIds.any { brief.id.startsWith("$it-", ignoreCase = true) }
+        fun numberHit(brief: TcgdexCardBrief) =
+            number.isNullOrBlank() || PokemonCatalog.numberMatches(number, brief.localId)
+        val strict = briefs.filter { setHit(it) && numberHit(it) }
+        if (strict.isNotEmpty()) return strict
+        val byNumber = briefs.filter { numberHit(it) }
+        if (byNumber.isNotEmpty()) return byNumber
+        return briefs.take(4)
     }
 
-    private fun ScryfallCard.toIdentified(): IdentifiedCard =
+    private fun TcgdexCard.matches(name: String?, number: String?, setIds: List<String>): Boolean {
+        val setId = set?.id ?: id.substringBefore('-')
+        val setOk = setIds.isEmpty() || setIds.any { it.equals(setId, ignoreCase = true) }
+        val numberOk = number.isNullOrBlank() || PokemonCatalog.numberMatches(number, localId)
+        val nameOk = name.isNullOrBlank() || PokemonCatalog.nameMatches(this.name, name)
+        return setOk && numberOk && nameOk && (setIds.isNotEmpty() || !number.isNullOrBlank() || !name.isNullOrBlank())
+    }
+
+    /** Image host path is `/en/`, `/ja/`, `/zh-cn/` or `/zh-tw/`. */
+    private fun cardLang(card: TcgdexCard): String {
+        val path = card.image.orEmpty()
+        return listOf("zh-cn", "zh-tw", "ja", "it", "en").firstOrNull { path.contains("/$it/") } ?: "en"
+    }
+
+    private fun ScryfallCard.toIdentified(ocrScore: Float? = null): IdentifiedCard =
         IdentifiedCard(
             game = Game.MTG,
             name = name,
@@ -179,22 +215,26 @@ class CatalogLookup(
             imageUrl = bestImageUrl(),
             priceEur = prices?.eur?.takeIf { it.isNotBlank() },
             priceEurFoil = prices?.eurFoil?.takeIf { it.isNotBlank() },
+            ocrScore = ocrScore,
         )
 
     private fun TcgdexCard.toIdentified(): IdentifiedCard {
         val cm = pricing?.cardmarket
-        val avg = cm?.avg ?: cm?.trend
-        val avgHolo = cm?.avgHolo ?: cm?.trendHolo
+        val setId = set?.id?.takeIf { it.isNotBlank() } ?: id.substringBefore('-')
         return IdentifiedCard(
             game = Game.POKEMON,
             name = name,
-            setCode = set?.id.orEmpty(),
+            setCode = setId,
             setName = set?.name.orEmpty(),
-            collectorNumber = localId,
-            tcgplayerId = null,
+            collectorNumber = localId.ifBlank { id.substringAfter('-', "") },
             imageUrl = image?.let { "$it/low.webp" },
-            priceEur = avg?.let { String.format(java.util.Locale.US, "%.2f", it) },
-            priceEurFoil = avgHolo?.let { String.format(java.util.Locale.US, "%.2f", it) },
+            priceEur = formatEur(cm?.avg ?: cm?.trend),
+            priceEurFoil = formatEur(cm?.avgHolo ?: cm?.trendHolo),
         )
+    }
+
+    private fun formatEur(value: Double?): String? {
+        if (value == null || value <= 0.0) return null
+        return String.format(Locale.US, "%.2f", value)
     }
 }

@@ -7,11 +7,13 @@ Non è affiliata a Wizards of the Coast, The Pokémon Company, Nintendo o CardTr
 ## Cosa fa (MVP)
 
 1. Scan carta singola o sessione (più carte di fila)
-2. OCR on-device (ML Kit) + lookup Scryfall / TCGdex
-3. Conferma lingua, condizione, foil, quantità, collezione
+2. Riconoscimento **ibrido**: OCR + fingerprint arte + (opzionale) pack neurale Milo on-device (~60 MB, AGPL) con gallery Scryfall
+3. Conferma lingua, condizione, foil, quantità, collezione (con % match)
 4. Export CSV CardTrader (un file per gioco) tramite share Android
 
-Nessun account, nessun backend, nessun costo di API. Unico costo eventuale: account sviluppatore Google Play (~25 USD) se pubblichi.
+Nessun account, nessun backend a pagamento. Unico costo eventuale: account sviluppatore Google Play (~25 USD) se pubblichi.
+
+Il pack neurale MTG si scarica da **Impostazioni** (modello + catalogo da Hugging Face `HanClinto/milo`, licenza AGPL-3.0).
 
 ## Aprire il progetto
 
@@ -34,4 +36,4 @@ Nella collezione tocca Condividi. Carica il CSV da CardTrader (un file per MTG e
 ## Cataloghi
 
 - MTG: https://api.scryfall.com
-- Pokémon: https://api.tcgdex.net
+- Pokémon: https://api.tcgdex.net in inglese, italiano, giapponese, cinese semplificato e cinese tradizionale (`en`, `it`, `ja`, `zh-cn`, `zh-tw`)

@@ -12,6 +12,11 @@ interface ScryfallApi {
         @Path("number") number: String,
     ): ScryfallCard
 
+    @GET("cards/{id}")
+    suspend fun cardById(
+        @Path("id") id: String,
+    ): ScryfallCard
+
     @GET("cards/search")
     suspend fun search(
         @Query("q") query: String,
@@ -35,16 +40,19 @@ data class ScryfallCard(
     val prices: ScryfallPrices? = null,
 ) {
     fun bestImageUrl(): String? {
-        val fromUris = imageUris?.normal
+        // Prefer art_crop for reverse-image ranking (illustration only).
+        val fromUris = imageUris?.artCrop
+            ?: imageUris?.normal
             ?: imageUris?.large
             ?: imageUris?.small
+            ?: cardFaces?.firstOrNull()?.imageUris?.artCrop
             ?: cardFaces?.firstOrNull()?.imageUris?.normal
             ?: cardFaces?.firstOrNull()?.imageUris?.large
             ?: cardFaces?.firstOrNull()?.imageUris?.small
         if (!fromUris.isNullOrBlank()) return fromUris
         // CDN fallback from Scryfall id (works even if image_uris was omitted).
         if (id.length < 2) return null
-        return "https://cards.scryfall.io/normal/front/${id[0]}/${id[1]}/$id.jpg"
+        return "https://cards.scryfall.io/art_crop/front/${id[0]}/${id[1]}/$id.jpg"
     }
 }
 
@@ -59,6 +67,7 @@ data class ScryfallImages(
     val small: String? = null,
     val normal: String? = null,
     val large: String? = null,
+    @SerializedName("art_crop") val artCrop: String? = null,
 )
 
 data class ScryfallFace(

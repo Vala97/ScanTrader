@@ -3,6 +3,7 @@ package com.scantrader.app.scan
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
+import com.scantrader.app.vision.ImageFingerprint
 
 class ScanSession {
     var game: Game = Game.MTG
@@ -12,6 +13,8 @@ class ScanSession {
     var parsed: ParsedCardText? = null
     var candidates: List<IdentifiedCard> = emptyList()
     var errorMessage: String? = null
+    /** Fingerprint of last scan crop — used to re-rank manual catalog searches. */
+    var queryFingerprint: ImageFingerprint.Result? = null
 
     /** Lighting prefs survive confirm → back-to-scan (not cleared by resetResults). */
     var torchOn: Boolean = false
@@ -23,5 +26,6 @@ class ScanSession {
         parsed = null
         candidates = emptyList()
         errorMessage = null
+        queryFingerprint = null
     }
 }
