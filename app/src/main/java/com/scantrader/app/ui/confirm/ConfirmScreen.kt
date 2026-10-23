@@ -23,7 +23,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -54,6 +55,7 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.ui.ConfirmViewModel
 import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
+import com.scantrader.app.ui.theme.scanTraderAppBarColors
 import com.scantrader.app.vision.MatchFusion
 import kotlinx.coroutines.delay
 
@@ -160,8 +162,10 @@ fun ConfirmScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
+                colors = scanTraderAppBarColors(),
                 title = {
                     Column {
                         Text(selected?.name ?: "Conferma carta")
@@ -204,6 +208,11 @@ fun ConfirmScreen(
                         Button(
                             onClick = { doSave() },
                             enabled = canSave,
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(52.dp),
@@ -398,12 +407,13 @@ fun ConfirmScreen(
             }
             items(candidates, key = { candidateKey(it) }) { card ->
                 val isSelected = sameCard(selected, card)
-                Card(
-                    Modifier
+                ElevatedCard(
+                    shape = MaterialTheme.shapes.large,
+                    modifier = Modifier
                         .fillMaxWidth()
                         .then(
                             if (isSelected) {
-                                Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.medium)
+                                Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
                             } else {
                                 Modifier
                             },
@@ -462,7 +472,7 @@ private fun MatchNote(note: MatchFusion.ConfirmMatchNote) {
     }
     Surface(
         color = container,
-        shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(20.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(

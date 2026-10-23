@@ -43,6 +43,7 @@ import com.scantrader.app.scan.LensOption
 import com.scantrader.app.ui.SettingsViewModel
 import com.scantrader.app.ui.components.SimpleDropdown
 import com.scantrader.app.ui.displayLabel
+import com.scantrader.app.ui.theme.scanTraderAppBarColors
 import com.scantrader.app.vision.NeuralPackManager
 import com.scantrader.app.vision.NeuralPackState
 
@@ -69,9 +70,11 @@ fun SettingsScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Impostazioni") },
+                colors = scanTraderAppBarColors(),
+                title = { Text("Impostazioni", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Indietro")
@@ -249,8 +252,8 @@ private fun SettingsSection(
             color = MaterialTheme.colorScheme.primary,
         )
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(

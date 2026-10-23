@@ -65,6 +65,7 @@ import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -102,9 +103,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.lifecycle.Observer
 import androidx.compose.ui.res.stringResource
 import com.scantrader.app.R
@@ -114,17 +112,19 @@ import com.scantrader.app.scan.CardFrameGeometry
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
 import com.scantrader.app.ui.ScanViewModel
+import com.scantrader.app.ui.components.GameLogo
 import com.scantrader.app.ui.components.SimpleDropdown
 import com.scantrader.app.ui.displayLabel
+import com.scantrader.app.ui.theme.ScanColors
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private val PanelScrim = Color(0xE612241D)
-private val FrameAccent = Color(0xFFF4EFE6)
-private val Gold = Color(0xFFC4A574)
+private val PanelScrim = ScanColors.scrim
+private val FrameAccent = ScanColors.text
+private val Gold = ScanColors.accent
 
 @Composable
 fun ScanScreen(
@@ -342,7 +342,7 @@ fun ScanScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF12241D))) {
+    Box(Modifier.fillMaxSize().background(ScanColors.background)) {
         if (!gamePicked) {
             GamePickOverlay(
                 onPick = { picked ->
@@ -391,7 +391,7 @@ fun ScanScreen(
             Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .background(Brush.verticalGradient(listOf(Color(0xCC12241D), Color.Transparent)))
+                .background(Brush.verticalGradient(listOf(ScanColors.topScrim, Color.Transparent)))
                 .statusBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         ) {
@@ -463,7 +463,7 @@ fun ScanScreen(
         ) {
             Surface(
                 shape = RoundedCornerShape(20.dp),
-                color = Color(0xF01B3A2F),
+                color = ScanColors.panel,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
@@ -542,8 +542,10 @@ fun ScanScreen(
                                     onCheckedChange = viewModel::setTorchOn,
                                     enabled = granted,
                                     colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color(0xFF12241D),
+                                        checkedThumbColor = ScanColors.onAccent,
                                         checkedTrackColor = Gold,
+                                        uncheckedThumbColor = FrameAccent,
+                                        uncheckedTrackColor = ScanColors.chipIdle,
                                     ),
                                 )
                             }
@@ -727,30 +729,45 @@ private fun GameSegmentedControl(
 ) {
     Row(
         modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.Black.copy(alpha = 0.35f))
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.Black.copy(alpha = 0.38f))
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Game.entries.forEach { option ->
             val active = option == selected
-            Box(
+            val label = when (option) {
+                Game.MTG -> "Magic"
+                Game.POKEMON -> "Pokémon"
+            }
+            Row(
                 Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(12.dp))
                     .background(if (active) Gold else Color.Transparent)
                     .clickable { onSelect(option) }
-                    .padding(vertical = 10.dp),
-                contentAlignment = Alignment.Center,
+                    .padding(horizontal = 8.dp, vertical = 7.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color.White,
+                ) {
+                    GameLogo(
+                        game = option,
+                        modifier = Modifier
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                            .height(16.dp),
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
                 Text(
-                    text = when (option) {
-                        Game.MTG -> "Magic"
-                        Game.POKEMON -> "Pokémon"
-                    },
-                    color = if (active) Color(0xFF12241D) else FrameAccent,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    fontSize = 14.sp,
+                    text = label,
+                    color = if (active) ScanColors.onAccent else FrameAccent,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+                    fontSize = 13.sp,
+                    maxLines = 1,
                 )
             }
         }
@@ -790,8 +807,10 @@ private fun ModeToggleCard(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color(0xFF12241D),
+                    checkedThumbColor = ScanColors.onAccent,
                     checkedTrackColor = Gold,
+                    uncheckedThumbColor = FrameAccent,
+                    uncheckedTrackColor = ScanColors.chipIdle,
                 ),
             )
         }
@@ -942,48 +961,70 @@ private fun GamePickOverlay(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF12241D))
+            .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(24.dp),
+            .padding(horizontal = 24.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = FrameAccent)
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Indietro",
+                tint = MaterialTheme.colorScheme.onBackground,
+            )
         }
-        Spacer(Modifier.weight(0.3f))
+        Spacer(Modifier.height(8.dp))
         Text(
             "Cosa vuoi scannerizzare?",
-            color = FrameAccent,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 22.sp,
+            color = MaterialTheme.colorScheme.onBackground,
+            style = MaterialTheme.typography.headlineSmall,
         )
         Text(
             "Scegli il TCG prima di aprire la fotocamera.",
-            color = FrameAccent.copy(alpha = 0.7f),
-            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge,
         )
         Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = { onPick(Game.POKEMON) },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Gold,
-                contentColor = Color(0xFF12241D),
-            ),
-            shape = RoundedCornerShape(14.dp),
+        GamePickCard(Game.POKEMON, "Pokémon", onPick)
+        GamePickCard(Game.MTG, "Magic: The Gathering", onPick)
+        Spacer(Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun GamePickCard(
+    game: Game,
+    label: String,
+    onPick: (Game) -> Unit,
+) {
+    Surface(
+        onClick = { onPick(game) },
+        shape = RoundedCornerShape(28.dp),
+        color = Color.White,
+        shadowElevation = 8.dp,
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(horizontal = 20.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Pokémon", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            GameLogo(
+                game = game,
+                contentDescription = label,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(88.dp),
+            )
+            Text(
+                label,
+                color = Color(0xFF0B1B33),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+            )
         }
-        OutlinedButton(
-            onClick = { onPick(Game.MTG) },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, Gold.copy(alpha = 0.7f)),
-        ) {
-            Text("Magic: The Gathering", color = Gold, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-        }
-        Spacer(Modifier.weight(0.7f))
     }
 }
 
