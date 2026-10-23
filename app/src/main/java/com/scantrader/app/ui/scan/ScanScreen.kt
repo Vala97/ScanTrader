@@ -152,8 +152,8 @@ fun ScanScreen(
     var torchStrengthSupported by remember { mutableStateOf(false) }
     // Collapsed by default so the card (and bottom-left set line) stays visible.
     var panelExpanded by remember { mutableStateOf(false) }
-    // Must pick TCG before binding the camera.
-    var gamePicked by remember { mutableStateOf(false) }
+    // Restored from the ViewModel so confirm → pop does not show the game picker again.
+    var gamePicked by remember { mutableStateOf(viewModel.isGameChosen) }
     val cameras = viewModel.availableCameras
 
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -273,6 +273,14 @@ fun ScanScreen(
         onDispose { activity?.setScanBrightness(null) }
     }
 
+    // Activity is already RESUMED when confirm pops, so ON_RESUME does not fire.
+    // Re-arm here before the analyzer is attached again.
+    LaunchedEffect(gamePicked) {
+        if (!gamePicked) return@LaunchedEffect
+        navigated.set(false)
+        viewModel.resumeScanning()
+    }
+
     LaunchedEffect(autoScan, granted, gamePicked, panelExpanded) {
         if (!granted || !gamePicked) return@LaunchedEffect
         navigated.set(false)
@@ -314,7 +322,7 @@ fun ScanScreen(
         if (!gamePicked) {
             GamePickOverlay(
                 onPick = { picked ->
-                    viewModel.setGame(picked)
+                    viewModel.chooseGame(picked)
                     gamePicked = true
                 },
                 onBack = onBack,

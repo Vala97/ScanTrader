@@ -82,7 +82,9 @@ fun AppNav() {
                 viewModel = vm,
                 onBack = { nav.popBackStack() },
                 onSaved = {
-                    // Always return to Scan so the user can keep scanning.
+                    // Pop confirm only. Scan stays underneath with the same
+                    // ViewModel, so the chosen game and autoscan stay armed.
+                    // resetResults drops the previous card without clearing the game.
                     app.scanSession.resetResults()
                     nav.popBackStack()
                 },

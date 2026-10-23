@@ -10,6 +10,13 @@ import com.scantrader.app.vision.MatchFusion
 
 class ScanSession {
     var game: Game = Game.MTG
+
+    /**
+     * True after the user picks Pokémon or Magic on this scan visit.
+     * Survives confirm → pop back to the camera. Cleared when the scan
+     * screen's ViewModel is destroyed (leaving scan), not by [resetResults].
+     */
+    var gameChosen: Boolean = false
     var sessionMode: Boolean = false
     var targetCollectionId: Long? = null
     var ocrText: String = ""

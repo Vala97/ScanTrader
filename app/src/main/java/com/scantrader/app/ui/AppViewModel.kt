@@ -186,6 +186,20 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         app.scanSession.game = value
     }
 
+    /** Game the user already confirmed for this scan visit. Survives confirm. */
+    val isGameChosen: Boolean get() = app.scanSession.gameChosen
+
+    fun chooseGame(value: Game) {
+        setGame(value)
+        app.scanSession.gameChosen = true
+    }
+
+    override fun onCleared() {
+        // Leaving the scan destination (not a trip to confirm) asks for the game again.
+        app.scanSession.gameChosen = false
+        super.onCleared()
+    }
+
     fun setCameraId(cameraId: String?) {
         this.cameraId.value = cameraId
         app.scanSession.cameraId = cameraId
