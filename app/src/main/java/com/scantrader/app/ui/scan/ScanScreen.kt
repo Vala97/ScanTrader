@@ -181,13 +181,28 @@ fun ScanScreen(
                 LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
             )
             imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
-            imageAnalysisResolutionSelector = analysisResolutionSelector(auto = false)
+            imageAnalysisResolutionSelector = analysisResolutionSelector()
             isPinchToZoomEnabled = true
             isTapToFocusEnabled = true
             cameraSelector = CameraDevices.selectorFor(cameraId)
         }
     }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    // One PreviewView for the lifetime of this screen. Reassigning controller
+    // on recomposition calls bindToLifecycle again and freezes the preview.
+    val previewView = remember {
+        PreviewView(context).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            // FILL_CENTER so the guide overlay matches the analysis/capture FOV
+            // (FIT_CENTER letterboxes and misaligns the card-frame crop).
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            this.controller = controller
+        }
+    }
 
     fun goToConfirm() {
         if (navigated.compareAndSet(false, true)) {
@@ -305,10 +320,11 @@ fun ScanScreen(
         viewModel.resumeScanning()
     }
 
-    LaunchedEffect(autoScan, granted, gamePicked, panelExpanded, cameraId) {
+    // Keys are camera/scan state only. Opening the settings panel must not
+    // replace the analyzer or the resolution selector (both rebind the camera).
+    LaunchedEffect(autoScan, granted, gamePicked, cameraId) {
         if (!granted || !gamePicked) return@LaunchedEffect
         navigated.set(false)
-        controller.imageAnalysisResolutionSelector = analysisResolutionSelector(auto = autoScan)
         if (autoScan) {
             controller.setImageAnalysisAnalyzer(cameraExecutor) { proxy ->
                 try {
@@ -320,9 +336,8 @@ fun ScanScreen(
                             "bmp=${upright.bitmap.width}x${upright.bitmap.height} " +
                             "cropApplied=${upright.cropApplied}",
                     )
-                    val expanded = panelExpanded
                     mainExecutor.execute {
-                        viewModel.processAutoFrame(upright.bitmap, expanded) { goToConfirm() }
+                        viewModel.processAutoFrame(upright.bitmap) { goToConfirm() }
                     }
                 } catch (_: Throwable) {
                 } finally {
@@ -354,36 +369,24 @@ fun ScanScreen(
             return@Box
         }
 
-        if (granted) {
-            AndroidView(
-                factory = { ctx ->
-                    PreviewView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                        )
-                        // FILL_CENTER so the guide overlay matches the analysis/capture FOV
-                        // (FIT_CENTER letterboxes and misaligns the card-frame crop).
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        scaleType = PreviewView.ScaleType.FILL_CENTER
-                        this.controller = controller
-                    }
-                },
-                update = { view ->
-                    view.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    view.scaleType = PreviewView.ScaleType.FILL_CENTER
-                    view.controller = controller
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-            CardFrameOverlay(
-                panelExpanded = panelExpanded,
-                showBothBottomCorners = game == Game.POKEMON,
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Serve il permesso fotocamera.", color = FrameAccent)
+        // Fixed bounds: the settings panel is a later sibling overlay, so opening
+        // it never resizes this box (a PreviewView layout change rebinds CameraX
+        // and the guide would no longer match the crop).
+        Box(Modifier.fillMaxSize()) {
+            if (granted) {
+                AndroidView(
+                    factory = { _ -> previewView },
+                    modifier = Modifier.fillMaxSize(),
+                    update = { _ -> },
+                )
+                CardFrameOverlay(
+                    showBothBottomCorners = game == Game.POKEMON,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Serve il permesso fotocamera.", color = FrameAccent)
+                }
             }
         }
 
@@ -641,7 +644,6 @@ fun ScanScreen(
                             .clip(CircleShape)
                             .border(3.dp, FrameAccent.copy(alpha = 0.9f), CircleShape)
                             .clickable(enabled = granted && !processing) {
-                                // Auto-collapse so the next card framing stays clear.
                                 panelExpanded = false
                                 navigated.set(false)
                                 val photo = File(context.cacheDir, "scan-capture.jpg")
@@ -656,7 +658,7 @@ fun ScanScreen(
                                             )
                                             mainExecutor.execute {
                                                 if (bitmap != null) {
-                                                    viewModel.processBitmap(bitmap, panelExpanded = false) {
+                                                    viewModel.processBitmap(bitmap) {
                                                         goToConfirm()
                                                     }
                                                 } else {
@@ -819,12 +821,11 @@ private fun ModeToggleCard(
 
 @Composable
 private fun CardFrameOverlay(
-    panelExpanded: Boolean,
     showBothBottomCorners: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Canvas(modifier) {
-        val rect = CardFrameGeometry.frameIn(size.width, size.height, panelExpanded)
+        val rect = CardFrameGeometry.frameIn(size.width, size.height)
         val left = rect.left
         val top = rect.top
         val right = rect.right
@@ -1060,8 +1061,7 @@ private fun ScanLensDropdown(
 }
 
 /** Analysis stream at 1280×960 (ImageCapture stays full-res). */
-@Suppress("UNUSED_PARAMETER")
-private fun analysisResolutionSelector(auto: Boolean): ResolutionSelector =
+private fun analysisResolutionSelector(): ResolutionSelector =
     ResolutionSelector.Builder()
         .setResolutionStrategy(
             ResolutionStrategy(

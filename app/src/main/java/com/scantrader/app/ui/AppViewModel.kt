@@ -384,14 +384,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun processBitmap(
         bitmap: android.graphics.Bitmap,
-        panelExpanded: Boolean = false,
         onDone: (ok: Boolean) -> Unit,
     ) {
         viewModelScope.launch {
             processing.value = true
             autoStatus.value = null
             try {
-                analyze(bitmap, requireMatch = false, panelExpanded = panelExpanded)
+                analyze(bitmap, requireMatch = false)
                 onDone(true)
             } catch (t: Throwable) {
                 app.scanSession.errorMessage = t.message ?: "Errore durante lo scan"
@@ -404,7 +403,6 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun processAutoFrame(
         bitmap: android.graphics.Bitmap,
-        panelExpanded: Boolean = false,
         onHit: () -> Unit,
     ) {
         val now = System.currentTimeMillis()
@@ -414,7 +412,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             processing.value = true
             autoStatus.value = "Analisi in corso…"
             try {
-                val matched = analyze(bitmap, requireMatch = true, panelExpanded = panelExpanded)
+                val matched = analyze(bitmap, requireMatch = true)
                 if (matched) {
                     autoHitPending.set(true)
                     autoStatus.value = "Carta trovata"
@@ -444,7 +442,6 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private suspend fun analyze(
         bitmap: android.graphics.Bitmap,
         requireMatch: Boolean,
-        panelExpanded: Boolean,
     ): Boolean {
         app.scanSession.resetResults()
         app.scanSession.game = game.value
@@ -453,11 +450,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val t0 = System.currentTimeMillis()
             com.scantrader.app.scan.ScanDebug.d(
                 "analyze start game=${game.value} requireMatch=$requireMatch " +
-                    "bitmap=${bitmap.width}x${bitmap.height} panelExpanded=$panelExpanded " +
+                    "bitmap=${bitmap.width}x${bitmap.height} " +
                     "neuralMtg=${app.neuralPack.isInstalled(Game.MTG)} " +
                     "neuralPkm=${app.neuralPack.isInstalled(Game.POKEMON)}",
             )
-            val croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropBitmap(bitmap, panelExpanded)
+            val croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropBitmap(bitmap)
             // Auto: lighter crop; manual stills stay higher-res (often 4K).
             val cropped = downscaleForOcr(
                 croppedFull,

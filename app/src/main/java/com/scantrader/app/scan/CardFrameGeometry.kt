@@ -15,10 +15,10 @@ object CardFrameGeometry {
 
     /**
      * Max fraction of preview height for the frame.
-     * Keep high enough that the bottom collector line stays visible above the control bar.
+     * The settings panel is an overlay and must not change this: the on-screen
+     * guide and the OCR crop share one rectangle.
      */
-    const val MAX_HEIGHT_FRACTION_EXPANDED = 0.42f
-    const val MAX_HEIGHT_FRACTION_COLLAPSED = 0.62f
+    const val MAX_HEIGHT_FRACTION = 0.62f
 
     /** Shift frame slightly upward so bottom strip clears the shutter bar. */
     const val TOP_BIAS_FRACTION = 0.02f
@@ -33,20 +33,16 @@ object CardFrameGeometry {
         val bottom: Float get() = top + height
     }
 
-    fun frameIn(viewWidth: Float, viewHeight: Float, panelExpanded: Boolean): Rect {
-        val maxH = if (panelExpanded) MAX_HEIGHT_FRACTION_EXPANDED else MAX_HEIGHT_FRACTION_COLLAPSED
+    fun frameIn(viewWidth: Float, viewHeight: Float): Rect {
         val frameW = viewWidth * WIDTH_FRACTION
-        val frameH = (frameW / ASPECT).coerceAtMost(viewHeight * maxH)
+        val frameH = (frameW / ASPECT).coerceAtMost(viewHeight * MAX_HEIGHT_FRACTION)
         val left = (viewWidth - frameW) / 2f
         val top = ((viewHeight - frameH) / 2f - viewHeight * TOP_BIAS_FRACTION).coerceAtLeast(viewHeight * 0.08f)
         return Rect(left, top, frameW, frameH)
     }
 
-    fun cropBitmap(
-        source: android.graphics.Bitmap,
-        panelExpanded: Boolean = false,
-    ): android.graphics.Bitmap {
-        val rect = frameIn(source.width.toFloat(), source.height.toFloat(), panelExpanded)
+    fun cropBitmap(source: android.graphics.Bitmap): android.graphics.Bitmap {
+        val rect = frameIn(source.width.toFloat(), source.height.toFloat())
         val x = rect.left.toInt().coerceIn(0, source.width - 1)
         val y = rect.top.toInt().coerceIn(0, source.height - 1)
         val w = rect.width.toInt().coerceAtMost(source.width - x).coerceAtLeast(1)
