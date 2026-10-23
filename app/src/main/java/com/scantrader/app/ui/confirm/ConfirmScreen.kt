@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -51,6 +53,7 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.ui.ConfirmViewModel
 import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,32 +66,80 @@ fun ConfirmScreen(
     val collections by viewModel.collections.collectAsStateWithLifecycle()
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val searching by viewModel.searching.collectAsStateWithLifecycle()
+    val saving by viewModel.saving.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf(viewModel.parsed?.nameGuess.orEmpty()) }
     var selected by remember { mutableStateOf<IdentifiedCard?>(null) }
     var quantity by remember { mutableIntStateOf(1) }
-    var language by remember { mutableStateOf(defaults.language) }
-    var condition by remember { mutableStateOf(defaults.condition) }
+    var language by remember {
+        mutableStateOf(viewModel.sessionLanguage ?: defaults.language)
+    }
+    var condition by remember {
+        mutableStateOf(viewModel.sessionCondition ?: defaults.condition)
+    }
     var foil by remember { mutableStateOf(false) }
-    var collectionId by remember { mutableStateOf<Long?>(null) }
+    var collectionId by remember { mutableStateOf(viewModel.preferredCollectionId) }
+    var autoSaveCancelled by remember { mutableStateOf(false) }
+    var secondsLeft by remember { mutableIntStateOf(0) }
+    val autoSaveArmed = viewModel.fromAutoScan &&
+        defaults.autoSaveWaitSeconds > 0 &&
+        !autoSaveCancelled
+
+    fun cancelAutoSave() {
+        autoSaveCancelled = true
+    }
+
+    fun doSave() {
+        val card = selected ?: return
+        val target = collectionId ?: return
+        cancelAutoSave()
+        viewModel.save(card, target, quantity, language, condition, foil, onSaved)
+    }
 
     LaunchedEffect(Unit) { viewModel.reload() }
     LaunchedEffect(defaults) {
-        language = defaults.language
-        condition = defaults.condition
+        // Prefer last choice from this session; otherwise follow saved defaults.
+        language = viewModel.sessionLanguage ?: defaults.language
+        condition = viewModel.sessionCondition ?: defaults.condition
     }
     LaunchedEffect(candidates) {
-        if (selected == null || candidates.none { it.scryfallId == selected?.scryfallId && it.setCode == selected?.setCode && it.collectorNumber == selected?.collectorNumber }) {
+        if (selected == null || candidates.none { sameCard(it, selected) }) {
             selected = candidates.firstOrNull()
         }
     }
-    LaunchedEffect(collections) {
-        if (collectionId == null) {
-            collectionId = collections.firstOrNull()?.id
+    LaunchedEffect(collections, viewModel.preferredCollectionId) {
+        val preferred = viewModel.preferredCollectionId
+        val currentStillValid = collectionId != null && collections.any { it.id == collectionId }
+        if (currentStillValid) return@LaunchedEffect
+        collectionId = when {
+            preferred != null && collections.any { it.id == preferred } -> preferred
+            else -> collections.firstOrNull()?.id
+        }
+    }
+    LaunchedEffect(autoSaveArmed, selected, collectionId, defaults.autoSaveWaitSeconds) {
+        if (!autoSaveArmed || selected == null || collectionId == null) return@LaunchedEffect
+        val wait = defaults.autoSaveWaitSeconds
+        if (wait <= 0) return@LaunchedEffect
+        for (left in wait downTo 1) {
+            secondsLeft = left
+            delay(1_000)
+        }
+        secondsLeft = 0
+        // Still armed → no user interaction cancelled us (LaunchedEffect would have been cancelled).
+        val card = selected
+        val target = collectionId
+        if (card != null && target != null && !viewModel.saving.value) {
+            viewModel.save(card, target, quantity, language, condition, foil, onSaved)
         }
     }
 
     val displayedPrice = selected?.let { card ->
         if (foil) card.priceEurFoil?.takeIf { it.isNotBlank() } ?: card.priceEur else card.priceEur
+    }
+    val canSave = selected != null && collectionId != null && !saving
+    val saveLabel = when {
+        saving -> "Salvataggio…"
+        autoSaveArmed && secondsLeft > 0 -> "Salva tra ${secondsLeft}s…"
+        else -> "OK · Salva in collezione"
     }
 
     Scaffold(
@@ -107,11 +158,46 @@ fun ConfirmScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        cancelAutoSave()
+                        onBack()
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Indietro")
                     }
                 },
             )
+        },
+        bottomBar = {
+            if (selected != null) {
+                Surface(tonalElevation = 3.dp, shadowElevation = 6.dp) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                    ) {
+                        if (collectionId == null) {
+                            Text(
+                                "Nessuna collezione disponibile. Creane una dalla home.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(bottom = 8.dp),
+                            )
+                        }
+                        Button(
+                            onClick = { doSave() },
+                            enabled = canSave,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp),
+                        ) {
+                            Icon(Icons.Filled.Check, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(saveLabel)
+                        }
+                    }
+                }
+            }
         },
     ) { padding ->
         LazyColumn(
@@ -146,6 +232,15 @@ fun ConfirmScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        current.confidenceLabel()?.let { pct ->
+                            val visual = current.visualScore?.let { v -> " · arte ${(v * 100).toInt()}%" }.orEmpty()
+                            Text(
+                                "Match $pct$visual",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
                         Text(
                             text = when {
                                 displayedPrice != null && foil -> "Prezzo Cardmarket (foil): €$displayedPrice"
@@ -172,7 +267,10 @@ fun ConfirmScreen(
                             label = "Collezione",
                             options = collections,
                             selected = collections.firstOrNull { it.id == collectionId } ?: collections.first(),
-                            onSelect = { collectionId = it.id },
+                            onSelect = {
+                                cancelAutoSave()
+                                collectionId = it.id
+                            },
                             labelOf = { it.name },
                         )
                     }
@@ -182,7 +280,11 @@ fun ConfirmScreen(
                         label = "Lingua",
                         options = CardLanguage.entries.toList(),
                         selected = language,
-                        onSelect = { language = it },
+                        onSelect = {
+                            cancelAutoSave()
+                            language = it
+                            viewModel.setLanguage(it)
+                        },
                         labelOf = { it.label },
                     )
                 }
@@ -191,7 +293,11 @@ fun ConfirmScreen(
                         label = "Condizione",
                         options = CardCondition.entries.toList(),
                         selected = condition,
-                        onSelect = { condition = it },
+                        onSelect = {
+                            cancelAutoSave()
+                            condition = it
+                            viewModel.setCondition(it)
+                        },
                         labelOf = { it.label },
                     )
                 }
@@ -202,37 +308,32 @@ fun ConfirmScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Foil / holo")
-                        Switch(checked = foil, onCheckedChange = { foil = it })
+                        Switch(
+                            checked = foil,
+                            onCheckedChange = {
+                                cancelAutoSave()
+                                foil = it
+                            },
+                        )
                     }
                 }
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { if (quantity > 1) quantity -= 1 }) {
+                        IconButton(onClick = {
+                            if (quantity > 1) {
+                                cancelAutoSave()
+                                quantity -= 1
+                            }
+                        }) {
                             Icon(Icons.Default.Remove, contentDescription = "Meno")
                         }
                         Text("Quantità $quantity", modifier = Modifier.padding(horizontal = 8.dp))
-                        IconButton(onClick = { quantity += 1 }) {
+                        IconButton(onClick = {
+                            cancelAutoSave()
+                            quantity += 1
+                        }) {
                             Icon(Icons.Default.Add, contentDescription = "Più")
                         }
-                    }
-                }
-                item {
-                    Button(
-                        onClick = {
-                            val card = selected
-                            val target = collectionId
-                            if (card != null && target != null) {
-                                viewModel.save(card, target, quantity, language, condition, foil, onSaved)
-                            }
-                        },
-                        enabled = collectionId != null,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp),
-                    ) {
-                        Icon(Icons.Filled.Check, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("OK · Salva in collezione")
                     }
                 }
             }
@@ -248,7 +349,10 @@ fun ConfirmScreen(
             item {
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = {
+                        cancelAutoSave()
+                        query = it
+                    },
                     label = { Text("Cerca per nome") },
                     modifier = Modifier.fillMaxWidth(),
                     supportingText = {
@@ -261,7 +365,10 @@ fun ConfirmScreen(
             }
             item {
                 Button(
-                    onClick = { viewModel.search(query) },
+                    onClick = {
+                        cancelAutoSave()
+                        viewModel.search(query)
+                    },
                     enabled = query.isNotBlank() && !searching,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (searching) "Ricerca…" else "Cerca nel catalogo") }
@@ -269,10 +376,8 @@ fun ConfirmScreen(
             if (candidates.isEmpty()) {
                 item { Text("Nessun candidato. Controlla il nome, il set o il numero collezionista.") }
             }
-            items(candidates, key = { it.scryfallId ?: it.name + it.setCode + it.collectorNumber }) { card ->
-                val isSelected = selected?.scryfallId == card.scryfallId &&
-                    selected?.setCode == card.setCode &&
-                    selected?.collectorNumber == card.collectorNumber
+            items(candidates, key = { candidateKey(it) }) { card ->
+                val isSelected = sameCard(selected, card)
                 Card(
                     Modifier
                         .fillMaxWidth()
@@ -283,7 +388,10 @@ fun ConfirmScreen(
                                 Modifier
                             },
                         )
-                        .clickable { selected = card },
+                        .clickable {
+                            cancelAutoSave()
+                            selected = card
+                        },
                 ) {
                     Row(
                         Modifier.padding(12.dp),
@@ -307,6 +415,13 @@ fun ConfirmScreen(
                                     fontWeight = FontWeight.Medium,
                                 )
                             }
+                            card.confidenceLabel()?.let { pct ->
+                                Text(
+                                    "Match $pct",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                )
+                            }
                         }
                     }
                 }
@@ -314,3 +429,20 @@ fun ConfirmScreen(
         }
     }
 }
+
+private fun sameCard(a: IdentifiedCard?, b: IdentifiedCard?): Boolean {
+    if (a == null || b == null) return false
+    return a.setCode == b.setCode &&
+        a.collectorNumber == b.collectorNumber &&
+        a.name == b.name &&
+        (a.scryfallId ?: "") == (b.scryfallId ?: "")
+}
+
+private fun candidateKey(card: IdentifiedCard): String =
+    listOf(
+        card.scryfallId.orEmpty(),
+        card.setCode,
+        card.collectorNumber,
+        card.name,
+        card.imageUrl.orEmpty(),
+    ).joinToString("|")

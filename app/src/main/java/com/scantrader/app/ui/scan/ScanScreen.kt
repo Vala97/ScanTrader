@@ -8,7 +8,6 @@ package com.scantrader.app.ui.scan
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.os.Build
@@ -23,6 +22,8 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
@@ -101,12 +102,20 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.lifecycle.Observer
 import com.scantrader.app.data.model.Game
+import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.CardFrameGeometry
+import com.scantrader.app.scan.DeviceCamera
 import com.scantrader.app.ui.ScanViewModel
+import com.scantrader.app.ui.components.SimpleDropdown
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val PanelScrim = Color(0xE612241D)
@@ -131,6 +140,7 @@ fun ScanScreen(
     val autoStatus by viewModel.autoStatus.collectAsStateWithLifecycle()
     val torchOn by viewModel.torchOn.collectAsStateWithLifecycle()
     val lightIntensity by viewModel.lightIntensity.collectAsStateWithLifecycle()
+    val cameraId by viewModel.cameraId.collectAsStateWithLifecycle()
 
     var granted by remember {
         mutableStateOf(
@@ -142,18 +152,15 @@ fun ScanScreen(
     var torchStrengthSupported by remember { mutableStateOf(false) }
     // Collapsed by default so the card (and bottom-left set line) stays visible.
     var panelExpanded by remember { mutableStateOf(false) }
+    // Must pick TCG before binding the camera.
+    var gamePicked by remember { mutableStateOf(false) }
+    val cameras = viewModel.availableCameras
 
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         granted = it
     }
     val mainExecutor = remember { ContextCompat.getMainExecutor(context) }
     val navigated = remember { AtomicBoolean(false) }
-
-    fun goToConfirm() {
-        if (navigated.compareAndSet(false, true)) {
-            onCaptured()
-        }
-    }
 
     LaunchedEffect(Unit) {
         viewModel.setTargetCollection(collectionId)
@@ -166,44 +173,98 @@ fun ScanScreen(
                 LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
             )
             imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
+            imageAnalysisResolutionSelector = analysisResolutionSelector(auto = false)
             isPinchToZoomEnabled = true
             isTapToFocusEnabled = true
+            cameraSelector = CameraDevices.selectorFor(cameraId)
         }
     }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                navigated.set(false)
-                viewModel.resumeScanning()
-                if (granted) {
-                    refreshTorchCapabilities(controller) { supported, max ->
-                        torchStrengthSupported = supported
-                        maxTorchStrength = max
-                        applyTorch(controller, torchOn, lightIntensity, max, supported)
-                    }
-                    resetZoomToDefault(controller)
+    fun goToConfirm() {
+        if (navigated.compareAndSet(false, true)) {
+            persistZoom(controller, viewModel)
+            onCaptured()
+        }
+    }
+
+    fun syncCameraOptics(forceZoom: Boolean = false) {
+        refreshTorchCapabilities(controller) { supported, max ->
+            torchStrengthSupported = supported
+            maxTorchStrength = max
+            applyTorch(controller, torchOn, lightIntensity, max, supported)
+        }
+        applySavedZoom(controller, viewModel.zoomRatio.value, force = forceZoom)
+    }
+
+    fun scheduleZoomApply(attemptsLeft: Int = 8) {
+        val applied = applySavedZoom(controller, viewModel.zoomRatio.value, force = true)
+        if (!applied && attemptsLeft > 0) {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                { scheduleZoomApply(attemptsLeft - 1) },
+                80L,
+            )
+        }
+    }
+
+    LaunchedEffect(cameraId, granted, gamePicked) {
+        if (!granted || !gamePicked) return@LaunchedEffect
+        controller.cameraSelector = CameraDevices.selectorFor(cameraId)
+        controller.bindToLifecycle(lifecycleOwner)
+        controller.initializationFuture.addListener({
+            syncCameraOptics(forceZoom = true)
+            scheduleZoomApply()
+        }, mainExecutor)
+    }
+
+    DisposableEffect(lifecycleOwner, granted, gamePicked) {
+        if (!granted || !gamePicked) {
+            return@DisposableEffect onDispose { }
+        }
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    navigated.set(false)
+                    viewModel.resumeScanning()
+                    syncCameraOptics(forceZoom = false)
                 }
+                Lifecycle.Event.ON_PAUSE -> persistZoom(controller, viewModel)
+                else -> Unit
             }
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    LaunchedEffect(granted) {
-        if (granted) {
-            controller.bindToLifecycle(lifecycleOwner)
-            refreshTorchCapabilities(controller) { supported, max ->
-                torchStrengthSupported = supported
-                maxTorchStrength = max
-            }
-            resetZoomToDefault(controller)
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+        onDispose {
+            persistZoom(controller, viewModel)
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
         }
     }
 
-    LaunchedEffect(torchOn, lightIntensity, granted, maxTorchStrength, torchStrengthSupported) {
-        if (!granted) return@LaunchedEffect
+    // Persist pinch-zoom continuously (debounced in ViewModel) once camera is ready.
+    DisposableEffect(lifecycleOwner, granted, gamePicked, cameraId) {
+        if (!granted || !gamePicked) {
+            return@DisposableEffect onDispose { }
+        }
+        var attached: androidx.lifecycle.LiveData<androidx.camera.core.ZoomState>? = null
+        val observer = Observer<androidx.camera.core.ZoomState> { state ->
+            viewModel.setZoomRatio(state.zoomRatio)
+        }
+        fun attachZoomObserver() {
+            val live = controller.cameraInfo?.zoomState ?: return
+            if (attached === live) return
+            attached?.removeObserver(observer)
+            live.observe(lifecycleOwner, observer)
+            attached = live
+        }
+        val listener = Runnable { attachZoomObserver() }
+        controller.initializationFuture.addListener(listener, mainExecutor)
+        attachZoomObserver()
+        onDispose {
+            attached?.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(torchOn, lightIntensity, granted, gamePicked, maxTorchStrength, torchStrengthSupported) {
+        if (!granted || !gamePicked) return@LaunchedEffect
         applyTorch(controller, torchOn, lightIntensity, maxTorchStrength, torchStrengthSupported)
         activity?.setScanBrightness(lightIntensity.coerceIn(0.15f, 1f))
     }
@@ -212,17 +273,24 @@ fun ScanScreen(
         onDispose { activity?.setScanBrightness(null) }
     }
 
-    LaunchedEffect(autoScan, granted, panelExpanded) {
-        if (!granted) return@LaunchedEffect
+    LaunchedEffect(autoScan, granted, gamePicked, panelExpanded) {
+        if (!granted || !gamePicked) return@LaunchedEffect
         navigated.set(false)
+        controller.imageAnalysisResolutionSelector = analysisResolutionSelector(auto = autoScan)
         if (autoScan) {
             controller.setImageAnalysisAnalyzer(cameraExecutor) { proxy ->
                 try {
                     if (!viewModel.canAcceptAutoFrame()) return@setImageAnalysisAnalyzer
-                    val bitmap = proxy.toBitmap()
+                    val upright = com.scantrader.app.scan.CameraBitmaps.fromImageProxy(proxy)
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "autoFrame rot=${upright.rotationDegrees} " +
+                            "src=${upright.sourceSize.width}x${upright.sourceSize.height} " +
+                            "bmp=${upright.bitmap.width}x${upright.bitmap.height} " +
+                            "cropApplied=${upright.cropApplied}",
+                    )
                     val expanded = panelExpanded
                     mainExecutor.execute {
-                        viewModel.processAutoFrame(bitmap, expanded) { goToConfirm() }
+                        viewModel.processAutoFrame(upright.bitmap, expanded) { goToConfirm() }
                     }
                 } catch (_: Throwable) {
                 } finally {
@@ -243,6 +311,17 @@ fun ScanScreen(
     }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF12241D))) {
+        if (!gamePicked) {
+            GamePickOverlay(
+                onPick = { picked ->
+                    viewModel.setGame(picked)
+                    gamePicked = true
+                },
+                onBack = onBack,
+            )
+            return@Box
+        }
+
         if (granted) {
             AndroidView(
                 factory = { ctx ->
@@ -251,21 +330,25 @@ fun ScanScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT,
                         )
-                        // COMPATIBLE + FIT_CENTER: full FOV by default (not over-cropped),
-                        // pinch zoom still available for closer shots.
+                        // FILL_CENTER so the guide overlay matches the analysis/capture FOV
+                        // (FIT_CENTER letterboxes and misaligns the card-frame crop).
                         implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        scaleType = PreviewView.ScaleType.FIT_CENTER
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
                         this.controller = controller
                     }
                 },
                 update = { view ->
                     view.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    view.scaleType = PreviewView.ScaleType.FIT_CENTER
+                    view.scaleType = PreviewView.ScaleType.FILL_CENTER
                     view.controller = controller
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-            CardFrameOverlay(panelExpanded = panelExpanded, modifier = Modifier.fillMaxSize())
+            CardFrameOverlay(
+                panelExpanded = panelExpanded,
+                showBothBottomCorners = game == Game.POKEMON,
+                modifier = Modifier.fillMaxSize(),
+            )
         } else {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Serve il permesso fotocamera.", color = FrameAccent)
@@ -292,7 +375,12 @@ fun ScanScreen(
                         fontSize = 18.sp,
                     )
                     Text(
-                        "Inquadra tutta la carta · basso a sinistra = set",
+                        when (game) {
+                            Game.POKEMON ->
+                                "Inquadra tutta la carta · n° in basso a SX (moderni) o a DX (Base/Rocket/EX–XY)"
+                            else ->
+                                "Inquadra tutta la carta · basso a sinistra = set"
+                        },
                         color = FrameAccent.copy(alpha = 0.7f),
                         fontSize = 11.sp,
                     )
@@ -467,6 +555,14 @@ fun ScanScreen(
                                 )
                             }
 
+                            if (cameras.size > 1) {
+                                ScanCameraDropdown(
+                                    cameras = cameras,
+                                    selectedId = cameraId,
+                                    onSelect = viewModel::setCameraId,
+                                )
+                            }
+
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 ModeToggleCard(
                                     title = "Sessione",
@@ -520,7 +616,9 @@ fun ScanScreen(
                                     cameraExecutor,
                                     object : ImageCapture.OnImageSavedCallback {
                                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                            val bitmap = BitmapFactory.decodeFile(photo.absolutePath)
+                                            val bitmap = com.scantrader.app.scan.CameraBitmaps.fromJpegFile(
+                                                photo.absolutePath,
+                                            )
                                             mainExecutor.execute {
                                                 if (bitmap != null) {
                                                     viewModel.processBitmap(bitmap, panelExpanded = false) {
@@ -668,7 +766,11 @@ private fun ModeToggleCard(
 }
 
 @Composable
-private fun CardFrameOverlay(panelExpanded: Boolean, modifier: Modifier = Modifier) {
+private fun CardFrameOverlay(
+    panelExpanded: Boolean,
+    showBothBottomCorners: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     Canvas(modifier) {
         val rect = CardFrameGeometry.frameIn(size.width, size.height, panelExpanded)
         val left = rect.left
@@ -709,16 +811,26 @@ private fun CardFrameOverlay(panelExpanded: Boolean, modifier: Modifier = Modifi
             style = Stroke(width = 1.5.dp.toPx()),
         )
 
-        // Hint mark on bottom-left (collector / set zone)
+        // Hint: modern / MTG → bottom-left; Pokémon also marks bottom-right (WOTC–XY).
         val markW = frameW * 0.28f
         val markH = frameH * 0.08f
+        val markY = bottom - markH - 10.dp.toPx()
         drawRoundRect(
             color = Gold.copy(alpha = 0.35f),
-            topLeft = Offset(left + 8.dp.toPx(), bottom - markH - 10.dp.toPx()),
+            topLeft = Offset(left + 8.dp.toPx(), markY),
             size = Size(markW, markH),
             cornerRadius = CornerRadius(6f, 6f),
             style = Stroke(width = 2.dp.toPx()),
         )
+        if (showBothBottomCorners) {
+            drawRoundRect(
+                color = Gold.copy(alpha = 0.35f),
+                topLeft = Offset(right - markW - 8.dp.toPx(), markY),
+                size = Size(markW, markH),
+                cornerRadius = CornerRadius(6f, 6f),
+                style = Stroke(width = 2.dp.toPx()),
+            )
+        }
     }
 }
 
@@ -766,10 +878,114 @@ private fun applyTorch(
     }
 }
 
-/** Start / resume at 1x so the card isn't over-cropped by default. */
-private fun resetZoomToDefault(controller: LifecycleCameraController) {
-    runCatching {
-        val minZoom = controller.cameraInfo?.zoomState?.value?.minZoomRatio ?: 1f
-        controller.cameraControl?.setZoomRatio(minZoom.coerceAtLeast(1f))
+/** @return true if zoomState was available and applied (or already aligned). */
+private fun applySavedZoom(
+    controller: LifecycleCameraController,
+    ratio: Float,
+    force: Boolean = true,
+): Boolean {
+    return runCatching {
+        val state = controller.cameraInfo?.zoomState?.value ?: return false
+        val clamped = ratio.coerceIn(state.minZoomRatio, state.maxZoomRatio)
+        if (!force && abs(state.zoomRatio - clamped) < 0.02f) return true
+        controller.cameraControl?.setZoomRatio(clamped)
+        true
+    }.getOrDefault(false)
+}
+
+private fun persistZoom(controller: LifecycleCameraController, viewModel: ScanViewModel) {
+    val ratio = controller.cameraInfo?.zoomState?.value?.zoomRatio ?: return
+    viewModel.setZoomRatio(ratio)
+}
+
+@Composable
+private fun GamePickOverlay(
+    onPick: (Game) -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF12241D))
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = FrameAccent)
+        }
+        Spacer(Modifier.weight(0.3f))
+        Text(
+            "Cosa vuoi scannerizzare?",
+            color = FrameAccent,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 22.sp,
+        )
+        Text(
+            "Scegli il TCG prima di aprire la fotocamera.",
+            color = FrameAccent.copy(alpha = 0.7f),
+            fontSize = 14.sp,
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = { onPick(Game.POKEMON) },
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Gold,
+                contentColor = Color(0xFF12241D),
+            ),
+            shape = RoundedCornerShape(14.dp),
+        ) {
+            Text("Pokémon", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        }
+        OutlinedButton(
+            onClick = { onPick(Game.MTG) },
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, Gold.copy(alpha = 0.7f)),
+        ) {
+            Text("Magic: The Gathering", color = Gold, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        }
+        Spacer(Modifier.weight(0.7f))
     }
 }
+
+@Composable
+private fun ScanCameraDropdown(
+    cameras: List<DeviceCamera>,
+    selectedId: String?,
+    onSelect: (String?) -> Unit,
+) {
+    val selected = cameras.firstOrNull { it.id == selectedId }
+        ?: cameras.firstOrNull { it.label.startsWith("Principale") }
+        ?: cameras.getOrNull(cameras.size / 2)
+        ?: cameras.first()
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Fotocamera", color = FrameAccent, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+        SimpleDropdown(
+            label = "Lente",
+            options = cameras,
+            selected = selected,
+            onSelect = { onSelect(it.id) },
+            labelOf = { it.label },
+        )
+        Text(
+            "Usata per questa scansione. Lo zoom resta quello dell’ultima regolazione.",
+            color = FrameAccent.copy(alpha = 0.65f),
+            fontSize = 11.sp,
+        )
+    }
+}
+
+/** Analysis stream at 1280×960 (ImageCapture stays full-res). */
+@Suppress("UNUSED_PARAMETER")
+private fun analysisResolutionSelector(auto: Boolean): ResolutionSelector =
+    ResolutionSelector.Builder()
+        .setResolutionStrategy(
+            ResolutionStrategy(
+                android.util.Size(1280, 960),
+                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+            ),
+        )
+        .build()

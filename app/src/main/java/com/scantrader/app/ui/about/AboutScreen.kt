@@ -41,7 +41,11 @@ fun AboutScreen(onBack: () -> Unit) {
                     "Non è affiliata, approvata o sponsorizzata da Wizards of the Coast, The Pokémon Company, " +
                     "Nintendo, CardTrader o dai rispettivi titolari dei marchi. Magic: The Gathering, Pokémon " +
                     "e i nomi delle carte appartengono ai rispettivi proprietari e sono usati solo per identificazione.\n\n" +
-                    "Cataloghi: Scryfall (MTG) e TCGdex (Pokémon). OCR on-device con ML Kit: le foto restano sul telefono.",
+                    "Cataloghi: Scryfall (MTG) e TCGdex (Pokémon in inglese, italiano, giapponese e cinese). " +
+                    "Riconoscimento ibrido: OCR on-device (ML Kit), fingerprint dell’arte e, opzionale, " +
+                    "pack neurale Milo (AGPL-3.0, HanClinto/CollectorVision) con indici embedding " +
+                    "Scryfall (MTG) e/o TCGdex EN (Pokémon, import .stcat). " +
+                    "Le foto restano sul telefono.",
             )
         }
     }

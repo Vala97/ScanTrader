@@ -40,13 +40,27 @@ data class IdentifiedCard(
     val setName: String,
     val collectorNumber: String,
     val scryfallId: String? = null,
+    /** TCGdex card id (e.g. `base1-32`, `sv10-072`). */
+    val tcgdexId: String? = null,
     val tcgplayerId: String? = null,
     val imageUrl: String? = null,
     /** Cardmarket EUR from Scryfall (non-foil). */
     val priceEur: String? = null,
     /** Cardmarket EUR foil from Scryfall. */
     val priceEurFoil: String? = null,
+    /** Catalog/OCR prior in 0..1 (set+number strong, name weak). */
+    val ocrScore: Float? = null,
+    /** On-device art similarity vs scan crop in 0..1. */
+    val visualScore: Float? = null,
+    /** Fused confidence used for ranking and auto-scan. */
+    val matchConfidence: Float? = null,
 ) {
     fun priceForExport(foil: Boolean): String? =
         if (foil) priceEurFoil?.takeIf { it.isNotBlank() } ?: priceEur else priceEur
+
+    fun confidenceLabel(): String? {
+        val c = matchConfidence ?: return null
+        val pct = (c * 100f).toInt().coerceIn(0, 100)
+        return "$pct%"
+    }
 }
