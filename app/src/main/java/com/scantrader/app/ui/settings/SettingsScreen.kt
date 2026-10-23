@@ -108,7 +108,8 @@ fun SettingsScreen(
                     },
                 )
                 Text(
-                    "In auto-scan, se non tocchi la carta trovata, salva in collezione dopo N secondi.",
+                    "In auto-scan, se il riconoscimento supera la soglia forte (74%) e non tocchi la carta, " +
+                        "salva in collezione dopo N secondi. I match deboli restano in conferma.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

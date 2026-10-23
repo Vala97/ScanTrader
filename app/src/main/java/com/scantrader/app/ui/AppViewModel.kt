@@ -606,7 +606,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 )
             }
             com.scantrader.app.scan.ScanDebug.d(
-                "gate autoOk=$autoOk reason=${gate.reason} " +
+                "gate autoOk=$autoOk strict=${gate.strict} reason=${gate.reason} " +
                     "nameOk=${gate.nameOk} nameConflict=${gate.nameConflict} " +
                     "cnOk=${gate.cnOk} setOk=${gate.setOk} countOk=${gate.countOk} " +
                     "shortCn=${gate.shortCn} conf=${gate.confidence}",
@@ -628,6 +628,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             app.scanSession.parsed = parsed
             app.scanSession.queryFingerprint = fingerprint
             app.scanSession.candidates = candidates
+            app.scanSession.autoMatch = gate
+            app.scanSession.autoMatchCardKey = topKey
             if (candidates.isEmpty() && text.isBlank() && bottomText.isBlank()) {
                 app.scanSession.errorMessage =
                     "Nessun testo letto. Inquadra tutta la carta, soprattutto il basso a sinistra (numero + set)."
@@ -646,10 +648,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         sameCardClearFrames = 0
     }
 
-    private fun autoCardKey(card: IdentifiedCard): String =
-        card.scryfallId
-            ?: card.tcgdexId
-            ?: "${card.game.name}|${card.setCode}|${card.collectorNumber}|${card.name}"
+    private fun autoCardKey(card: IdentifiedCard): String = card.identityKey()
 
     private data class HexOcrBundle(
         val top: String,
@@ -701,6 +700,9 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     val sessionCondition: CardCondition? get() = app.scanSession.condition
     /** True when the confirm screen was reached via auto-scan hit. */
     val fromAutoScan: Boolean get() = app.scanSession.autoScan
+    val autoMatch: com.scantrader.app.vision.MatchFusion.AutoMatchDecision?
+        get() = app.scanSession.autoMatch
+    val autoMatchCardKey: String? get() = app.scanSession.autoMatchCardKey
 
     init {
         viewModelScope.launch { app.repository.ensureDefaultCollection() }

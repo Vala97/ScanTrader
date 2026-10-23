@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -53,6 +54,7 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.ui.ConfirmViewModel
 import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
+import com.scantrader.app.vision.MatchFusion
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -80,9 +82,24 @@ fun ConfirmScreen(
     var collectionId by remember { mutableStateOf(viewModel.preferredCollectionId) }
     var autoSaveCancelled by remember { mutableStateOf(false) }
     var secondsLeft by remember { mutableIntStateOf(0) }
+    val autoMatch = viewModel.autoMatch
+    val gatedKey = viewModel.autoMatchCardKey
+    val selectedKey = selected?.identityKey()
+    val selectedMatchesGate = gatedKey == null || selectedKey == null || gatedKey == selectedKey
     val autoSaveArmed = viewModel.fromAutoScan &&
         defaults.autoSaveWaitSeconds > 0 &&
+        MatchFusion.allowsAutoSave(autoMatch) &&
+        selectedMatchesGate &&
         !autoSaveCancelled
+    val matchNote = autoMatch?.let { decision ->
+        MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = viewModel.fromAutoScan,
+            autoSaveWaitSeconds = defaults.autoSaveWaitSeconds,
+            selectedMatchesGate = selectedMatchesGate,
+            autoSaveCancelled = autoSaveCancelled,
+        )
+    }
 
     fun cancelAutoSave() {
         autoSaveCancelled = true
@@ -209,6 +226,9 @@ fun ConfirmScreen(
         ) {
             if (!viewModel.errorMessage.isNullOrBlank()) {
                 item { Text(viewModel.errorMessage!!) }
+            }
+            matchNote?.let { note ->
+                item { MatchNote(note) }
             }
 
             selected?.let { current ->
@@ -426,6 +446,31 @@ fun ConfirmScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MatchNote(note: MatchFusion.ConfirmMatchNote) {
+    val (container, content) = when (note.tone) {
+        MatchFusion.ConfirmMatchTone.AUTO_SAVE ->
+            MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+        MatchFusion.ConfirmMatchTone.CONFIRM ->
+            MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
+        MatchFusion.ConfirmMatchTone.BLOCKED ->
+            MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
+    }
+    Surface(
+        color = container,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(note.title, fontWeight = FontWeight.SemiBold, color = content)
+            Text(note.body, style = MaterialTheme.typography.bodyMedium, color = content)
         }
     }
 }

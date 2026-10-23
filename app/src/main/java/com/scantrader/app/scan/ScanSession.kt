@@ -6,6 +6,7 @@ import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.vision.ImageFingerprint
+import com.scantrader.app.vision.MatchFusion
 
 class ScanSession {
     var game: Game = Game.MTG
@@ -15,6 +16,10 @@ class ScanSession {
     var parsed: ParsedCardText? = null
     var candidates: List<IdentifiedCard> = emptyList()
     var errorMessage: String? = null
+    /** Gate for the top candidate of the last scan. Drives confirm auto-save. */
+    var autoMatch: MatchFusion.AutoMatchDecision? = null
+    /** [IdentifiedCard.identityKey] of the card [autoMatch] scored. */
+    var autoMatchCardKey: String? = null
     /** Fingerprint of last scan crop — used to re-rank manual catalog searches. */
     var queryFingerprint: ImageFingerprint.Result? = null
 
@@ -35,5 +40,7 @@ class ScanSession {
         candidates = emptyList()
         errorMessage = null
         queryFingerprint = null
+        autoMatch = null
+        autoMatchCardKey = null
     }
 }

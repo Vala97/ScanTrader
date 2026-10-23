@@ -57,14 +57,20 @@ object MatchFusion {
 
     /**
      * Soft floors for auto-scan without a decisive neural hit.
-     * Confirm screen is the safety net — better to open confirm than loop forever.
+     * Opening confirm is the safety net. Auto-save on that screen stays off
+     * unless [AutoMatchDecision.strict] is set.
      */
     const val POKEMON_AUTO_CONFIDENCE_MIN = 0.48f
     const val MTG_AUTO_CONFIDENCE_MIN = 0.52f
 
-    /** Result of the auto-scan confidence gate (for logcat diagnostics). */
+    /** Result of the auto-scan confidence gate. */
     data class AutoMatchDecision(
         val accepted: Boolean,
+        /**
+         * True only when the 0.74 bar and its existing strict exceptions passed.
+         * Soft accepts (Pokémon from 0.48, MTG from 0.52) keep [accepted] and leave this false.
+         */
+        val strict: Boolean = false,
         val reason: String,
         val nameOk: Boolean = false,
         val nameConflict: Boolean = false,
@@ -74,6 +80,110 @@ object MatchFusion {
         val shortCn: Boolean = false,
         val confidence: Float? = null,
     )
+
+    enum class ConfirmMatchTone { AUTO_SAVE, CONFIRM, BLOCKED }
+
+    /** Italian copy for the confirm screen: why auto-save will or will not run. */
+    data class ConfirmMatchNote(
+        val title: String,
+        val body: String,
+        val tone: ConfirmMatchTone,
+    )
+
+    /** Configurable confirm-screen wait may fire only for a strict accept. */
+    fun allowsAutoSave(decision: AutoMatchDecision?): Boolean =
+        decision != null && decision.accepted && decision.strict
+
+    fun confirmMatchNote(
+        decision: AutoMatchDecision,
+        fromAutoScan: Boolean,
+        autoSaveWaitSeconds: Int,
+        selectedMatchesGate: Boolean = true,
+        autoSaveCancelled: Boolean = false,
+    ): ConfirmMatchNote {
+        val pct = decision.confidence?.let { confidence ->
+            "${(confidence * 100f).toInt().coerceIn(0, 100)}%"
+        } ?: "senza percentuale"
+        val signal = signalPhrase(decision.reason)
+        val waitOn = autoSaveWaitSeconds > 0
+        return when {
+            decision.strict && fromAutoScan && waitOn && !selectedMatchesGate -> ConfirmMatchNote(
+                title = "Conferma a mano",
+                body = "Il riconoscimento forte ($pct) riguarda un’altra stampa. " +
+                    "Tocca Salva per aggiungere la carta scelta.",
+                tone = ConfirmMatchTone.BLOCKED,
+            )
+            decision.strict && fromAutoScan && waitOn && selectedMatchesGate && autoSaveCancelled ->
+                ConfirmMatchNote(
+                    title = "Conferma a mano",
+                    body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
+                        "Hai modificato la scheda: tocca Salva per aggiungere la carta.",
+                    tone = ConfirmMatchTone.CONFIRM,
+                )
+            decision.strict && fromAutoScan && waitOn && selectedMatchesGate -> ConfirmMatchNote(
+                title = "Salvataggio automatico",
+                body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
+                    "Se non tocchi nulla, la carta entra in collezione da sola.",
+                tone = ConfirmMatchTone.AUTO_SAVE,
+            )
+            decision.strict && fromAutoScan && !waitOn -> ConfirmMatchNote(
+                title = "Riconoscimento forte",
+                body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
+                    "L’attesa in Impostazioni è disattivata. Tocca Salva.",
+                tone = ConfirmMatchTone.CONFIRM,
+            )
+            decision.strict -> ConfirmMatchNote(
+                title = "Riconoscimento forte",
+                body = "Riconoscimento forte ($pct). ${signal.sentence()}. Tocca Salva per aggiungere la carta.",
+                tone = ConfirmMatchTone.CONFIRM,
+            )
+            decision.accepted -> ConfirmMatchNote(
+                title = "Conferma a mano",
+                body = "Match parziale ($pct): $signal. " +
+                    "Resta sotto la soglia forte del 74%. Tocca Salva per aggiungere la carta.",
+                tone = ConfirmMatchTone.CONFIRM,
+            )
+            else -> ConfirmMatchNote(
+                title = "Conferma a mano",
+                body = "Serve un controllo ($pct): $signal. Tocca Salva solo se la carta è quella giusta.",
+                tone = ConfirmMatchTone.CONFIRM,
+            )
+        }
+    }
+
+    /** Short Italian clause for an [AutoMatchDecision.reason] code. */
+    fun signalPhrase(reason: String): String {
+        val conflict = NAME_CONFLICT.matchEntire(reason)
+        if (conflict != null) {
+            val read = conflict.groupValues[1]
+            val proposed = conflict.groupValues[2]
+            return "il nome letto («$read») non coincide con «$proposed»"
+        }
+        return when (reason) {
+            "strict" -> "testo e immagine superano la soglia forte"
+            "nameOk" -> "il nome letto coincide"
+            "cn+count" -> "numero collezionista e totale del set coincidono"
+            "cn+ocr" -> "il numero collezionista coincide, con OCR debole"
+            "conf+visual" -> "immagine e confidenza sono solo medie"
+            "scryfallName" -> "la ricerca per nome ha trovato la carta e il titolo OCR è in un'altra lingua"
+            "cn+set+visualStrong" -> "set, numero e immagine coincidono"
+            "cn+set" -> "set e numero collezionista coincidono"
+            "name+cn+set" -> "nome, numero e set coincidono"
+            "name+cn" -> "nome e numero collezionista coincidono"
+            "name+set" -> "nome e set coincidono"
+            "nameExact" -> "il nome coincide in modo netto"
+            "name+visual" -> "nome e immagine coincidono"
+            "cn+set+visual" -> "set, numero e immagine coincidono"
+            "confLow" -> "la confidenza è sotto la soglia"
+            "visualLow" -> "l'immagine non assomiglia alla carta"
+            "strictFail" -> "la soglia forte non è raggiunta"
+            "softFail" -> "i segnali OCR non bastano"
+            "cnShortWeak" -> "il numero è corto e gli altri segnali sono deboli"
+            "noTop" -> "nessun candidato"
+            "noConf" -> "manca la confidenza del match"
+            else -> "motivo $reason"
+        }
+    }
 
     /**
      * Gate for hands-free auto-scan.
@@ -105,6 +215,7 @@ object MatchFusion {
         if (strictOk) {
             return AutoMatchDecision(
                 accepted = true,
+                strict = true,
                 reason = "strict",
                 confidence = confidence,
             )
@@ -288,6 +399,10 @@ object MatchFusion {
             confidence = confidence,
         )
     }
+
+    private val NAME_CONFLICT = Regex("""nameConflict name=(.*) top=(.*)""")
+
+    private fun String.sentence(): String = replaceFirstChar { it.uppercaseChar() }
 
     private fun looksLikeMtgRulesNoise(name: String): Boolean =
         Regex(

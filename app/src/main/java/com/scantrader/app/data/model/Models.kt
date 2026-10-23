@@ -63,4 +63,10 @@ data class IdentifiedCard(
         val pct = (c * 100f).toInt().coerceIn(0, 100)
         return "$pct%"
     }
+
+    /** Stable id of the print evaluateAutoMatch scored, shared with the same-card lock. */
+    fun identityKey(): String =
+        scryfallId
+            ?: tcgdexId
+            ?: "$game|$setCode|$collectorNumber|$name"
 }
