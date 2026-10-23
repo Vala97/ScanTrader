@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ScanTrader</string>
+    <string name="about_version">Versione V%1$s (build %2$d)</string>
+    <string name="about_version_debug">Versione V%1$s (build %2$d) · debug</string>
 </resources>
