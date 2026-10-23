@@ -25,13 +25,15 @@ object PokemonCatalog {
     fun scriptLanguages(name: String?): List<String> {
         val text = name?.trim().orEmpty()
         if (text.isEmpty()) return emptyList()
-        val kana = text.any { it in '\u3040'..'\u30ff' || it == 'ー' }
-        val han = text.any { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN }
-        val latin = text.any { it.isLetter() && it.code < 0x250 }
+        val kana = text.count { it in '\u3040'..'\u30ff' || it == 'ー' }
+        val han = text.count { Character.UnicodeScript.of(it.code) == Character.UnicodeScript.HAN }
+        val latin = text.count { it.isLetter() && it.code < 0x250 }
+        // Latin-dominant (Italian/EN OCR with CJK noise) → do not query JA/ZH.
+        if (latin >= 3 && latin >= (kana + han)) return listOf(EN, IT)
         return when {
-            kana -> listOf(JA, ZH_TW, ZH_CN)
-            han && !latin -> listOf(ZH_TW, ZH_CN, JA)
-            han && latin -> listOf(EN, IT, JA, ZH_TW, ZH_CN)
+            kana > 0 -> listOf(JA, ZH_TW, ZH_CN)
+            han > 0 && latin == 0 -> listOf(ZH_TW, ZH_CN, JA)
+            han > 0 -> listOf(EN, IT, JA, ZH_TW, ZH_CN)
             else -> listOf(EN, IT)
         }
     }
@@ -48,15 +50,23 @@ object PokemonCatalog {
 
     fun nameQueries(name: String?): List<String> {
         val full = name?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
-        if (full.any { it.code > 0x2E80 }) return listOf(full)
+        if (full.any { it.code > 0x2E80 } && full.none { it.isLetter() && it.code < 0x250 }) {
+            return listOf(full)
+        }
         val out = linkedSetOf(full)
         val parts = full.split(Regex("""\s+""")).filter { it.length >= 3 }
         parts.firstOrNull()?.let { out += it }
-        if (parts.size >= 2) out += parts.takeLast(2).joinToString(" ")
-        out += full.replace(Regex("""(?i)\b(del|della|dei|delle|di|the|of)\b"""), " ")
+        if (parts.size >= 2) {
+            out += parts.take(2).joinToString(" ")
+            out += parts.takeLast(2).joinToString(" ")
+        }
+        // "Kilowattrel di Kissara" → also "Kilowattrel"
+        val withoutOwner = full.replace(Regex("""(?i)\b(del|della|dei|delle|di|the|of|and)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
-        return out.filter { it.length >= 2 }.distinct().take(3)
+        if (withoutOwner.length >= 3) out += withoutOwner
+        withoutOwner.split(Regex("""\s+""")).firstOrNull { it.length >= 4 }?.let { out += it }
+        return out.filter { it.length >= 2 }.distinct().take(5)
     }
 
     /** TCGdex card ids. International numbers are zero-padded (`sv03-001`); both forms are tried. */
@@ -130,9 +140,14 @@ object PokemonCatalog {
         var score = 0
         if (!queryNumber.isNullOrBlank() && numberMatches(queryNumber, cardNumber)) score += 50
         if (querySetIds.any { it.equals(setId, ignoreCase = true) }) score += 30
-        if (setCardCount != null && printedTotal == setCardCount) score += 25
-        if (!queryName.isNullOrBlank() && nameMatches(cardName, queryName)) {
-            score += if (normCardName(cardName) == normCardName(queryName)) 40 else 20
+        if (setCardCount != null && printedTotal == setCardCount) score += 35
+        if (!queryName.isNullOrBlank()) {
+            if (nameMatches(cardName, queryName)) {
+                score += if (normCardName(cardName) == normCardName(queryName)) 45 else 25
+            } else {
+                // Strong penalty: number-only hits from other languages/sets (Swoobat #72, etc.).
+                score -= 45
+            }
         }
         return score
     }

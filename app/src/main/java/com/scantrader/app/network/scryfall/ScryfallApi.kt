@@ -31,6 +31,8 @@ data class ScryfallSearchResponse(
 data class ScryfallCard(
     val id: String,
     val name: String,
+    /** Localized title when searching a non-English print (e.g. Italian). */
+    @SerializedName("printed_name") val printedName: String? = null,
     val set: String,
     @SerializedName("set_name") val setName: String? = null,
     @SerializedName("collector_number") val collectorNumber: String = "",
@@ -39,20 +41,23 @@ data class ScryfallCard(
     @SerializedName("tcgplayer_id") val tcgplayerId: Long? = null,
     val prices: ScryfallPrices? = null,
 ) {
+    /**
+     * Full card face for UI feedback (confirm / collection) and visual ranking.
+     * Prefer `normal`/`large` over `art_crop` so the user sees the real matched print.
+     */
     fun bestImageUrl(): String? {
-        // Prefer art_crop for reverse-image ranking (illustration only).
-        val fromUris = imageUris?.artCrop
-            ?: imageUris?.normal
+        val fromUris = imageUris?.normal
             ?: imageUris?.large
             ?: imageUris?.small
-            ?: cardFaces?.firstOrNull()?.imageUris?.artCrop
+            ?: imageUris?.artCrop
             ?: cardFaces?.firstOrNull()?.imageUris?.normal
             ?: cardFaces?.firstOrNull()?.imageUris?.large
             ?: cardFaces?.firstOrNull()?.imageUris?.small
+            ?: cardFaces?.firstOrNull()?.imageUris?.artCrop
         if (!fromUris.isNullOrBlank()) return fromUris
         // CDN fallback from Scryfall id (works even if image_uris was omitted).
         if (id.length < 2) return null
-        return "https://cards.scryfall.io/art_crop/front/${id[0]}/${id[1]}/$id.jpg"
+        return "https://cards.scryfall.io/normal/front/${id[0]}/${id[1]}/$id.jpg"
     }
 }
 

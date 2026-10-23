@@ -7,13 +7,14 @@ Non è affiliata a Wizards of the Coast, The Pokémon Company, Nintendo o CardTr
 ## Cosa fa (MVP)
 
 1. Scan carta singola o sessione (più carte di fila)
-2. Riconoscimento **ibrido**: OCR + fingerprint arte + (opzionale) pack neurale Milo on-device (~60 MB, AGPL) con gallery Scryfall
+2. Riconoscimento **ibrido**: OCR + fingerprint arte + (opzionale) pack neurale Milo on-device (AGPL) con gallery Scryfall (MTG) e/o TCGdex EN (Pokémon)
 3. Conferma lingua, condizione, foil, quantità, collezione (con % match)
 4. Export CSV CardTrader (un file per gioco) tramite share Android
 
 Nessun account, nessun backend a pagamento. Unico costo eventuale: account sviluppatore Google Play (~25 USD) se pubblichi.
 
-Il pack neurale MTG si scarica da **Impostazioni** (modello + catalogo da Hugging Face `HanClinto/milo`, licenza AGPL-3.0).
+- Pack neurale **MTG**: **Impostazioni** → download da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0).
+- Pack neurale **Pokémon**: genera `pokemon.stcat` con [`tools/build_pokemon_stcat`](tools/build_pokemon_stcat/README.md), poi **Impostazioni → Importa .stcat**.
 
 ## Aprire il progetto
 

@@ -31,7 +31,9 @@ class CatalogLookup(
     private suspend fun lookupMtg(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
         val results = mutableListOf<IdentifiedCard>()
         val setCandidates = OcrParser.setCodeCandidates(parsed.setCode)
+            .filter { code -> code.any { it.isLetter() } }
         val numberCandidates = OcrParser.collectorCandidates(parsed.collectorNumber)
+        val searchName = OcrParser.cleanMtgNameGuess(name)
 
         // Strongest signal for MTG: set + collector number (language-independent).
         outer@ for (set in setCandidates) {
@@ -44,65 +46,112 @@ class CatalogLookup(
             }
         }
 
-        if (results.isEmpty() && !parsed.collectorNumber.isNullOrBlank()) {
+        if (!parsed.collectorNumber.isNullOrBlank() && setCandidates.isNotEmpty() && results.isEmpty()) {
             val cn = numberCandidates.first()
-            val setPart = setCandidates.firstOrNull()?.let { "s:$it" }.orEmpty()
-            val q = listOf("cn:\"$cn\"", setPart).filter { it.isNotBlank() }.joinToString(" ")
-            runCatching { scryfall.search(q) }
+            val setPart = setCandidates.first()
+            runCatching { scryfall.search("cn:\"$cn\" s:$setPart") }
                 .onSuccess { response ->
-                    val prior = if (setCandidates.isNotEmpty()) 0.78f else 0.62f
-                    results += response.data.map { it.toIdentified(ocrScore = prior) }
+                    results += response.data.map { it.toIdentified(ocrScore = 0.78f) }
                 }
         }
 
-        if (!name.isNullOrBlank()) {
+        val idHitDisagreesWithName = results.isNotEmpty() &&
+            !searchName.isNullOrBlank() &&
+            !mtgNameAgrees(results.first().name, searchName)
+
+        // Name search when no id hit, or id hit contradicts OCR title (bad cn from +1/+1).
+        if (!searchName.isNullOrBlank() && (results.isEmpty() || idHitDisagreesWithName)) {
+            val nameHits = mutableListOf<IdentifiedCard>()
+            val longToken = searchName.split(Regex("""\s+"""))
+                .map { it.trim().trim(',', '.', '!', '?') }
+                .filter { it.length >= 8 }
+                .maxByOrNull { it.length }
             val queries = buildList {
-                add("!\"$name\"")
-                add("lang:it !\"$name\"")
-                add("lang:it name:\"$name\"")
-                add(name)
-                if (!parsed.collectorNumber.isNullOrBlank()) {
-                    add("cn:${numberCandidates.first()} name:\"$name\"")
+                add("lang:it !\"$searchName\"")
+                add("!\"$searchName\"")
+                add("lang:it name:\"$searchName\"")
+                // OCR typos (`Traslormazione…`): unique long token still finds the print.
+                if (longToken != null) {
+                    add("lang:it name:$longToken")
+                    add("name:$longToken")
+                }
+                if (!parsed.collectorNumber.isNullOrBlank() && !idHitDisagreesWithName) {
+                    add("cn:${numberCandidates.first()} name:\"$searchName\"")
                 }
             }
             for (q in queries) {
-                if (results.size >= 8) break
                 runCatching { scryfall.search(q) }
                     .onSuccess { response ->
-                        results += response.data.map { it.toIdentified(ocrScore = 0.45f) }
+                        if (response.data.isNotEmpty()) {
+                            val exact = q.contains("!\"")
+                            nameHits += response.data.take(6).map {
+                                it.toIdentified(ocrScore = if (exact) 0.88f else 0.55f)
+                            }
+                        }
                     }
                     .onFailure { if (it !is HttpException) throw it }
+                if (nameHits.isNotEmpty()) break
+            }
+            if (nameHits.isNotEmpty()) {
+                return if (idHitDisagreesWithName) nameHits else (nameHits + results)
             }
         }
         return results
     }
 
+    /** Loose check: shared tokens or substring — IT titles rarely equal EN Scryfall names. */
+    private fun mtgNameAgrees(cardName: String, queryName: String): Boolean {
+        val card = cardName.lowercase().substringBefore("//").trim()
+        val query = queryName.lowercase().trim()
+        if (card.contains(query) || query.contains(card)) return true
+        val qTokens = query.split(Regex("""[^a-z0-9àèéìòù]+""")).filter { it.length >= 4 }
+        if (qTokens.isEmpty()) return false
+        return qTokens.count { token -> card.contains(token) } >= 1
+    }
+
     private suspend fun lookupPokemon(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
         val number = OcrParser.collectorCandidates(parsed.collectorNumber).firstOrNull()
-        val langs = PokemonCatalog.languages(name, parsed.setCode)
+        val noisyName = OcrParser.looksLikeAbilityOrAttackName(name)
+        // When OCR grabbed an ability/attack, ignore name for search — identity is set+number.
+        val searchName = name.takeUnless { noisyName }
+        val hasSolidId = !number.isNullOrBlank() &&
+            (!parsed.setCode.isNullOrBlank() || parsed.setCardCount != null)
+        val langs = PokemonCatalog.languages(searchName, parsed.setCode)
         val cards = coroutineScope {
             langs.map { lang ->
-                async { searchPokemonLanguage(lang, name, number, parsed) }
+                async { searchPokemonLanguage(lang, searchName, number, parsed, idFirst = hasSolidId || noisyName) }
             }.awaitAll().flatten()
         }
-        return cards
+        val scored = cards
             .distinctBy { "${it.image}-${it.id}" }
             .map { card ->
-                val setIds = PokemonSets.idsFor(parsed.setCode, cardLang(card))
+                val setIds = PokemonSets.idsFor(parsed.setCode, cardLang(card)) +
+                    PokemonSets.idsForCardCount(parsed.setCardCount)
                 val raw = PokemonCatalog.score(
                     cardName = card.name,
                     cardNumber = card.localId,
                     setId = card.set?.id ?: card.id.substringBefore('-'),
                     printedTotal = card.set?.cardCount?.official,
-                    queryName = name,
+                    // Noisy ability names must not tank ranking — score by id only.
+                    queryName = searchName,
                     queryNumber = number,
-                    querySetIds = setIds,
+                    querySetIds = setIds.distinct(),
                     setCardCount = parsed.setCardCount,
                 )
-                card.toIdentified().copy(ocrScore = (raw / 145f).coerceIn(0.05f, 1f))
+                card.toIdentified().copy(ocrScore = (raw / 160f).coerceIn(0.02f, 1f))
             }
             .sortedByDescending { it.ocrScore ?: 0f }
-            .take(12)
+        // Drop obvious junk when OCR name is a real title (avoid Malamar from "mal di testa").
+        // Skip this filter when name is ability noise — id match is enough.
+        val filtered = if (!noisyName && !searchName.isNullOrBlank() && searchName.length >= 4) {
+            val withName = scored.filter {
+                PokemonCatalog.nameMatches(it.name, searchName) || (it.ocrScore ?: 0f) >= 0.35f
+            }
+            withName.ifEmpty { scored }
+        } else {
+            scored
+        }
+        return filtered.take(12)
     }
 
     private suspend fun searchPokemonLanguage(
@@ -110,26 +159,35 @@ class CatalogLookup(
         name: String?,
         number: String?,
         parsed: ParsedCardText,
+        idFirst: Boolean = false,
     ): List<TcgdexCard> {
-        val setIds = if (lang == PokemonCatalog.EN || lang == PokemonCatalog.IT) {
-            val mapped = OcrParser.setCodeCandidates(parsed.setCode)
-                .flatMap { PokemonSets.recognizedIds(it) }
-                .distinct()
-            mapped.ifEmpty { PokemonSets.idsFor(parsed.setCode, lang) }
-        } else {
-            PokemonSets.idsFor(parsed.setCode, lang)
-        }
+        val setIds = resolvePokemonSetIds(lang, parsed)
         val found = linkedMapOf<String, TcgdexCard>()
 
+        // Prefer set+number (and card-count sets) before any name search.
         if (!number.isNullOrBlank()) {
-            for (setId in setIds.take(4)) {
+            for (setId in setIds.take(6)) {
                 for (id in PokemonCatalog.cardIds(setId, number)) {
                     val card = runCatching { tcgdex.card(lang, id) }.getOrNull() ?: continue
                     found[card.id] = card
                 }
                 if (found.isNotEmpty()) break
             }
+            if (found.isEmpty()) {
+                val localIds = listOf(
+                    number,
+                    number.trimStart('0').ifBlank { number }.padStart(3, '0'),
+                ).distinct()
+                for (localId in localIds) {
+                    val briefs = runCatching { tcgdex.search(lang, localId = localId) }.getOrDefault(emptyList())
+                    if (briefs.isEmpty()) continue
+                    fetchBriefs(lang, pickBriefs(briefs, number, setIds), found)
+                    if (found.isNotEmpty()) break
+                }
+            }
         }
+        // Solid id hit: name is only a tie-break later via score(), skip name search.
+        if (idFirst && found.isNotEmpty()) return found.values.toList()
         if (found.values.any { it.matches(name, number, setIds) }) return found.values.toList()
 
         if (!name.isNullOrBlank()) {
@@ -140,7 +198,7 @@ class CatalogLookup(
             }
         }
 
-        if (found.values.none { it.matches(name, number, setIds) } && !number.isNullOrBlank()) {
+        if (found.values.none { it.matches(name, number, setIds) } && !number.isNullOrBlank() && found.isEmpty()) {
             val localIds = listOf(number, number.trimStart('0').ifBlank { number }.padStart(3, '0')).distinct()
             for (localId in localIds) {
                 val briefs = runCatching { tcgdex.search(lang, localId = localId) }.getOrDefault(emptyList())
@@ -150,6 +208,19 @@ class CatalogLookup(
             }
         }
         return found.values.toList()
+    }
+
+    private fun resolvePokemonSetIds(lang: String, parsed: ParsedCardText): List<String> {
+        val fromPrinted = if (lang == PokemonCatalog.EN || lang == PokemonCatalog.IT) {
+            val mapped = OcrParser.setCodeCandidates(parsed.setCode)
+                .flatMap { PokemonSets.recognizedIds(it) }
+                .distinct()
+            mapped.ifEmpty { PokemonSets.idsFor(parsed.setCode, lang) }
+        } else {
+            PokemonSets.idsFor(parsed.setCode, lang)
+        }
+        val fromCount = PokemonSets.idsForCardCount(parsed.setCardCount)
+        return (fromPrinted + fromCount).distinct()
     }
 
     private suspend fun fetchBriefs(
@@ -206,7 +277,8 @@ class CatalogLookup(
     private fun ScryfallCard.toIdentified(ocrScore: Float? = null): IdentifiedCard =
         IdentifiedCard(
             game = Game.MTG,
-            name = name,
+            // Prefer printed (IT) name when Scryfall returns it — matches OCR titles.
+            name = printedName?.takeIf { it.isNotBlank() } ?: name,
             setCode = set,
             setName = setName.orEmpty(),
             collectorNumber = collectorNumber,
@@ -227,6 +299,7 @@ class CatalogLookup(
             setCode = setId,
             setName = set?.name.orEmpty(),
             collectorNumber = localId.ifBlank { id.substringAfter('-', "") },
+            tcgdexId = id,
             imageUrl = image?.let { "$it/low.webp" },
             priceEur = formatEur(cm?.avg ?: cm?.trend),
             priceEurFoil = formatEur(cm?.avgHolo ?: cm?.trendHolo),

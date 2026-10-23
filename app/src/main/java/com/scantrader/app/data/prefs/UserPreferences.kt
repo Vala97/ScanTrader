@@ -2,11 +2,14 @@ package com.scantrader.app.data.prefs
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore("settings")
@@ -18,6 +21,11 @@ class UserPreferences(private val context: Context) {
                 ?: CardLanguage.ENGLISH,
             condition = prefs[CONDITION]?.let { runCatching { CardCondition.valueOf(it) }.getOrNull() }
                 ?: CardCondition.NEAR_MINT,
+            cameraId = prefs[CAMERA_ID]?.takeIf { it.isNotBlank() },
+            zoomRatio = prefs[ZOOM_RATIO]?.takeIf { it.isFinite() && it > 0f } ?: 1f,
+            autoSaveWaitSeconds = prefs[AUTO_SAVE_WAIT_SECONDS]
+                ?.takeIf { it in AUTO_SAVE_WAIT_OPTIONS }
+                ?: 0,
         )
     }
 
@@ -29,13 +37,41 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { it[CONDITION] = condition.name }
     }
 
+    suspend fun setCameraId(cameraId: String?) {
+        context.dataStore.edit { prefs ->
+            if (cameraId.isNullOrBlank()) prefs.remove(CAMERA_ID)
+            else prefs[CAMERA_ID] = cameraId
+        }
+    }
+
+    suspend fun setZoomRatio(ratio: Float) {
+        val safe = ratio.takeIf { it.isFinite() && it > 0f } ?: return
+        context.dataStore.edit { it[ZOOM_RATIO] = safe }
+    }
+
+    suspend fun setAutoSaveWaitSeconds(seconds: Int) {
+        val safe = seconds.takeIf { it in AUTO_SAVE_WAIT_OPTIONS } ?: 0
+        context.dataStore.edit { it[AUTO_SAVE_WAIT_SECONDS] = safe }
+    }
+
+    suspend fun currentDefaults(): ScanDefaults = defaults.first()
+
     private companion object {
         val LANGUAGE = stringPreferencesKey("default_language")
         val CONDITION = stringPreferencesKey("default_condition")
+        val CAMERA_ID = stringPreferencesKey("preferred_camera_id")
+        val ZOOM_RATIO = floatPreferencesKey("scan_zoom_ratio")
+        val AUTO_SAVE_WAIT_SECONDS = intPreferencesKey("auto_save_wait_seconds")
     }
 }
+
+/** Allowed auto-save wait values (0 = disabled). */
+val AUTO_SAVE_WAIT_OPTIONS = listOf(0, 2, 3, 5, 8, 10)
 
 data class ScanDefaults(
     val language: CardLanguage,
     val condition: CardCondition,
+    val cameraId: String? = null,
+    val zoomRatio: Float = 1f,
+    val autoSaveWaitSeconds: Int = 0,
 )

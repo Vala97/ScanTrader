@@ -16,3 +16,6 @@ keystore.properties
 *.keystore
 .kotlin
 .tmp-vision
+tools/build_pokemon_stcat/cache/
+tools/build_pokemon_stcat/*.stcat
+tools/build_pokemon_stcat/*.stcat.part

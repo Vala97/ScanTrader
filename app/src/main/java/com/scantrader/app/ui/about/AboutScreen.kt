@@ -43,7 +43,8 @@ fun AboutScreen(onBack: () -> Unit) {
                     "e i nomi delle carte appartengono ai rispettivi proprietari e sono usati solo per identificazione.\n\n" +
                     "Cataloghi: Scryfall (MTG) e TCGdex (Pokémon in inglese, italiano, giapponese e cinese). " +
                     "Riconoscimento ibrido: OCR on-device (ML Kit), fingerprint dell’arte e, opzionale, " +
-                    "pack neurale Milo (AGPL-3.0, HanClinto/CollectorVision) con indice embedding Scryfall. " +
+                    "pack neurale Milo (AGPL-3.0, HanClinto/CollectorVision) con indici embedding " +
+                    "Scryfall (MTG) e/o TCGdex EN (Pokémon, import .stcat). " +
                     "Le foto restano sul telefono.",
             )
         }

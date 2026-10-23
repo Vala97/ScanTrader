@@ -1,11 +1,18 @@
 package com.scantrader.app.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -16,16 +23,19 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.scan.DeviceCamera
 import com.scantrader.app.ui.SettingsViewModel
 import com.scantrader.app.ui.components.SimpleDropdown
 import com.scantrader.app.vision.NeuralPackManager
@@ -39,6 +49,14 @@ fun SettingsScreen(
 ) {
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
+    val pokemonNeural by viewModel.pokemonPackState.collectAsStateWithLifecycle()
+    val cameras = viewModel.availableCameras
+
+    val importPokemon = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) viewModel.importPokemonPack(uri)
+    }
 
     LaunchedEffect(Unit) { viewModel.loadNeuralPack() }
 
@@ -58,74 +76,212 @@ fun SettingsScreen(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            SimpleDropdown(
-                label = "Lingua predefinita",
-                options = CardLanguage.entries.toList(),
-                selected = defaults.language,
-                onSelect = viewModel::setLanguage,
-                labelOf = { it.label },
-            )
-            SimpleDropdown(
-                label = "Condizione predefinita",
-                options = CardCondition.entries.toList(),
-                selected = defaults.condition,
-                onSelect = viewModel::setCondition,
-                labelOf = { it.label },
-            )
-
-            Text("Riconoscimento neurale MTG", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Pack on-device Milo (AGPL): embedding di ~100k carte Scryfall. " +
-                    "Riduce errori quando l’OCR è debole. Download ${NeuralPackManager.APPROX_SIZE_LABEL}, poi offline.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                when (val s = neural) {
-                    is NeuralPackState.NotInstalled -> "Stato: non installato"
-                    is NeuralPackState.InstalledNotLoaded -> "Stato: scaricato, non in memoria"
-                    is NeuralPackState.Loading -> "Stato: caricamento…"
-                    is NeuralPackState.Downloading -> "Stato: ${s.label} (${(s.progress * 100).toInt()}%)"
-                    is NeuralPackState.Ready -> "Stato: pronto · ${s.cardCount} carte"
-                    is NeuralPackState.Error -> "Errore: ${s.message}"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            if (neural is NeuralPackState.Downloading) {
-                LinearProgressIndicator(
-                    progress = { (neural as NeuralPackState.Downloading).progress },
-                    modifier = Modifier.fillMaxWidth(),
+            SettingsSection(title = "Impostazioni generali") {
+                SimpleDropdown(
+                    label = "Lingua",
+                    options = CardLanguage.entries.toList(),
+                    selected = defaults.language,
+                    onSelect = viewModel::setLanguage,
+                    labelOf = { it.label },
                 )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val busy = neural is NeuralPackState.Downloading || neural is NeuralPackState.Loading
-                Button(
-                    onClick = viewModel::downloadNeuralPack,
-                    enabled = !busy && neural !is NeuralPackState.Ready,
-                ) {
-                    Text(
-                        when (neural) {
-                            is NeuralPackState.Ready -> "Installato"
-                            is NeuralPackState.Downloading -> "Download…"
-                            else -> "Scarica pack"
-                        },
+                SimpleDropdown(
+                    label = "Condizione",
+                    options = CardCondition.entries.toList(),
+                    selected = defaults.condition,
+                    onSelect = viewModel::setCondition,
+                    labelOf = { it.label },
+                )
+                val waitOptions = com.scantrader.app.data.prefs.AUTO_SAVE_WAIT_OPTIONS
+                val waitSelected = defaults.autoSaveWaitSeconds
+                    .takeIf { it in waitOptions } ?: 0
+                SimpleDropdown(
+                    label = "Auto-Scan · attesa salvataggio",
+                    options = waitOptions,
+                    selected = waitSelected,
+                    onSelect = viewModel::setAutoSaveWaitSeconds,
+                    labelOf = { seconds ->
+                        if (seconds == 0) "Disattivato" else "$seconds s"
+                    },
+                )
+                Text(
+                    "In auto-scan, se non tocchi la carta trovata, salva in collezione dopo N secondi.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (cameras.size > 1) {
+                    CameraDropdown(
+                        cameras = cameras,
+                        selectedId = defaults.cameraId,
+                        onSelect = viewModel::setCameraId,
                     )
                 }
-                if (neural is NeuralPackState.Ready || neural is NeuralPackState.InstalledNotLoaded || neural is NeuralPackState.Error) {
-                    OutlinedButton(onClick = viewModel::deleteNeuralPack, enabled = !busy) {
-                        Text("Rimuovi")
+            }
+
+            SettingsSection(title = "Riconoscimento MTG") {
+                Text(
+                    "Pack neurale on-device (~${NeuralPackManager.APPROX_SIZE_LABEL}). " +
+                        "Utile quando l’OCR è debole; dopo il download resta offline.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    neuralStatusLabel(neural),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (neural is NeuralPackState.Downloading) {
+                    LinearProgressIndicator(
+                        progress = { (neural as NeuralPackState.Downloading).progress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val busy = neural is NeuralPackState.Downloading || neural is NeuralPackState.Loading
+                    Button(
+                        onClick = viewModel::downloadNeuralPack,
+                        enabled = !busy && neural !is NeuralPackState.Ready,
+                    ) {
+                        Text(
+                            when (neural) {
+                                is NeuralPackState.Ready -> "Installato"
+                                is NeuralPackState.Downloading -> "Download…"
+                                else -> "Scarica"
+                            },
+                        )
+                    }
+                    if (neural is NeuralPackState.Ready ||
+                        neural is NeuralPackState.InstalledNotLoaded ||
+                        neural is NeuralPackState.Error
+                    ) {
+                        OutlinedButton(onClick = viewModel::deleteNeuralPack, enabled = !busy) {
+                            Text("Rimuovi")
+                        }
+                    }
+                }
+            }
+
+            SettingsSection(title = "Riconoscimento Pokémon") {
+                Text(
+                    NeuralPackManager.POKEMON_PACK_HINT +
+                        " Gallery reverse-image on-device; l’OCR resta per i reprint.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    neuralStatusLabel(pokemonNeural),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (pokemonNeural is NeuralPackState.Downloading) {
+                    LinearProgressIndicator(
+                        progress = { (pokemonNeural as NeuralPackState.Downloading).progress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val busy = pokemonNeural is NeuralPackState.Downloading ||
+                        pokemonNeural is NeuralPackState.Loading
+                    Button(
+                        onClick = {
+                            importPokemon.launch(
+                                arrayOf("application/octet-stream", "*/*"),
+                            )
+                        },
+                        enabled = !busy,
+                    ) {
+                        Text(
+                            when (pokemonNeural) {
+                                is NeuralPackState.Ready -> "Reimporta .stcat"
+                                is NeuralPackState.Downloading -> "Import…"
+                                else -> "Importa .stcat"
+                            },
+                        )
+                    }
+                    if (pokemonNeural is NeuralPackState.Ready ||
+                        pokemonNeural is NeuralPackState.InstalledNotLoaded ||
+                        pokemonNeural is NeuralPackState.Error
+                    ) {
+                        OutlinedButton(onClick = viewModel::deletePokemonPack, enabled = !busy) {
+                            Text("Rimuovi")
+                        }
                     }
                 }
             }
 
             Text(
-                "I prezzi CardTrader non sono impostati in questa versione: lasciali vuoti e sistemali sul sito dopo l'import.",
+                "I prezzi CardTrader si impostano sul sito dopo l’import CSV.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
+}
+
+@Composable
+private fun SettingsSection(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            title.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+private fun CameraDropdown(
+    cameras: List<DeviceCamera>,
+    selectedId: String?,
+    onSelect: (String?) -> Unit,
+) {
+    val selected = cameras.firstOrNull { it.id == selectedId }
+        ?: cameras.firstOrNull { it.label.startsWith("Principale") }
+        ?: cameras.getOrNull(cameras.size / 2)
+        ?: cameras.first()
+    SimpleDropdown(
+        label = "Fotocamera",
+        options = cameras,
+        selected = selected,
+        onSelect = { onSelect(it.id) },
+        labelOf = { it.label },
+    )
+    Text(
+        "Usata per le scansioni. Lo zoom resta quello dell’ultima scansione.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+private fun neuralStatusLabel(state: NeuralPackState): String = when (state) {
+    is NeuralPackState.NotInstalled -> "Non installato"
+    is NeuralPackState.InstalledNotLoaded -> "Scaricato, non in memoria"
+    is NeuralPackState.Loading -> "Caricamento…"
+    is NeuralPackState.Downloading -> "${state.label} (${(state.progress * 100).toInt()}%)"
+    is NeuralPackState.Ready -> "Pronto · ${state.cardCount} carte"
+    is NeuralPackState.Error -> "Errore: ${state.message}"
 }

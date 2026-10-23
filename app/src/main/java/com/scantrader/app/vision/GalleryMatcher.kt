@@ -6,6 +6,7 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.network.scryfall.ScryfallApi
 import com.scantrader.app.network.scryfall.ScryfallCard
+import com.scantrader.app.network.tcgdex.TcgdexApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -13,26 +14,40 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 /**
- * Full-gallery reverse-image for MTG via Milo embeddings + Scryfall ID lookup.
+ * Full-gallery reverse-image via Milo embeddings + catalog ID lookup (Scryfall / TCGdex).
  */
 class GalleryMatcher(
     private val pack: NeuralPackManager,
     private val scryfall: ScryfallApi,
+    private val tcgdex: TcgdexApi,
 ) {
     suspend fun matchMtg(
         cardCrop: Bitmap,
         parsed: ParsedCardText,
         topK: Int = 8,
+    ): List<IdentifiedCard> = matchGame(Game.MTG, cardCrop, parsed, topK)
+
+    suspend fun matchPokemon(
+        cardCrop: Bitmap,
+        parsed: ParsedCardText,
+        topK: Int = 8,
+    ): List<IdentifiedCard> = matchGame(Game.POKEMON, cardCrop, parsed, topK)
+
+    private suspend fun matchGame(
+        game: Game,
+        cardCrop: Bitmap,
+        parsed: ParsedCardText,
+        topK: Int,
     ): List<IdentifiedCard> = withContext(Dispatchers.Default) {
         val t0 = System.currentTimeMillis()
-        if (!pack.ensureLoaded()) {
-            com.scantrader.app.scan.ScanDebug.w("gallery: neural pack ensureLoaded=false")
+        if (!pack.ensureLoaded(game)) {
+            com.scantrader.app.scan.ScanDebug.w("gallery: neural pack ensureLoaded=false game=$game")
             return@withContext emptyList()
         }
         val embedder = pack.embedderOrNull()
-        val catalog = pack.catalogOrNull()
+        val catalog = pack.catalogOrNull(game)
         if (embedder == null || catalog == null) {
-            com.scantrader.app.scan.ScanDebug.w("gallery: embedder/catalog null after load")
+            com.scantrader.app.scan.ScanDebug.w("gallery: embedder/catalog null after load game=$game")
             return@withContext emptyList()
         }
 
@@ -52,7 +67,7 @@ class GalleryMatcher(
             .filter { it.value >= MIN_SCORE }
 
         com.scantrader.app.scan.ScanDebug.d(
-            "gallery: catalogSize=${catalog.size} rawHits=${scoreById.size} " +
+            "gallery: game=$game catalogSize=${catalog.size} rawHits=${scoreById.size} " +
                 "aboveMin=${ranked.size} top=${ranked.firstOrNull()?.let { "${it.key}=${it.value}" }} " +
                 "embedMs=${System.currentTimeMillis() - t0}",
         )
@@ -62,28 +77,69 @@ class GalleryMatcher(
         coroutineScope {
             ranked.map { (id, score) ->
                 async(Dispatchers.IO) {
-                    val card = runCatching { scryfall.cardById(id) }
-                        .onFailure {
-                            com.scantrader.app.scan.ScanDebug.w("gallery: scryfall $id failed", it)
-                        }
-                        .getOrNull() ?: return@async null
-                    card.toIdentified(
-                        visualScore = score.coerceIn(0f, 1f),
-                        ocrScore = MatchFusion.ocrAgreement(
-                            IdentifiedCard(
-                                game = Game.MTG,
-                                name = card.name,
-                                setCode = card.set,
-                                setName = card.setName.orEmpty(),
-                                collectorNumber = card.collectorNumber,
-                                scryfallId = card.id,
-                            ),
-                            parsed,
-                        ),
-                    )
+                    when (game) {
+                        Game.MTG -> hydrateMtg(id, score, parsed)
+                        Game.POKEMON -> hydratePokemon(id, score, parsed)
+                    }
                 }
             }.awaitAll().filterNotNull()
         }
+    }
+
+    private suspend fun hydrateMtg(
+        id: String,
+        score: Float,
+        parsed: ParsedCardText,
+    ): IdentifiedCard? {
+        val card = runCatching { scryfall.cardById(id) }
+            .onFailure {
+                com.scantrader.app.scan.ScanDebug.w("gallery: scryfall $id failed", it)
+            }
+            .getOrNull() ?: return null
+        return card.toIdentified(
+            visualScore = score.coerceIn(0f, 1f),
+            ocrScore = MatchFusion.ocrAgreement(
+                IdentifiedCard(
+                    game = Game.MTG,
+                    name = card.name,
+                    setCode = card.set,
+                    setName = card.setName.orEmpty(),
+                    collectorNumber = card.collectorNumber,
+                    scryfallId = card.id,
+                ),
+                parsed,
+            ),
+        )
+    }
+
+    private suspend fun hydratePokemon(
+        id: String,
+        score: Float,
+        parsed: ParsedCardText,
+    ): IdentifiedCard? {
+        val card = runCatching { tcgdex.card("en", id) }
+            .onFailure {
+                com.scantrader.app.scan.ScanDebug.w("gallery: tcgdex $id failed", it)
+            }
+            .getOrNull() ?: return null
+        val setId = card.set?.id?.takeIf { it.isNotBlank() } ?: id.substringBefore('-')
+        val stub = IdentifiedCard(
+            game = Game.POKEMON,
+            name = card.name,
+            setCode = setId,
+            setName = card.set?.name.orEmpty(),
+            collectorNumber = card.localId.ifBlank { id.substringAfter('-', "") },
+            tcgdexId = card.id,
+            imageUrl = card.image?.let { "$it/low.webp" },
+        )
+        return stub.copy(
+            visualScore = score.coerceIn(0f, 1f),
+            ocrScore = MatchFusion.ocrAgreement(stub, parsed),
+            priceEur = formatEur(card.pricing?.cardmarket?.avg ?: card.pricing?.cardmarket?.trend),
+            priceEurFoil = formatEur(
+                card.pricing?.cardmarket?.avgHolo ?: card.pricing?.cardmarket?.trendHolo,
+            ),
+        )
     }
 
     private fun ScryfallCard.toIdentified(visualScore: Float, ocrScore: Float): IdentifiedCard =
@@ -102,6 +158,11 @@ class GalleryMatcher(
             visualScore = visualScore,
         )
 
+    private fun formatEur(value: Double?): String? {
+        if (value == null || value <= 0.0) return null
+        return String.format(java.util.Locale.US, "%.2f", value)
+    }
+
     companion object {
         /** Below this cosine, treat as non-match noise. */
         const val MIN_SCORE = 0.55f
@@ -109,7 +170,7 @@ class GalleryMatcher(
 }
 
 /**
- * Merge OCR candidates with gallery hits: same Scryfall id keeps the best scores.
+ * Merge OCR candidates with gallery hits: same catalog id keeps the best scores.
  */
 fun mergeHybridCandidates(
     ocrHits: List<IdentifiedCard>,
@@ -119,7 +180,9 @@ fun mergeHybridCandidates(
     if (ocrHits.isEmpty()) return galleryHits
     val byKey = LinkedHashMap<String, IdentifiedCard>()
     fun keyOf(card: IdentifiedCard): String =
-        card.scryfallId ?: "${card.setCode}|${card.collectorNumber}|${card.name}"
+        card.scryfallId
+            ?: card.tcgdexId
+            ?: "${card.setCode}|${card.collectorNumber}|${card.name}"
 
     fun putBest(card: IdentifiedCard) {
         val key = keyOf(card)
@@ -136,6 +199,8 @@ fun mergeHybridCandidates(
             imageUrl = existing.imageUrl ?: card.imageUrl,
             priceEur = existing.priceEur ?: card.priceEur,
             priceEurFoil = existing.priceEurFoil ?: card.priceEurFoil,
+            tcgdexId = existing.tcgdexId ?: card.tcgdexId,
+            scryfallId = existing.scryfallId ?: card.scryfallId,
         )
     }
     // Gallery first so strong visual IDs are present even when OCR missed them.

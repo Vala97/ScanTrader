@@ -2,7 +2,9 @@ package com.scantrader.app.scan
 
 /**
  * Shared card guide / crop geometry so the on-screen frame matches the OCR crop.
- * MTG collector number + set code sit on the bottom-left strip — keep that inside the frame.
+ *
+ * MTG / modern Pokémon (SWSH–SV): collector + set on the **bottom-left**.
+ * Vintage Pokémon (WOTC → roughly XY): collector + set symbol on the **bottom-right**.
  */
 object CardFrameGeometry {
     /** Card width / height (standard TCG). */
@@ -52,10 +54,51 @@ object CardFrameGeometry {
         return android.graphics.Bitmap.createBitmap(source, x, y, w, h)
     }
 
-    /** Bottom ~22% of the card crop — where set code + collector number live on MTG. */
+    /**
+     * Top strip for the card title.
+     * Pokémon ~22% (title + HP). MTG ~14% (name bar only — avoid rules text).
+     */
+    fun topNameStrip(cardCrop: android.graphics.Bitmap, mtg: Boolean = false): android.graphics.Bitmap {
+        val fraction = if (mtg) 0.14f else 0.22f
+        val stripH = (cardCrop.height * fraction).toInt().coerceAtLeast(1).coerceAtMost(cardCrop.height)
+        return android.graphics.Bitmap.createBitmap(cardCrop, 0, 0, cardCrop.width, stripH)
+    }
+
+    /** Bottom ~24% of the card crop — full width (both corners). */
     fun bottomStrip(cardCrop: android.graphics.Bitmap): android.graphics.Bitmap {
-        val stripH = (cardCrop.height * 0.22f).toInt().coerceAtLeast(1)
+        val stripH = (cardCrop.height * 0.24f).toInt().coerceAtLeast(1)
         val y = (cardCrop.height - stripH).coerceAtLeast(0)
         return android.graphics.Bitmap.createBitmap(cardCrop, 0, y, cardCrop.width, stripH)
+    }
+
+    /**
+     * Thin bottom edge (~12%) where WOTC prints `32/102 ★` inside the yellow border.
+     * Avoids OCR latching onto flavor text higher up.
+     */
+    fun bottomEdgeStrip(cardCrop: android.graphics.Bitmap): android.graphics.Bitmap {
+        val stripH = (cardCrop.height * 0.12f).toInt().coerceAtLeast(1)
+        val y = (cardCrop.height - stripH).coerceAtLeast(0)
+        return android.graphics.Bitmap.createBitmap(cardCrop, 0, y, cardCrop.width, stripH)
+    }
+
+    /**
+     * Bottom-left identity strip (collector + set).
+     * MTG uses a thinner edge + wider crop so `0181 • DFT • IT` is readable.
+     */
+    fun bottomLeftStrip(cardCrop: android.graphics.Bitmap, mtg: Boolean = false): android.graphics.Bitmap {
+        val strip = if (mtg) bottomEdgeStrip(cardCrop) else bottomStrip(cardCrop)
+        val widthFraction = if (mtg) 0.58f else 0.42f
+        val w = (strip.width * widthFraction).toInt().coerceAtLeast(1)
+        return android.graphics.Bitmap.createBitmap(strip, 0, 0, w, strip.height)
+    }
+
+    /**
+     * Bottom-right edge — WOTC / EX–XY collector number + rarity (`32/102 ★`).
+     */
+    fun bottomRightStrip(cardCrop: android.graphics.Bitmap): android.graphics.Bitmap {
+        val strip = bottomEdgeStrip(cardCrop)
+        val w = (strip.width * 0.50f).toInt().coerceAtLeast(1)
+        val x = (strip.width - w).coerceAtLeast(0)
+        return android.graphics.Bitmap.createBitmap(strip, x, 0, w, strip.height)
     }
 }

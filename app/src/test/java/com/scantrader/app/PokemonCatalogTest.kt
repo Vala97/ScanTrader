@@ -87,4 +87,63 @@ class PokemonCatalogTest {
         val parsed = OcrParser.parse(text, Game.POKEMON)
         assertEquals("フシギダネ", parsed.nameGuess)
     }
+
+    @Test
+    fun latinNoiseDoesNotQueryAsianCatalogs() {
+        assertEquals(listOf("en", "it"), PokemonCatalog.languages("Kilowattrel di Kissara", "uor"))
+        assertEquals(listOf("en", "it"), PokemonCatalog.scriptLanguages("KilowattrelaKiasarn 120ヶ"))
+        assertEquals(listOf("me02.5"), PokemonSets.idsForCardCount(217))
+        assertTrue(PokemonSets.recognizedIds("asc").contains("me02.5"))
+        assertTrue(OcrParser.setCodeCandidates("uor").contains("asc"))
+    }
+
+    @Test
+    fun classicSetTotalsMapToWotcIds() {
+        assertEquals(listOf("base1"), PokemonSets.idsForCardCount(102))
+        assertEquals(listOf("base2"), PokemonSets.idsForCardCount(64))
+        assertEquals(listOf("base5"), PokemonSets.idsForCardCount(83))
+        assertTrue(PokemonSets.idsForCardCount(132).contains("base4"))
+    }
+
+    @Test
+    fun parsesVintageBottomRightFractionWithoutSetCode() {
+        // Base / Rocket: number bottom-right, often no letter set code.
+        val full = """
+            Dark Charizard
+            Stage 2 Pokémon
+        """.trimIndent()
+        val bottomRight = "4/82 ★"
+        val parsed = OcrParser.parse(full, Game.POKEMON, bottomRight)
+        assertEquals("4", parsed.collectorNumber)
+        assertEquals(82, parsed.setCardCount)
+        assertTrue(parsed.nameGuess!!.contains("Charizard", ignoreCase = true))
+    }
+
+    @Test
+    fun penalizesCandidatesWithoutNameOverlap() {
+        val withName = PokemonCatalog.score(
+            cardName = "Kilowattrel di Kissara",
+            cardNumber = "072",
+            setId = "me02.5",
+            printedTotal = 217,
+            queryName = "Kilowattrel di Kissara",
+            queryNumber = "72",
+            querySetIds = listOf("me02.5"),
+            setCardCount = 217,
+        )
+        val wrongName = PokemonCatalog.score(
+            cardName = "Swoobat",
+            cardNumber = "072",
+            setId = "xy8",
+            printedTotal = null,
+            queryName = "Kilowattrel di Kissara",
+            queryNumber = "72",
+            querySetIds = listOf("me02.5"),
+            setCardCount = 217,
+        )
+        assertTrue(withName > wrongName)
+        assertTrue(wrongName < 20)
+        assertTrue(PokemonCatalog.nameMatches("Kilowattrel di Kissara", "Kilowattrel"))
+        assertFalse(PokemonCatalog.nameMatches("Swoobat", "Kilowattrel di Kissara"))
+    }
 }

@@ -57,9 +57,16 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         ocr = CardOcr()
         visualRanker = VisualRanker(http)
         neuralPack = NeuralPackManager(this, http)
-        galleryMatcher = GalleryMatcher(neuralPack, scryfall)
-        // Warm neural pack if already downloaded (no network).
-        appScope.launch { neuralPack.ensureLoaded() }
+        galleryMatcher = GalleryMatcher(neuralPack, scryfall, tcgdex)
+        appScope.launch {
+            val defaults = prefs.currentDefaults()
+            scanSession.zoomRatio = defaults.zoomRatio
+            scanSession.cameraId = defaults.cameraId
+            scanSession.language = defaults.language
+            scanSession.condition = defaults.condition
+            // Warm neural pack if already downloaded (no network).
+            neuralPack.ensureLoaded()
+        }
     }
 
     override fun newImageLoader(): ImageLoader =

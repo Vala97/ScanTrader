@@ -109,6 +109,43 @@ object PokemonSets {
         }
     }
 
+    /**
+     * When OCR loses the set abbr but reads `072/217`, map official printed totals
+     * to likely TCGdex international set ids.
+     */
+    /**
+     * Official set sizes → likely TCGdex ids.
+     * Vintage WOTC totals are distinctive (102 Base, 64 Jungle, 83 Rocket, …).
+     * Modern SV totals disambiguate when the printed abbr is missing/misread.
+     */
+    private val byOfficialCount = mapOf(
+        // —— WOTC / early (number usually bottom-right) ——
+        102 to listOf("base1"), // Base Set
+        64 to listOf("base2"), // Jungle
+        62 to listOf("base3"), // Fossil
+        82 to listOf("base5"), // Team Rocket (main list)
+        83 to listOf("base5"), // Team Rocket (+ secret)
+        110 to listOf("gym1"), // Gym Heroes
+        132 to listOf("base4", "gym2"), // Base Set 2 or Gym Challenge — disambiguate by name
+        75 to listOf("neo1"), // Neo Genesis
+        111 to listOf("neo2"), // Neo Discovery
+        66 to listOf("neo3"), // Neo Revelation
+        105 to listOf("neo4"), // Neo Destiny
+        // —— modern SV / Mega (number usually bottom-left) ——
+        165 to listOf("sv03.5"), // 151 / MEW
+        182 to listOf("sv10"), // Destined Rivals / DRI
+        187 to listOf("sv04"), // Paradox Rift
+        198 to listOf("sv01"), // SVI
+        217 to listOf("me02.5"), // Ascended Heroes / ASC
+        226 to listOf("sv09"), // Journey Together
+        252 to listOf("sv08"), // Surging Sparks
+    )
+
+    fun idsForCardCount(officialCount: Int?): List<String> {
+        if (officialCount == null) return emptyList()
+        return byOfficialCount[officialCount].orEmpty()
+    }
+
     private fun normalize(value: String?): String? =
         value?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
 }

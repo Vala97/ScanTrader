@@ -40,6 +40,8 @@ data class IdentifiedCard(
     val setName: String,
     val collectorNumber: String,
     val scryfallId: String? = null,
+    /** TCGdex card id (e.g. `base1-32`, `sv10-072`). */
+    val tcgdexId: String? = null,
     val tcgplayerId: String? = null,
     val imageUrl: String? = null,
     /** Cardmarket EUR from Scryfall (non-foil). */
