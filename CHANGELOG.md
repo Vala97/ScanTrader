@@ -6,6 +6,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 ## [Non rilasciato]
 
 ### Aggiunto
+- Scelta della **lente** nel pannello Impostazioni scan (e in Impostazioni): Automatica, Principale, Ultra-grandangolo, Teleobiettivo. Si elencano le fotocamere posteriori, comprese le lenti fisiche della multi-camera logica (nome in base alla focale). Se una lente fisica non si può aprire, si usano gli zoom 0,5× / 1× / 2× / 5× dentro l’intervallo dello zoom. Con una sola scelta il selettore resta nascosto. La preferenza è salvata; torcia e auto-scan restano attivi.
 - Schermata **Informazioni**: versione visibile letta da `BuildConfig` (`Versione V1.0 (build 1)`). Le build debug aggiungono il suffisso `· debug`.
 - Riconoscimento neurale **Pokémon**: import di un pack `.stcat` (gallery Milo su catalogo TCGdex EN) da **Impostazioni → Riconoscimento Pokémon → Importa .stcat**.
 - Strumento `tools/build_pokemon_stcat` (Python) per generare `pokemon.stcat`, con modalità smoke su pochi set.

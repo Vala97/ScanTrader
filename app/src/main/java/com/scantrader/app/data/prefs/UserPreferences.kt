@@ -22,6 +22,8 @@ class UserPreferences(private val context: Context) {
             condition = prefs[CONDITION]?.let { runCatching { CardCondition.valueOf(it) }.getOrNull() }
                 ?: CardCondition.NEAR_MINT,
             cameraId = prefs[CAMERA_ID]?.takeIf { it.isNotBlank() },
+            lensKey = prefs[LENS_KEY]?.takeIf { it.isNotBlank() }
+                ?: prefs[CAMERA_ID]?.takeIf { it.isNotBlank() }?.let { "cam:$it" },
             zoomRatio = prefs[ZOOM_RATIO]?.takeIf { it.isFinite() && it > 0f } ?: 1f,
             autoSaveWaitSeconds = prefs[AUTO_SAVE_WAIT_SECONDS]
                 ?.takeIf { it in AUTO_SAVE_WAIT_OPTIONS }
@@ -37,16 +39,20 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { it[CONDITION] = condition.name }
     }
 
-    suspend fun setCameraId(cameraId: String?) {
-        context.dataStore.edit { prefs ->
-            if (cameraId.isNullOrBlank()) prefs.remove(CAMERA_ID)
-            else prefs[CAMERA_ID] = cameraId
-        }
-    }
-
     suspend fun setZoomRatio(ratio: Float) {
         val safe = ratio.takeIf { it.isFinite() && it > 0f } ?: return
         context.dataStore.edit { it[ZOOM_RATIO] = safe }
+    }
+
+    /** Persists the lens. A null zoom leaves the last pinch-zoom untouched. */
+    suspend fun setLensChoice(lensKey: String, cameraId: String?, zoomRatio: Float?) {
+        context.dataStore.edit { prefs ->
+            prefs[LENS_KEY] = lensKey
+            if (cameraId.isNullOrBlank()) prefs.remove(CAMERA_ID) else prefs[CAMERA_ID] = cameraId
+            if (zoomRatio != null && zoomRatio.isFinite() && zoomRatio > 0f) {
+                prefs[ZOOM_RATIO] = zoomRatio
+            }
+        }
     }
 
     suspend fun setAutoSaveWaitSeconds(seconds: Int) {
@@ -60,6 +66,7 @@ class UserPreferences(private val context: Context) {
         val LANGUAGE = stringPreferencesKey("default_language")
         val CONDITION = stringPreferencesKey("default_condition")
         val CAMERA_ID = stringPreferencesKey("preferred_camera_id")
+        val LENS_KEY = stringPreferencesKey("preferred_lens")
         val ZOOM_RATIO = floatPreferencesKey("scan_zoom_ratio")
         val AUTO_SAVE_WAIT_SECONDS = intPreferencesKey("auto_save_wait_seconds")
     }
@@ -72,6 +79,7 @@ data class ScanDefaults(
     val language: CardLanguage,
     val condition: CardCondition,
     val cameraId: String? = null,
+    val lensKey: String? = null,
     val zoomRatio: Float = 1f,
     val autoSaveWaitSeconds: Int = 0,
 )

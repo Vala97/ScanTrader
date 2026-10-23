@@ -12,7 +12,11 @@ import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.prefs.ScanDefaults
+import com.scantrader.app.scan.BackCamera
 import com.scantrader.app.scan.CameraDevices
+import com.scantrader.app.scan.LensCatalog
+import com.scantrader.app.scan.LensKind
+import com.scantrader.app.scan.LensOption
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -80,7 +84,13 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         )
     val neuralPackState = app.neuralPack.mtgState
     val pokemonPackState = app.neuralPack.pokemonState
-    val availableCameras = CameraDevices.listBackCameras(app)
+    val lensOptions = MutableStateFlow(CameraDevices.lensOptions(app))
+
+    fun refreshLenses() {
+        val fresh = CameraDevices.lensOptions(app)
+        if (fresh.isEmpty() && lensOptions.value.isNotEmpty()) return
+        lensOptions.value = fresh
+    }
 
     fun setLanguage(language: CardLanguage) {
         viewModelScope.launch { app.prefs.setLanguage(language) }
@@ -90,9 +100,16 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setCondition(condition) }
     }
 
-    fun setCameraId(cameraId: String?) {
-        app.scanSession.cameraId = cameraId
-        viewModelScope.launch { app.prefs.setCameraId(cameraId) }
+    fun setLens(option: LensOption) {
+        app.scanSession.lensKey = option.key
+        app.scanSession.cameraId = option.cameraId
+        val zoom = when (option.kind) {
+            LensKind.ZOOM -> option.zoomRatio
+            LensKind.CAMERA -> 1f
+            LensKind.AUTOMATIC -> null
+        }
+        if (zoom != null) app.scanSession.zoomRatio = zoom
+        viewModelScope.launch { app.prefs.setLensChoice(option.key, option.cameraId, zoom) }
     }
 
     fun setAutoSaveWaitSeconds(seconds: Int) {
@@ -138,7 +155,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     val lightIntensity = MutableStateFlow(app.scanSession.lightIntensity)
     val zoomRatio = MutableStateFlow(app.scanSession.zoomRatio)
     val cameraId = MutableStateFlow(app.scanSession.cameraId)
-    val availableCameras = CameraDevices.listBackCameras(app)
+    val lensKey = MutableStateFlow(app.scanSession.lensKey)
+    private var hardware: List<BackCamera> = CameraDevices.backCameras(app)
+    private var zoomRangeLive: Boolean = false
+    val lensOptions = MutableStateFlow(LensCatalog.optionsFor(hardware))
 
     @Volatile
     private var lastAutoAttemptMs: Long = 0
@@ -155,29 +175,29 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private val autoHitPending = AtomicBoolean(false)
 
     private var zoomPersistJob: kotlinx.coroutines.Job? = null
+    private var zoomLockJob: kotlinx.coroutines.Job? = null
+    private var zoomLockGen: Int = 0
+
+    /** While set, pinch and zoom-state callbacks must not overwrite a lens preset. */
+    @Volatile
+    private var programmaticZoom: Float? = null
+
+    private val userPickedLens = AtomicBoolean(false)
 
     init {
-        // Prefer explicit Principale when no camera was saved (avoid CameraX multi-lens flip).
-        if (cameraId.value.isNullOrBlank()) {
-            val principal = availableCameras.firstOrNull { it.label.startsWith("Principale") }
-                ?: availableCameras.getOrNull(availableCameras.size / 2)
-                ?: availableCameras.firstOrNull()
-            if (principal != null) {
-                cameraId.value = principal.id
-                app.scanSession.cameraId = principal.id
-            }
-        }
         viewModelScope.launch {
-            // Seed zoom from prefs once; do not chase cameraId from prefs mid-scan.
             val defaults = app.prefs.currentDefaults()
-            if (defaults.zoomRatio > 0f && kotlin.math.abs(zoomRatio.value - defaults.zoomRatio) >= 0.01f) {
+            if (userPickedLens.get()) return@launch
+            val resolved = LensCatalog.resolve(
+                lensOptions.value,
+                defaults.lensKey ?: app.scanSession.lensKey,
+                defaults.cameraId ?: app.scanSession.cameraId,
+            ) ?: return@launch
+            if (resolved.kind != LensKind.ZOOM && defaults.zoomRatio > 0f) {
                 zoomRatio.value = defaults.zoomRatio
                 app.scanSession.zoomRatio = defaults.zoomRatio
             }
-            if (cameraId.value.isNullOrBlank() && !defaults.cameraId.isNullOrBlank()) {
-                cameraId.value = defaults.cameraId
-                app.scanSession.cameraId = defaults.cameraId
-            }
+            applyLens(resolved, fromUser = false)
         }
     }
 
@@ -200,10 +220,106 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         super.onCleared()
     }
 
-    fun setCameraId(cameraId: String?) {
-        this.cameraId.value = cameraId
-        app.scanSession.cameraId = cameraId
-        viewModelScope.launch { app.prefs.setCameraId(cameraId) }
+    fun selectLens(option: LensOption) {
+        applyLens(option, fromUser = true)
+    }
+
+    fun currentLensOption(): LensOption? =
+        lensOptions.value.firstOrNull { it.key == lensKey.value }
+
+    fun refreshHardware() {
+        val fresh = CameraDevices.backCameras(app)
+        if (fresh.isEmpty()) return
+        hardware = if (
+            zoomRangeLive &&
+            hardware.size == 1 &&
+            fresh.size == 1 &&
+            hardware[0].id == fresh[0].id
+        ) {
+            listOf(
+                fresh[0].copy(
+                    minZoomRatio = hardware[0].minZoomRatio,
+                    maxZoomRatio = hardware[0].maxZoomRatio,
+                ),
+            )
+        } else {
+            fresh
+        }
+        republishLenses()
+    }
+
+    /** Live CameraX range. Used when a single logical camera supplies the presets. */
+    fun updateZoomRange(min: Float, max: Float) {
+        if (hardware.size != 1) return
+        if (!min.isFinite() || !max.isFinite() || min <= 0f || max < min) return
+        val cam = hardware[0]
+        if (kotlin.math.abs(cam.minZoomRatio - min) < 0.02f &&
+            kotlin.math.abs(cam.maxZoomRatio - max) < 0.02f
+        ) {
+            return
+        }
+        hardware = listOf(cam.copy(minZoomRatio = min, maxZoomRatio = max))
+        zoomRangeLive = true
+        republishLenses()
+    }
+
+    fun onObservedZoom(reported: Float) {
+        if (!reported.isFinite() || reported <= 0f) return
+        val pending = programmaticZoom
+        if (pending != null) {
+            if (kotlin.math.abs(reported - pending) <= 0.08f) programmaticZoom = null
+            return
+        }
+        setZoomRatio(reported)
+    }
+
+    fun noteZoomClamped(requested: Float, applied: Float) {
+        if (programmaticZoom == null) return
+        if (!applied.isFinite() || applied <= 0f) return
+        if (kotlin.math.abs(requested - applied) < 0.01f) return
+        programmaticZoom = applied
+        if (kotlin.math.abs(zoomRatio.value - applied) >= 0.01f) {
+            zoomRatio.value = applied
+            app.scanSession.zoomRatio = applied
+        }
+    }
+
+    private fun republishLenses() {
+        val opts = LensCatalog.optionsFor(hardware)
+        lensOptions.value = opts
+        val key = lensKey.value
+        if (!key.isNullOrBlank() && opts.none { it.key == key }) {
+            val fallback = LensCatalog.resolve(opts, null, null) ?: return
+            applyLens(fallback, fromUser = false)
+        }
+    }
+
+    private fun applyLens(option: LensOption, fromUser: Boolean) {
+        if (fromUser) userPickedLens.set(true)
+        val zoom = when (option.kind) {
+            LensKind.ZOOM -> option.zoomRatio
+            LensKind.CAMERA -> if (fromUser) 1f else null
+            LensKind.AUTOMATIC -> null
+        }
+        if (zoom != null) lockZoom(zoom)
+        cameraId.value = option.cameraId
+        app.scanSession.cameraId = option.cameraId
+        lensKey.value = option.key
+        app.scanSession.lensKey = option.key
+        zoomPersistJob?.cancel()
+        viewModelScope.launch { app.prefs.setLensChoice(option.key, option.cameraId, zoom) }
+    }
+
+    private fun lockZoom(target: Float) {
+        programmaticZoom = target
+        zoomRatio.value = target
+        app.scanSession.zoomRatio = target
+        val gen = ++zoomLockGen
+        zoomLockJob?.cancel()
+        zoomLockJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(1_500)
+            if (gen == zoomLockGen) programmaticZoom = null
+        }
     }
 
     fun setSession(value: Boolean) {

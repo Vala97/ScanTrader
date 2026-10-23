@@ -106,12 +106,16 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.lifecycle.Observer
+import androidx.compose.ui.res.stringResource
+import com.scantrader.app.R
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.CardFrameGeometry
-import com.scantrader.app.scan.DeviceCamera
+import com.scantrader.app.scan.LensCatalog
+import com.scantrader.app.scan.LensKind
 import com.scantrader.app.ui.ScanViewModel
 import com.scantrader.app.ui.components.SimpleDropdown
+import com.scantrader.app.ui.displayLabel
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -141,6 +145,8 @@ fun ScanScreen(
     val torchOn by viewModel.torchOn.collectAsStateWithLifecycle()
     val lightIntensity by viewModel.lightIntensity.collectAsStateWithLifecycle()
     val cameraId by viewModel.cameraId.collectAsStateWithLifecycle()
+    val lensKey by viewModel.lensKey.collectAsStateWithLifecycle()
+    val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
 
     var granted by remember {
         mutableStateOf(
@@ -154,8 +160,6 @@ fun ScanScreen(
     var panelExpanded by remember { mutableStateOf(false) }
     // Restored from the ViewModel so confirm → pop does not show the game picker again.
     var gamePicked by remember { mutableStateOf(viewModel.isGameChosen) }
-    val cameras = viewModel.availableCameras
-
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         granted = it
     }
@@ -165,6 +169,10 @@ fun ScanScreen(
     LaunchedEffect(Unit) {
         viewModel.setTargetCollection(collectionId)
         if (!granted) permission.launch(Manifest.permission.CAMERA)
+    }
+
+    LaunchedEffect(granted) {
+        if (granted) viewModel.refreshHardware()
     }
 
     val controller = remember {
@@ -189,16 +197,19 @@ fun ScanScreen(
     }
 
     fun syncCameraOptics(forceZoom: Boolean = false) {
+        controller.cameraInfo?.zoomState?.value?.let { state ->
+            viewModel.updateZoomRange(state.minZoomRatio, state.maxZoomRatio)
+        }
+        applySavedZoom(controller, viewModel, viewModel.zoomRatio.value, force = forceZoom)
         refreshTorchCapabilities(controller) { supported, max ->
             torchStrengthSupported = supported
             maxTorchStrength = max
             applyTorch(controller, torchOn, lightIntensity, max, supported)
         }
-        applySavedZoom(controller, viewModel.zoomRatio.value, force = forceZoom)
     }
 
     fun scheduleZoomApply(attemptsLeft: Int = 8) {
-        val applied = applySavedZoom(controller, viewModel.zoomRatio.value, force = true)
+        val applied = applySavedZoom(controller, viewModel, viewModel.zoomRatio.value, force = true)
         if (!applied && attemptsLeft > 0) {
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
                 { scheduleZoomApply(attemptsLeft - 1) },
@@ -215,6 +226,18 @@ fun ScanScreen(
             syncCameraOptics(forceZoom = true)
             scheduleZoomApply()
         }, mainExecutor)
+    }
+
+    // Zoom-only lens changes stay on the bound camera so torch and auto-scan are not reset.
+    LaunchedEffect(lensKey, granted, gamePicked) {
+        if (!granted || !gamePicked) return@LaunchedEffect
+        val option = viewModel.currentLensOption()
+        if (option?.kind != LensKind.ZOOM) return@LaunchedEffect
+        syncCameraOptics(forceZoom = true)
+        scheduleZoomApply()
+        // Switching ratio can drop the torch on the way between lenses.
+        kotlinx.coroutines.delay(250)
+        syncCameraOptics(forceZoom = true)
     }
 
     DisposableEffect(lifecycleOwner, granted, gamePicked) {
@@ -246,7 +269,8 @@ fun ScanScreen(
         }
         var attached: androidx.lifecycle.LiveData<androidx.camera.core.ZoomState>? = null
         val observer = Observer<androidx.camera.core.ZoomState> { state ->
-            viewModel.setZoomRatio(state.zoomRatio)
+            viewModel.updateZoomRange(state.minZoomRatio, state.maxZoomRatio)
+            viewModel.onObservedZoom(state.zoomRatio)
         }
         fun attachZoomObserver() {
             val live = controller.cameraInfo?.zoomState ?: return
@@ -281,7 +305,7 @@ fun ScanScreen(
         viewModel.resumeScanning()
     }
 
-    LaunchedEffect(autoScan, granted, gamePicked, panelExpanded) {
+    LaunchedEffect(autoScan, granted, gamePicked, panelExpanded, cameraId) {
         if (!granted || !gamePicked) return@LaunchedEffect
         navigated.set(false)
         controller.imageAnalysisResolutionSelector = analysisResolutionSelector(auto = autoScan)
@@ -563,11 +587,12 @@ fun ScanScreen(
                                 )
                             }
 
-                            if (cameras.size > 1) {
-                                ScanCameraDropdown(
-                                    cameras = cameras,
-                                    selectedId = cameraId,
-                                    onSelect = viewModel::setCameraId,
+                            if (lensOptions.size > 1) {
+                                ScanLensDropdown(
+                                    options = lensOptions,
+                                    lensKey = lensKey,
+                                    legacyCameraId = cameraId,
+                                    onSelect = viewModel::selectLens,
                                 )
                             }
 
@@ -889,12 +914,15 @@ private fun applyTorch(
 /** @return true if zoomState was available and applied (or already aligned). */
 private fun applySavedZoom(
     controller: LifecycleCameraController,
+    viewModel: ScanViewModel,
     ratio: Float,
     force: Boolean = true,
 ): Boolean {
     return runCatching {
         val state = controller.cameraInfo?.zoomState?.value ?: return false
+        viewModel.updateZoomRange(state.minZoomRatio, state.maxZoomRatio)
         val clamped = ratio.coerceIn(state.minZoomRatio, state.maxZoomRatio)
+        viewModel.noteZoomClamped(ratio, clamped)
         if (!force && abs(state.zoomRatio - clamped) < 0.02f) return true
         controller.cameraControl?.setZoomRatio(clamped)
         true
@@ -903,7 +931,7 @@ private fun applySavedZoom(
 
 private fun persistZoom(controller: LifecycleCameraController, viewModel: ScanViewModel) {
     val ratio = controller.cameraInfo?.zoomState?.value?.zoomRatio ?: return
-    viewModel.setZoomRatio(ratio)
+    viewModel.onObservedZoom(ratio)
 }
 
 @Composable
@@ -960,26 +988,30 @@ private fun GamePickOverlay(
 }
 
 @Composable
-private fun ScanCameraDropdown(
-    cameras: List<DeviceCamera>,
-    selectedId: String?,
-    onSelect: (String?) -> Unit,
+private fun ScanLensDropdown(
+    options: List<com.scantrader.app.scan.LensOption>,
+    lensKey: String?,
+    legacyCameraId: String?,
+    onSelect: (com.scantrader.app.scan.LensOption) -> Unit,
 ) {
-    val selected = cameras.firstOrNull { it.id == selectedId }
-        ?: cameras.firstOrNull { it.label.startsWith("Principale") }
-        ?: cameras.getOrNull(cameras.size / 2)
-        ?: cameras.first()
+    val resources = androidx.compose.ui.platform.LocalContext.current.resources
+    val selected = LensCatalog.resolve(options, lensKey, legacyCameraId) ?: options.first()
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Fotocamera", color = FrameAccent, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+        Text(
+            stringResource(R.string.lens_section),
+            color = FrameAccent,
+            fontWeight = FontWeight.Medium,
+            fontSize = 13.sp,
+        )
         SimpleDropdown(
-            label = "Lente",
-            options = cameras,
+            label = stringResource(R.string.lens_field),
+            options = options,
             selected = selected,
-            onSelect = { onSelect(it.id) },
-            labelOf = { it.label },
+            onSelect = onSelect,
+            labelOf = { it.displayLabel(resources) },
         )
         Text(
-            "Usata per questa scansione. Lo zoom resta quello dell’ultima regolazione.",
+            stringResource(R.string.lens_hint),
             color = FrameAccent.copy(alpha = 0.65f),
             fontSize = 11.sp,
         )

@@ -33,11 +33,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.scantrader.app.R
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
-import com.scantrader.app.scan.DeviceCamera
+import com.scantrader.app.scan.LensCatalog
+import com.scantrader.app.scan.LensOption
 import com.scantrader.app.ui.SettingsViewModel
 import com.scantrader.app.ui.components.SimpleDropdown
+import com.scantrader.app.ui.displayLabel
 import com.scantrader.app.vision.NeuralPackManager
 import com.scantrader.app.vision.NeuralPackState
 
@@ -50,7 +55,7 @@ fun SettingsScreen(
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
     val pokemonNeural by viewModel.pokemonPackState.collectAsStateWithLifecycle()
-    val cameras = viewModel.availableCameras
+    val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
 
     val importPokemon = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -58,7 +63,10 @@ fun SettingsScreen(
         if (uri != null) viewModel.importPokemonPack(uri)
     }
 
-    LaunchedEffect(Unit) { viewModel.loadNeuralPack() }
+    LaunchedEffect(Unit) {
+        viewModel.loadNeuralPack()
+        viewModel.refreshLenses()
+    }
 
     Scaffold(
         topBar = {
@@ -113,11 +121,12 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (cameras.size > 1) {
-                    CameraDropdown(
-                        cameras = cameras,
-                        selectedId = defaults.cameraId,
-                        onSelect = viewModel::setCameraId,
+                if (lensOptions.size > 1) {
+                    LensDropdown(
+                        options = lensOptions,
+                        lensKey = defaults.lensKey,
+                        legacyCameraId = defaults.cameraId,
+                        onSelect = viewModel::setLens,
                     )
                 }
             }
@@ -255,24 +264,23 @@ private fun SettingsSection(
 }
 
 @Composable
-private fun CameraDropdown(
-    cameras: List<DeviceCamera>,
-    selectedId: String?,
-    onSelect: (String?) -> Unit,
+private fun LensDropdown(
+    options: List<LensOption>,
+    lensKey: String?,
+    legacyCameraId: String?,
+    onSelect: (LensOption) -> Unit,
 ) {
-    val selected = cameras.firstOrNull { it.id == selectedId }
-        ?: cameras.firstOrNull { it.label.startsWith("Principale") }
-        ?: cameras.getOrNull(cameras.size / 2)
-        ?: cameras.first()
+    val resources = LocalContext.current.resources
+    val selected = LensCatalog.resolve(options, lensKey, legacyCameraId) ?: options.first()
     SimpleDropdown(
-        label = "Fotocamera",
-        options = cameras,
+        label = stringResource(R.string.lens_field),
+        options = options,
         selected = selected,
-        onSelect = { onSelect(it.id) },
-        labelOf = { it.label },
+        onSelect = onSelect,
+        labelOf = { it.displayLabel(resources) },
     )
     Text(
-        "Usata per le scansioni. Lo zoom resta quello dell’ultima scansione.",
+        stringResource(R.string.lens_hint),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

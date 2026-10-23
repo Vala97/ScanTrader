@@ -62,6 +62,7 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
             val defaults = prefs.currentDefaults()
             scanSession.zoomRatio = defaults.zoomRatio
             scanSession.cameraId = defaults.cameraId
+            scanSession.lensKey = defaults.lensKey
             scanSession.language = defaults.language
             scanSession.condition = defaults.condition
             // Warm neural pack if already downloaded (no network).

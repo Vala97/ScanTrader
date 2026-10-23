@@ -36,6 +36,8 @@ class ScanSession {
     var autoScan: Boolean = false
     var zoomRatio: Float = 1f
     var cameraId: String? = null
+    /** LensCatalog key: auto, cam:id, or zoom:ratio. */
+    var lensKey: String? = null
 
     /** Last language/condition chosen on confirm — reused until settings override. */
     var language: CardLanguage? = null
