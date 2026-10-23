@@ -1,8 +1,8 @@
 package com.scantrader.app.data.model
 
-enum class Game(val csvLabel: String) {
-    MTG("mtg"),
-    POKEMON("pokemon"),
+enum class Game(val csvLabel: String, val shareLabel: String) {
+    MTG("mtg", "Magic"),
+    POKEMON("pokemon", "Pokémon"),
 }
 
 enum class CardCondition(val csvValue: String, val label: String) {

@@ -232,7 +232,7 @@ fun SettingsScreen(
             }
 
             Text(
-                "I prezzi CardTrader si impostano sul sito dopo l’import CSV.",
+                "Il CSV include il prezzo in centesimi (price_cents). Su CardTrader carica un file per gioco e scegli aggiungi allo stock.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

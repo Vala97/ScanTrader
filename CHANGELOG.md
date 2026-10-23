@@ -16,6 +16,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Nuovi test: `CameraBitmapsTest`, `EmbeddingCatalogStcatTest`, `GalleryMergeTest` e casi aggiuntivi per OCR, fusione dei match e catalogo Pokémon.
 
 ### Modificato
+- Export CSV CardTrader allineato a `POST /product_imports`: lingue con i codici (`en`, `it`, `fr`, `de`, `es`, `pt`, `jp`, `kr`, `zh-CN`), Damaged esportato come `Poor`, colonna `price_cents` in centesimi. Un file per gioco; su CardTrader va scelto aggiungi allo stock.
 - Icona dell’app: medaglione con il robot e la sfera ciano, al posto dell’icona blu. È usata come icona adattiva (anche monocromatica) e compare in piccolo in **Informazioni**.
 - Interfaccia ridisegnata in stile Material 3 con palette blu, in chiaro e in scuro: sfondi blu navy, primario blu acceso, accenti ciano. Tipografia, angoli, spaziatura, card e controlli sono allineati su tutte le schermate (home, scan e pannello impostazioni, conferma, collezione, informazioni, dialoghi e banner).
 - Scelta del gioco prima dello scan: card grandi con i loghi Pokémon e Magic. Gli stessi loghi, in piccolo, compaiono nel selettore del gioco sulla schermata di scan.

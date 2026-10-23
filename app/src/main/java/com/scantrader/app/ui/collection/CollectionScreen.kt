@@ -72,7 +72,7 @@ fun CollectionScreen(
                         },
                         enabled = cards.isNotEmpty(),
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = "Esporta CSV")
+                        Icon(Icons.Default.Share, contentDescription = "Esporta un CSV per gioco")
                     }
                     IconButton(onClick = onScan) {
                         Icon(Icons.Default.CameraAlt, contentDescription = "Scan")
