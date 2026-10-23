@@ -23,6 +23,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Versione dell’app impostata a `versionName` `1.0` (`versionCode` 1). Il salvataggio automatico in conferma parte solo se il match supera la soglia forte (74%); i match deboli restano da confermare a mano.
 
 ### Corretto
+- Dopo il salvataggio, tornando allo scan, lente e zoom restano quelli di prima (anche il pinch e il preset della lente). Il rapporto 1× che la fotocamera riporta al bind non sostituisce l’inquadratura.
 - Aprendo **Impostazioni scan** l’anteprima non si blocca più e il riquadro della carta resta della stessa misura. Il pannello è un overlay: non ridimensiona la preview e non rifà il bind della fotocamera.
 - Dopo il salvataggio, automatico o manuale, si torna subito allo scan dello stesso gioco, con la fotocamera pronta e l’auto-scan riarmato. Non si ripresenta la scelta Pokémon / Magic.
 - Parser OCR molto più robusto (nomi, set, numeri di collezione) e lookup del catalogo migliorato per MTG e Pokémon.

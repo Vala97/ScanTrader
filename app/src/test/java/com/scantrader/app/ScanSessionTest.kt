@@ -27,6 +27,8 @@ class ScanSessionTest {
         session.autoScan = true
         session.torchOn = true
         session.lensKey = "zoom:0.5"
+        session.zoomRatio = 0.5f
+        session.cameraId = null
         session.ocrText = "Pikachu"
         session.parsed = ParsedCardText("Pikachu", "58", "base1")
         session.candidates = listOf(
@@ -54,6 +56,8 @@ class ScanSessionTest {
         assertTrue(session.autoScan)
         assertTrue(session.torchOn)
         assertEquals("zoom:0.5", session.lensKey)
+        assertEquals(0.5f, session.zoomRatio)
+        assertNull(session.cameraId)
         assertEquals("", session.ocrText)
         assertNull(session.parsed)
         assertTrue(session.candidates.isEmpty())

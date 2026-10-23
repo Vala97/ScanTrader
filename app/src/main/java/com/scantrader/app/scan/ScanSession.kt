@@ -34,9 +34,13 @@ class ScanSession {
     var torchOn: Boolean = false
     var lightIntensity: Float = 0.75f
     var autoScan: Boolean = false
+    /**
+     * Last framing: pinch zoom or the lens-picker preset, whichever the user left.
+     * Restored after the camera binds again. Not cleared by [resetResults].
+     */
     var zoomRatio: Float = 1f
     var cameraId: String? = null
-    /** LensCatalog key: auto, cam:id, or zoom:ratio. */
+    /** LensCatalog key: auto, cam:id, or zoom:ratio. Same lifetime as [zoomRatio]. */
     var lensKey: String? = null
 
     /** Last language/condition chosen on confirm — reused until settings override. */

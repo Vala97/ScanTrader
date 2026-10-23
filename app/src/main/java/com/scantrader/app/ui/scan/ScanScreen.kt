@@ -134,6 +134,9 @@ fun ScanScreen(
     onCaptured: () -> Unit,
     onManualSearch: () -> Unit,
 ) {
+    // Before the camera effects: keep the session lens and zoom, and ignore the
+    // default ratio CameraX reports until that framing is applied again.
+    remember { viewModel.armZoomRestore() }
     val context = LocalContext.current
     val activity = context as? Activity
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -285,6 +288,9 @@ fun ScanScreen(
         var attached: androidx.lifecycle.LiveData<androidx.camera.core.ZoomState>? = null
         val observer = Observer<androidx.camera.core.ZoomState> { state ->
             viewModel.updateZoomRange(state.minZoomRatio, state.maxZoomRatio)
+            if (viewModel.isZoomRestoreArmed()) {
+                applySavedZoom(controller, viewModel, viewModel.zoomRatio.value, force = true)
+            }
             viewModel.onObservedZoom(state.zoomRatio)
         }
         fun attachZoomObserver() {
@@ -951,7 +957,7 @@ private fun applySavedZoom(
 
 private fun persistZoom(controller: LifecycleCameraController, viewModel: ScanViewModel) {
     val ratio = controller.cameraInfo?.zoomState?.value?.zoomRatio ?: return
-    viewModel.onObservedZoom(ratio)
+    viewModel.persistCameraZoom(ratio)
 }
 
 @Composable

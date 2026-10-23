@@ -17,6 +17,7 @@ import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
 import com.scantrader.app.scan.LensOption
+import com.scantrader.app.scan.ZoomFraming
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -182,24 +183,67 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     @Volatile
     private var programmaticZoom: Float? = null
 
+    /**
+     * True from the moment a rebind starts until the camera reports the stored
+     * ratio. Default 1× callbacks in that window are not a user pinch.
+     */
+    @Volatile
+    private var zoomRestoreArmed: Boolean = false
+
+    /** Set once prefs or a user zoom/lens choice have defined the framing. */
+    @Volatile
+    private var framingEstablished: Boolean = false
+
     private val userPickedLens = AtomicBoolean(false)
+    private val zoomTouched = AtomicBoolean(false)
 
     init {
         viewModelScope.launch {
             val defaults = app.prefs.currentDefaults()
-            if (userPickedLens.get()) return@launch
-            val resolved = LensCatalog.resolve(
-                lensOptions.value,
-                defaults.lensKey ?: app.scanSession.lensKey,
-                defaults.cameraId ?: app.scanSession.cameraId,
-            ) ?: return@launch
-            if (resolved.kind != LensKind.ZOOM && defaults.zoomRatio > 0f) {
-                zoomRatio.value = defaults.zoomRatio
-                app.scanSession.zoomRatio = defaults.zoomRatio
+            if (!userPickedLens.get() && !zoomTouched.get()) {
+                val resolved = LensCatalog.resolve(
+                    lensOptions.value,
+                    defaults.lensKey ?: app.scanSession.lensKey,
+                    defaults.cameraId ?: app.scanSession.cameraId,
+                )
+                if (resolved != null) {
+                    if (resolved.kind != LensKind.ZOOM && defaults.zoomRatio > 0f) {
+                        zoomRatio.value = defaults.zoomRatio
+                        app.scanSession.zoomRatio = defaults.zoomRatio
+                    }
+                    applyLens(resolved, fromUser = false)
+                }
             }
-            applyLens(resolved, fromUser = false)
+            framingEstablished = true
         }
     }
+
+    /**
+     * Call once when the scan screen is composed again. The ViewModel and the
+     * session already hold the lens and zoom; this only blocks the post-bind
+     * 1× report from replacing them.
+     */
+    fun armZoomRestore() {
+        if (!framingEstablished) return
+        val ratio = ZoomFraming.clamp(app.scanSession.zoomRatio, min = Float.NaN, max = Float.NaN) ?: return
+        zoomRatio.value = ratio
+        val lens = app.scanSession.lensKey
+        if (lensKey.value != lens) lensKey.value = lens
+        if (cameraId.value != app.scanSession.cameraId) cameraId.value = app.scanSession.cameraId
+        zoomRestoreArmed = true
+        programmaticZoom = ratio
+        val gen = ++zoomLockGen
+        zoomLockJob?.cancel()
+        zoomLockJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(3_000)
+            if (gen == zoomLockGen && zoomRestoreArmed) {
+                zoomRestoreArmed = false
+                programmaticZoom = null
+            }
+        }
+    }
+
+    fun isZoomRestoreArmed(): Boolean = zoomRestoreArmed
 
     fun setGame(value: Game) {
         game.value = value
@@ -265,12 +309,27 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun onObservedZoom(reported: Float) {
         if (!reported.isFinite() || reported <= 0f) return
+        if (zoomRestoreArmed) {
+            val target = programmaticZoom ?: zoomRatio.value
+            if (!ZoomFraming.ignoreReportedZoom(target, reported, restoreArmed = true)) {
+                zoomRestoreArmed = false
+                programmaticZoom = null
+            }
+            return
+        }
         val pending = programmaticZoom
         if (pending != null) {
-            if (kotlin.math.abs(reported - pending) <= 0.08f) programmaticZoom = null
+            if (ZoomFraming.matches(reported, pending)) programmaticZoom = null
             return
         }
         setZoomRatio(reported)
+    }
+
+    /** Pause/dispose path. Ignores the 1× jump CameraX emits while unbinding. */
+    fun persistCameraZoom(reported: Float) {
+        if (zoomRestoreArmed) return
+        if (ZoomFraming.isUnbindReset(zoomRatio.value, reported)) return
+        onObservedZoom(reported)
     }
 
     fun noteZoomClamped(requested: Float, applied: Float) {
@@ -295,7 +354,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     private fun applyLens(option: LensOption, fromUser: Boolean) {
-        if (fromUser) userPickedLens.set(true)
+        if (fromUser) {
+            userPickedLens.set(true)
+            framingEstablished = true
+        }
         val zoom = when (option.kind) {
             LensKind.ZOOM -> option.zoomRatio
             LensKind.CAMERA -> if (fromUser) 1f else null
@@ -311,9 +373,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     private fun lockZoom(target: Float) {
+        zoomRestoreArmed = false
         programmaticZoom = target
         zoomRatio.value = target
         app.scanSession.zoomRatio = target
+        framingEstablished = true
         val gen = ++zoomLockGen
         zoomLockJob?.cancel()
         zoomLockJob = viewModelScope.launch {
@@ -349,6 +413,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun setZoomRatio(value: Float) {
         if (!value.isFinite() || value <= 0f) return
+        framingEstablished = true
+        zoomTouched.set(true)
         if (kotlin.math.abs(zoomRatio.value - value) < 0.01f) return
         zoomRatio.value = value
         app.scanSession.zoomRatio = value
