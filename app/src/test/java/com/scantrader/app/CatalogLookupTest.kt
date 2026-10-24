@@ -103,14 +103,14 @@ class CatalogLookupTest {
     @Test
     fun unknownPrintedSetUsesTheCardCountAsADirectId() = runBlocking {
         val cardCalls = mutableListOf<String>()
-        var searches = 0
+        val searchCalls = mutableListOf<String>()
         val tcgdex = object : TcgdexApi {
             override suspend fun search(
                 lang: String,
                 name: String?,
                 localId: String?,
             ): List<TcgdexCardBrief> {
-                searches++
+                searchCalls += "$lang name=${name.orEmpty()} localId=${localId.orEmpty()}"
                 return emptyList()
             }
 
@@ -140,12 +140,94 @@ class CatalogLookupTest {
             Game.POKEMON,
             ParsedCardText(nameGuess = "Machop", collectorNumber = "52", setCode = "wird", setCardCount = 102),
         )
-        assertEquals(0, searches)
+        assertTrue(searchCalls.isNotEmpty())
+        assertTrue(searchCalls.all { it.contains("name=Machop") && it.endsWith("localId=") })
         assertTrue(cardCalls.isNotEmpty())
         assertTrue(cardCalls.all { it.endsWith(":base1-52") || it.endsWith(":base1-052") })
         assertTrue(cardCalls.none { it.contains("wird") })
+        assertEquals("Machop", hits.first().name)
         assertEquals("base1", hits.first().setCode)
         assertEquals("52", hits.first().collectorNumber)
+    }
+
+    @Test
+    fun cherubiWithPrintedTotal128RanksTheNameOverOtherNumberSixes() = runBlocking {
+        val cardCalls = mutableListOf<String>()
+        val searchCalls = mutableListOf<String>()
+        val tcgdex = object : TcgdexApi {
+            override suspend fun search(
+                lang: String,
+                name: String?,
+                localId: String?,
+            ): List<TcgdexCardBrief> {
+                searchCalls += "$lang name=${name.orEmpty()} localId=${localId.orEmpty()}"
+                if (!localId.isNullOrBlank()) {
+                    return listOf(
+                        TcgdexCardBrief("pop9-6", "6", "Buizel"),
+                        TcgdexCardBrief("pop7-6", "6", "Delibird"),
+                        TcgdexCardBrief("pop8-6", "6", "Cherrim"),
+                    )
+                }
+                if (name.equals("Cherubi", ignoreCase = true)) {
+                    return listOf(
+                        TcgdexCardBrief("30th-006", "006", "Cherubi"),
+                        TcgdexCardBrief("bw8-6", "6", "Cherubi"),
+                        TcgdexCardBrief("pop9-6", "6", "Buizel"),
+                    )
+                }
+                return emptyList()
+            }
+
+            override suspend fun card(lang: String, id: String): TcgdexCard {
+                cardCalls += "$lang:$id"
+                return when (id) {
+                    "30th-006", "30th-6" -> TcgdexCard(
+                        id = "30th-006",
+                        localId = "006",
+                        name = "Cherubi",
+                        image = "https://assets.tcgdex.net/$lang/me/30th/006",
+                        set = com.scantrader.app.network.tcgdex.TcgdexSet(
+                            id = "30th",
+                            name = "30th Celebration",
+                            cardCount = com.scantrader.app.network.tcgdex.TcgdexCardCount(official = 128),
+                        ),
+                    )
+                    "bw8-6" -> TcgdexCard(
+                        id = "bw8-6",
+                        localId = "6",
+                        name = "Cherubi",
+                        image = "https://assets.tcgdex.net/$lang/bw/bw8/6",
+                        set = com.scantrader.app.network.tcgdex.TcgdexSet(
+                            id = "bw8",
+                            name = "Plasma Storm",
+                            cardCount = com.scantrader.app.network.tcgdex.TcgdexCardCount(official = 135),
+                        ),
+                    )
+                    "pop9-6" -> TcgdexCard(
+                        id = "pop9-6",
+                        localId = "6",
+                        name = "Buizel",
+                        set = com.scantrader.app.network.tcgdex.TcgdexSet(id = "pop9", name = "POP Series 9"),
+                    )
+                    else -> throw notFound()
+                }
+            }
+        }
+        val lookup = CatalogLookup(
+            ScryfallClient(unusedScryfall(), ScryfallGate(minSpacingMs = 0L, now = { 0L })),
+            tcgdex,
+        )
+        val hits = lookup.identify(
+            Game.POKEMON,
+            ParsedCardText(nameGuess = "Cherubi", collectorNumber = "6", setCode = null, setCardCount = 128),
+        )
+        assertTrue(searchCalls.any { it.contains("name=Cherubi") && it.endsWith("localId=") })
+        assertTrue(searchCalls.none { it.contains("localId=6") || it.contains("localId=006") })
+        assertTrue(cardCalls.none { it.contains("pop") })
+        assertEquals("Cherubi", hits.first().name)
+        assertEquals("30th", hits.first().setCode)
+        assertEquals("006", hits.first().collectorNumber)
+        assertTrue(hits.none { it.name == "Buizel" || it.name == "Delibird" || it.name == "Cherrim" })
     }
 
     private fun unusedScryfall(): ScryfallApi = object : ScryfallApi {

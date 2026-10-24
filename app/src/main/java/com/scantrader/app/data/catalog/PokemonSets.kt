@@ -9,7 +9,7 @@ import com.scantrader.app.scan.OcrParser
 object PokemonSets {
     private val internationalPrinted = setOf(
         "svi", "pal", "obf", "mew", "par", "paf", "tef", "twm", "sfa", "scr", "ssp", "pre",
-        "jtg", "dri", "wht", "blk", "meg", "pfl", "asc", "por", "cri", "pbl",
+        "jtg", "dri", "wht", "blk", "meg", "pfl", "asc", "por", "cri", "pbl", "30c",
     )
 
     private val toTcgdex = mapOf(
@@ -75,6 +75,9 @@ object PokemonSets {
         "pbl" to "me05",
         "me5" to "me05",
         "me05" to "me05",
+        // 30th Celebration prints `30C` and `006/128`. TCGdex id is `30th`.
+        "30c" to "30th",
+        "30th" to "30th",
     )
 
     fun isInternationalPrinted(code: String?): Boolean =
@@ -141,6 +144,7 @@ object PokemonSets {
         217 to listOf("me02.5"), // Ascended Heroes / ASC
         226 to listOf("sv09"), // Journey Together
         252 to listOf("sv08"), // Surging Sparks
+        128 to listOf("30th"), // 30th Celebration / 30C (main set, not the secret total)
     )
 
     fun idsForCardCount(officialCount: Int?): List<String> {

@@ -143,12 +143,20 @@ class CatalogLookup(
             (name != null && com.scantrader.app.data.catalog.CardIdentity.isStageNoise(name))
         // When OCR grabbed an ability/attack or a stage crumb, ignore name — identity is set+number.
         val searchName = name.takeUnless { noisyName }
-        val hasSolidId = !number.isNullOrBlank() &&
-            (!parsed.setCode.isNullOrBlank() || parsed.setCardCount != null)
+        // A printed total is not a set. cn-only lookups need a resolved set id.
+        val setKnown = PokemonSets.directIds(parsed.setCode, parsed.setCardCount).isNotEmpty()
         val langs = PokemonCatalog.languages(searchName, parsed.setCode)
         val cards = coroutineScope {
             langs.map { lang ->
-                async { searchPokemonLanguage(lang, searchName, number, parsed, idFirst = hasSolidId || noisyName) }
+                async {
+                    searchPokemonLanguage(
+                        lang,
+                        searchName,
+                        number,
+                        parsed,
+                        idFirst = (setKnown && number != null) || noisyName,
+                    )
+                }
             }.awaitAll().flatten()
         }
         val scored = cards
@@ -173,10 +181,10 @@ class CatalogLookup(
         // Drop obvious junk when OCR name is a real title (avoid Malamar from "mal di testa").
         // Skip this filter when name is ability noise — id match is enough.
         val filtered = if (!noisyName && !searchName.isNullOrBlank() && searchName.length >= 4) {
-            val withName = scored.filter {
+            // A confident title must agree. Unrelated #6s (Buizel, Delibird, …) stay out.
+            scored.filter {
                 PokemonCatalog.nameMatches(it.name, searchName) || (it.ocrScore ?: 0f) >= 0.35f
             }
-            withName.ifEmpty { scored }
         } else {
             scored
         }
@@ -191,10 +199,12 @@ class CatalogLookup(
         idFirst: Boolean = false,
     ): List<TcgdexCard> {
         val setIds = resolvePokemonSetIds(lang, parsed)
+        val setKnown = setIds.isNotEmpty()
         val found = linkedMapOf<String, TcgdexCard>()
+        val confidentName = !name.isNullOrBlank() && name.length >= 3
 
-        // Prefer set+number (and card-count sets) before any name search.
-        if (!number.isNullOrBlank()) {
+        // Direct set+number only. A collector with no resolved set must not search every #6.
+        if (!number.isNullOrBlank() && setKnown) {
             for (setId in setIds.take(6)) {
                 for (id in PokemonCatalog.cardIds(setId, number)) {
                     val card = runCatching { tcgdex.card(lang, id) }.getOrNull() ?: continue
@@ -202,38 +212,43 @@ class CatalogLookup(
                 }
                 if (found.isNotEmpty()) break
             }
-            if (found.isEmpty()) {
-                val localIds = listOf(
-                    number,
-                    number.trimStart('0').ifBlank { number }.padStart(3, '0'),
-                ).distinct()
-                for (localId in localIds) {
-                    val briefs = runCatching { tcgdex.search(lang, localId = localId) }.getOrDefault(emptyList())
-                    if (briefs.isEmpty()) continue
-                    fetchBriefs(lang, pickBriefs(briefs, number, setIds), found)
-                    if (found.isNotEmpty()) break
-                }
-            }
         }
-        // Solid id hit: name is only a tie-break later via score(), skip name search.
-        if (idFirst && found.isNotEmpty()) return found.values.toList()
-        if (found.values.any { it.matches(name, number, setIds) }) return found.values.toList()
 
-        if (!name.isNullOrBlank()) {
+        // A confident title is always searched, then ranked with the collector and the total.
+        // A direct id that already spells that name (Machop, base1-52) still gets the search
+        // so a same-number card from another set cannot outrank it.
+        if (confidentName) {
             for (query in PokemonCatalog.nameQueries(name)) {
                 val briefs = runCatching { tcgdex.search(lang, name = query) }.getOrDefault(emptyList())
                 fetchBriefs(lang, pickBriefs(briefs, number, setIds), found)
-                if (found.values.any { it.matches(name, number, setIds) }) break
+                if (found.values.any { PokemonCatalog.nameMatches(it.name, name) }) break
+            }
+        } else if (!(idFirst && found.isNotEmpty())) {
+            if (!name.isNullOrBlank()) {
+                for (query in PokemonCatalog.nameQueries(name)) {
+                    val briefs = runCatching { tcgdex.search(lang, name = query) }.getOrDefault(emptyList())
+                    fetchBriefs(lang, pickBriefs(briefs, number, setIds), found)
+                    if (found.values.any { it.matches(name, number, setIds) }) break
+                }
             }
         }
 
-        if (found.values.none { it.matches(name, number, setIds) } && !number.isNullOrBlank() && found.isEmpty()) {
-            val localIds = listOf(number, number.trimStart('0').ifBlank { number }.padStart(3, '0')).distinct()
+        if (confidentName) {
+            val named = found.filterValues { PokemonCatalog.nameMatches(it.name, name) }
+            if (named.isNotEmpty()) return named.values.toList()
+            return emptyList()
+        }
+
+        if (found.isEmpty() && setKnown && !number.isNullOrBlank()) {
+            val localIds = listOf(
+                number,
+                number.trimStart('0').ifBlank { number }.padStart(3, '0'),
+            ).distinct()
             for (localId in localIds) {
                 val briefs = runCatching { tcgdex.search(lang, localId = localId) }.getOrDefault(emptyList())
                 if (briefs.isEmpty()) continue
                 fetchBriefs(lang, pickBriefs(briefs, number, setIds), found)
-                break
+                if (found.isNotEmpty()) break
             }
         }
         return found.values.toList()

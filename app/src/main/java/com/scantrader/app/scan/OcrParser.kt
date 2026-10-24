@@ -71,6 +71,20 @@ object OcrParser {
         """(?i)\b([A-Za-z]{2,4})(\d{2,3}[A-Za-z]?)\s*/\s*(\d{2,3})\b""",
     )
 
+    /**
+     * Collector fraction with an optional set/regulation prefix glued on:
+     * `006/128`, `o06/128`, `30C006/128`, `D30C006/128`.
+     * The prefix may include digits (`30C`), so it is not only `[A-Za-z]`.
+     */
+    private val pokemonPrefixedFraction = Regex(
+        """(?i)([A-Za-z0-9]{0,8}?)(\d{2,3})\s*/\s*(\d{2,3})\b""",
+    )
+
+    /** Printed alphanumeric set code standing on its own: `30C`, `D 30C`. */
+    private val pokemonAlnumSet = Regex(
+        """(?i)(?<![A-Za-z0-9])([0-9]{2}[A-Za-z])(?![A-Za-z0-9])""",
+    )
+
     private val italianOwnerName = Regex(
         """(?i)\b([A-ZÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ]{2,})\s+di\s+([A-ZÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ]{2,})\b""",
     )
@@ -142,6 +156,8 @@ object OcrParser {
         // Italian/English rules crumbs mistaken for set codes
         "del", "della", "delle", "dei", "pren", "pre", "fin", "fine", "alla", "all",
         "tur", "cre", "una", "per", "con", "ill", "non", "piu", "più", "che", "come",
+        // Illustrator crumbs next to the fraction: "Kurata So", "Karute Se".
+        "se", "so",
     )
 
     private val skipName = setOf(
@@ -396,6 +412,8 @@ object OcrParser {
                 pokemonBottomPair.find(source)?.groupValues?.getOrNull(2)?.let {
                     return normalizeCollector(it)
                 }
+                // `D30C006/128` / `o06/128` — leading zeros and a glued set code.
+                bestPokemonNumberLine(source)?.let { return it.collector }
                 // 2) Prefer strict multi-digit fraction `072/217` over glued `Uor2/217`
                 pokemonFractionStrict.find(source)?.groupValues?.getOrNull(1)?.let {
                     return normalizeCollector(it)
@@ -475,6 +493,10 @@ object OcrParser {
                 pokemonBottomPair.find(source)?.groupValues?.getOrNull(1)?.let {
                     pokemonSetOrNull(it)?.let { code -> return code }
                 }
+                bestPokemonNumberLine(source)?.setCode?.let { return it }
+                pokemonAlnumSet.find(source)?.groupValues?.getOrNull(1)?.let { token ->
+                    pokemonSetOrNull(token)?.takeIf { isKnownPokemonSet(it) }?.let { return it }
+                }
             }
             preferSources(bottom, raw).forEach { source ->
                 pokemonGluedSetFraction.find(source)?.let { match ->
@@ -541,6 +563,7 @@ object OcrParser {
     private fun extractPokemonSetCount(raw: String, bottom: String?, game: Game): Int? {
         if (game != Game.POKEMON) return null
         preferSources(bottom, raw).forEach { source ->
+            bestPokemonNumberLine(source)?.let { return it.count }
             pokemonBottomPair.find(source)?.groupValues?.getOrNull(3)?.toIntOrNull()?.let { return it }
             pokemonFractionStrict.find(source)?.groupValues?.getOrNull(2)?.toIntOrNull()?.let { return it }
             pokemonGluedSetFraction.find(source)?.groupValues?.getOrNull(3)?.toIntOrNull()?.let { return it }
@@ -947,6 +970,54 @@ object OcrParser {
             .filter { it.value >= 2 }
             .maxWithOrNull(compareBy<Map.Entry<String, Int>> { it.value }.thenBy { it.key.length })
             ?.key
+    }
+
+    private data class PokemonNumberLine(
+        val setCode: String?,
+        val collector: String,
+        val count: Int,
+    )
+
+    private fun pokemonNumberLines(source: String): List<PokemonNumberLine> {
+        val out = mutableListOf<PokemonNumberLine>()
+        for (match in pokemonPrefixedFraction.findAll(source)) {
+            val count = match.groupValues[3].toIntOrNull() ?: continue
+            if (count !in 40..300) continue
+            val collector = normalizeCollector(match.groupValues[2])
+            val cn = collector.toIntOrNull() ?: continue
+            if (cn !in 1 until count) continue
+            out += PokemonNumberLine(
+                setCode = setCodeFromFractionPrefix(match.groupValues[1]),
+                collector = collector,
+                count = count,
+            )
+        }
+        return out
+    }
+
+    private fun bestPokemonNumberLine(source: String): PokemonNumberLine? =
+        pokemonNumberLines(source).maxWithOrNull(
+            compareBy<PokemonNumberLine>({ it.setCode != null }, { it.collector.length }),
+        )
+
+    /**
+     * `D30C` / `J30C` keep the set `30C`. A single leading letter is the regulation
+     * mark or a set-symbol misread. `ASC` stays `asc`. A lone `o` or `Se` is not a set.
+     */
+    private fun setCodeFromFractionPrefix(prefix: String): String? {
+        val compact = prefix.filter { it.isLetterOrDigit() }
+        if (compact.isEmpty()) return null
+        val candidates = linkedSetOf(compact)
+        if (compact.length >= 3 && compact.first().isLetter() && compact[1].isDigit()) {
+            candidates += compact.drop(1)
+        }
+        Regex("""(?i)(\d{2}[a-z]{1,2})""").find(compact)?.value?.let { candidates += it }
+        for (token in candidates) {
+            val known = PokemonSets.canonicalizePrinted(token)
+                ?: token.takeIf { isKnownPokemonSet(it) }
+            if (known != null && known.lowercase() !in falseSetCodes) return normalizeSet(known)
+        }
+        return null
     }
 
     private fun preferSources(bottom: String?, raw: String): List<String> =

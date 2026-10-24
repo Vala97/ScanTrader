@@ -666,4 +666,50 @@ class OcrParserTest {
         assertEquals("176", parsed.collectorNumber)
         assertEquals(182, parsed.setCardCount)
     }
+
+    @Test
+    fun italianCherubiReads30thCelebrationFromGluedBottom() {
+        // scan_log9: 30th Celebration (30C) 006/128. OCR glues the set onto the number
+        // (`D30C006/128`, `o06/128`) and the illustrator "Se"/"So" sits beside it.
+        val top = "BASE\nCherubi"
+        val full = """
+            BASE
+            Cherubi
+            debolezza x2
+            Ill. Kurata So
+            N. 0420 Pokémon Ciliegia Altezza: 0,4 m Peso: 3,3 kg
+            Lancia una moneta. Se esce testa, durante il prossimo turno
+        """.trimIndent()
+        val glued = OcrParser.parse(
+            rawText = full,
+            game = Game.POKEMON,
+            bottomPriorityText = "debolezza x2 resistenza\nIll. Kurata So\nD30C006/128",
+            namePriorityText = top,
+        )
+        assertEquals("Cherubi", glued.nameGuess)
+        assertEquals("6", glued.collectorNumber)
+        assertEquals(128, glued.setCardCount)
+        assertEquals("30c", glued.setCode)
+
+        val separated = OcrParser.parse(
+            rawText = top,
+            game = Game.POKEMON,
+            bottomPriorityText = "debolezza x2 resistenza\nKarute Se\nD 30C\no06/128",
+            namePriorityText = top,
+        )
+        assertEquals("Cherubi", separated.nameGuess)
+        assertEquals("6", separated.collectorNumber)
+        assertEquals(128, separated.setCardCount)
+        assertEquals("30c", separated.setCode)
+
+        val illustrator = OcrParser.parse(
+            rawText = top,
+            game = Game.POKEMON,
+            bottomPriorityText = "Karute Se | 006/128",
+            namePriorityText = top,
+        )
+        assertEquals("6", illustrator.collectorNumber)
+        assertEquals(128, illustrator.setCardCount)
+        assertNull(illustrator.setCode)
+    }
 }
