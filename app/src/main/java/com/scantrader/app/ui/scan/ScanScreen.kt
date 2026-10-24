@@ -139,6 +139,7 @@ fun ScanScreen(
     onBack: () -> Unit,
     onCaptured: () -> Unit,
     onManualSearch: () -> Unit,
+    confirmVisible: Boolean = false,
 ) {
     // Before the camera effects: keep the session lens and zoom, and ignore the
     // default ratio CameraX reports until that framing is applied again.
@@ -349,13 +350,18 @@ fun ScanScreen(
         if (!viewModel.isFramingHeld()) syncCameraOptics(forceZoom = true)
     }
 
-    DisposableEffect(lifecycleOwner, granted, gamePicked, autoScan) {
+    DisposableEffect(lifecycleOwner, granted, gamePicked, autoScan, confirmVisible) {
         if (!granted || !gamePicked) {
             return@DisposableEffect onDispose { }
         }
         val lifecycleObserver = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
+                    if (confirmVisible) {
+                        viewModel.holdFraming()
+                        controller.clearImageAnalysisAnalyzer()
+                        return@LifecycleEventObserver
+                    }
                     navigated.set(false)
                     viewModel.resumeScanning()
                     viewModel.armZoomRestore()
@@ -443,10 +449,27 @@ fun ScanScreen(
         viewModel.resumeScanning()
     }
 
+    // Confirm covers the scanner in this same composition, so the camera stays
+    // bound. Stop analysis until the overlay closes; do not rebind.
+    var confirmWasShown by remember { mutableStateOf(false) }
+    LaunchedEffect(confirmVisible) {
+        if (confirmVisible) {
+            confirmWasShown = true
+            persistZoom(controller, viewModel)
+            viewModel.holdFraming()
+            controller.clearImageAnalysisAnalyzer()
+        } else if (confirmWasShown) {
+            confirmWasShown = false
+            navigated.set(false)
+            viewModel.onZoomRestoreSettled()
+            viewModel.resumeScanning()
+        }
+    }
+
     // Keys are camera/scan state only. Opening the settings panel must not
     // replace the analyzer or the resolution selector (both rebind the camera).
-    LaunchedEffect(autoScan, granted, gamePicked, cameraId) {
-        if (!granted || !gamePicked) return@LaunchedEffect
+    LaunchedEffect(autoScan, granted, gamePicked, cameraId, confirmVisible) {
+        if (!granted || !gamePicked || confirmVisible) return@LaunchedEffect
         navigated.set(false)
         attachAutoAnalyzer(
             controller = controller,
@@ -506,7 +529,7 @@ fun ScanScreen(
             }
         }
 
-        Column(
+        if (!confirmVisible) Column(
             Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
@@ -579,7 +602,7 @@ fun ScanScreen(
             }
         }
 
-        Column(
+        if (!confirmVisible) Column(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()

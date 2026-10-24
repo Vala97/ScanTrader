@@ -1,18 +1,25 @@
 package com.scantrader.app.ui.navigation
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.scantrader.app.ScanTraderApp
@@ -72,46 +79,46 @@ fun AppNav() {
             val raw = entry.arguments?.getString("collectionId")
             val collectionId = raw?.toLongOrNull() ?: app.scanSession.targetCollectionId
             val vm: ScanViewModel = viewModel(factory = ScanViewModel.factory(app))
-            ScanScreen(
-                viewModel = vm,
-                collectionId = collectionId,
-                onBack = { nav.popBackStack() },
-                onCaptured = { nav.navigate("confirm") },
-                onManualSearch = {
-                    app.scanSession.resetResults()
-                    nav.navigate("confirm")
-                },
-            )
-        }
-        // Dialog keeps the scan destination STARTED and composed. A normal
-        // destination would stop that lifecycle, detach PreviewView, and rebind
-        // the camera at 1× — which shifts zoom and the card guide after save.
-        dialog(
-            "confirm",
-            dialogProperties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false,
-                dismissOnBackPress = true,
-                dismissOnClickOutside = false,
-            ),
-        ) {
-            val vm: ConfirmViewModel = viewModel(factory = ConfirmViewModel.factory(app))
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background),
-            ) {
-                ConfirmScreen(
+            val confirmVm: ConfirmViewModel = viewModel(factory = ConfirmViewModel.factory(app))
+            // Confirm stays in this destination. A separate route would stop the
+            // scanner lifecycle, detach PreviewView, and rebind the camera at 1×.
+            var showConfirm by rememberSaveable { mutableStateOf(false) }
+            Box(Modifier.fillMaxSize()) {
+                ScanScreen(
                     viewModel = vm,
+                    collectionId = collectionId,
+                    confirmVisible = showConfirm,
                     onBack = { nav.popBackStack() },
-                    onSaved = {
-                        // Pop confirm only. Scan stays underneath with the same
-                        // ViewModel and the same camera binding, so the chosen
-                        // game, lens, and zoom stay armed.
+                    onCaptured = { showConfirm = true },
+                    onManualSearch = {
                         app.scanSession.resetResults()
-                        nav.popBackStack()
+                        showConfirm = true
                     },
                 )
+                if (showConfirm) {
+                    BackHandler {
+                        showConfirm = false
+                    }
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .zIndex(1f)
+                            .background(MaterialTheme.colorScheme.background)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { },
+                    ) {
+                        ConfirmScreen(
+                            viewModel = confirmVm,
+                            onBack = { showConfirm = false },
+                            onSaved = {
+                                app.scanSession.resetResults()
+                                showConfirm = false
+                            },
+                        )
+                    }
+                }
             }
         }
         composable("settings") {
