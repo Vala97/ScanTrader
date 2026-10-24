@@ -1,5 +1,7 @@
 package com.scantrader.app.data.catalog
 
+import com.scantrader.app.scan.OcrParser
+
 /**
  * Printed codes on international cards (DRI, OBF, …) → TCGdex set ids (`sv10`, `sv03`).
  * Japanese and Chinese cards print their own set id (SV2a, CSV3C); those are not remapped.
@@ -144,6 +146,18 @@ object PokemonSets {
     fun idsForCardCount(officialCount: Int?): List<String> {
         if (officialCount == null) return emptyList()
         return byOfficialCount[officialCount].orEmpty()
+    }
+
+    /**
+     * TCGdex set ids to try from a printed code and/or the `NN/NNN` total.
+     * Unknown OCR tokens (`wird`) are dropped. A known code (`dri`, `oasc`) and
+     * the printed total (`102` → `base1`) are the direct id path.
+     */
+    fun directIds(printed: String?, count: Int?): List<String> {
+        val tokens = OcrParser.setCodeCandidates(printed)
+        val known = tokens.flatMap { recognizedIds(it) }
+        val canon = tokens.mapNotNull { canonicalizePrinted(it) }.flatMap { recognizedIds(it) }
+        return (known + canon + idsForCardCount(count)).distinct()
     }
 
     /**

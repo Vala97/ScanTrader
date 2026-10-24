@@ -240,16 +240,11 @@ class CatalogLookup(
     }
 
     private fun resolvePokemonSetIds(lang: String, parsed: ParsedCardText): List<String> {
-        val fromPrinted = if (lang == PokemonCatalog.EN || lang == PokemonCatalog.IT) {
-            val mapped = OcrParser.setCodeCandidates(parsed.setCode)
-                .flatMap { PokemonSets.recognizedIds(it) }
-                .distinct()
-            mapped.ifEmpty { PokemonSets.idsFor(parsed.setCode, lang) }
-        } else {
-            PokemonSets.idsFor(parsed.setCode, lang)
-        }
-        val fromCount = PokemonSets.idsForCardCount(parsed.setCardCount)
-        return (fromPrinted + fromCount).distinct()
+        val direct = PokemonSets.directIds(parsed.setCode, parsed.setCardCount)
+        if (lang == PokemonCatalog.EN || lang == PokemonCatalog.IT) return direct
+        // Japanese and Chinese print their own set id. Keep that token.
+        val raw = PokemonSets.idsFor(parsed.setCode, lang)
+        return (raw + PokemonSets.idsForCardCount(parsed.setCardCount)).distinct()
     }
 
     private suspend fun fetchBriefs(

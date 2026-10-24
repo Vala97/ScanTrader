@@ -58,6 +58,17 @@ class ScanSession {
     var languageEvidence: String? = null
     var condition: CardCondition? = null
 
+    /**
+     * True while a background rules-strip OCR is still filling [ocrText].
+     * Confirm waits briefly so Italian keywords can win before language detection.
+     */
+    @Volatile
+    var rulesPending: Boolean = false
+
+    /** Bumped when results reset or a new rules OCR starts, so a stale job cannot append. */
+    @Volatile
+    var ocrGeneration: Int = 0
+
     fun resetResults() {
         ocrText = ""
         parsed = null
@@ -66,5 +77,7 @@ class ScanSession {
         queryFingerprint = null
         autoMatch = null
         autoMatchCardKey = null
+        rulesPending = false
+        ocrGeneration++
     }
 }
