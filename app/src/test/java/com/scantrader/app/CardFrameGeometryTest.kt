@@ -2,6 +2,7 @@ package com.scantrader.app
 
 import com.scantrader.app.scan.CardFrameGeometry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.min
 
@@ -26,6 +27,15 @@ class CardFrameGeometryTest {
     fun frameCapsHeightOnAShortPreview() {
         val rect = CardFrameGeometry.frameIn(1000f, 500f)
         assertEquals(500f * CardFrameGeometry.MAX_HEIGHT_FRACTION, rect.height, 0.01f)
+    }
+
+    @Test
+    fun titleStripExcludesTheRightSideManaOrHp() {
+        assertTrue(CardFrameGeometry.MTG_TITLE_WIDTH_FRACTION < 1f)
+        assertTrue(CardFrameGeometry.POKEMON_TITLE_WIDTH_FRACTION < 1f)
+        assertTrue(
+            CardFrameGeometry.MTG_TITLE_WIDTH_FRACTION < CardFrameGeometry.POKEMON_TITLE_WIDTH_FRACTION,
+        )
     }
 
     @Test

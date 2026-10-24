@@ -534,4 +534,34 @@ class OcrParserTest {
         )
         assertEquals("Mountain", OcrParser.cleanMtgNameGuess("Mountain"))
     }
+
+    @Test
+    fun stripsManaCostFromTheTitle() {
+        assertEquals("Sol Ring", OcrParser.cleanMtgNameGuess("Sol Ring"))
+        assertEquals("Llanowar Elves", OcrParser.cleanMtgNameGuess("Llanowar Elves G"))
+        assertEquals("Shivan Dragon", OcrParser.cleanMtgNameGuess("Shivan Dragon 4RR"))
+        assertEquals("Counterspell", OcrParser.cleanMtgNameGuess("Counterspell UU"))
+        assertEquals("Pioppo Tagliaerbacce", OcrParser.cleanMtgNameGuess("Pioppo Tagliaerbacce 2G"))
+        assertEquals("Counterspell", OcrParser.cleanMtgNameGuess("Counterspell {U}{U}"))
+        assertEquals("Shivan Dragon", OcrParser.cleanMtgNameGuess("4RR Shivan Dragon"))
+        assertEquals("Llanowar Elves", OcrParser.parse("Llanowar Elves G", Game.MTG).nameGuess)
+        assertEquals("Shivan Dragon", OcrParser.parse("Shivan Dragon 4RR", Game.MTG).nameGuess)
+        assertEquals("Counterspell", OcrParser.parse("Counterspell UU", Game.MTG).nameGuess)
+        assertEquals(
+            "Pioppo Tagliaerbacce",
+            OcrParser.parse("Pioppo Tagliaerbacce 2G", Game.MTG).nameGuess,
+        )
+        assertEquals(listOf("Shivan Dragon"), OcrParser.mtgNameAttempts("Shivan Dragon 4RR"))
+        assertEquals(listOf("Counterspell"), OcrParser.mtgNameAttempts("Counterspell UU"))
+    }
+
+    @Test
+    fun ignoresPokemonHpOnTheTopRight() {
+        val ps = OcrParser.parse("Pikachu PS 120", Game.POKEMON, "025/165")
+        assertEquals("Pikachu", ps.nameGuess)
+        val hp = OcrParser.parse("Charmander HP 120", Game.POKEMON, "004/165")
+        assertEquals("Charmander", hp.nameGuess)
+        val above = OcrParser.parse("PS 70\nNoibat", Game.POKEMON, "106/217")
+        assertEquals("Noibat", above.nameGuess)
+    }
 }

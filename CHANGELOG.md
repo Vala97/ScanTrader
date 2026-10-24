@@ -24,6 +24,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Versione dell’app impostata a `versionName` `1.0` (`versionCode` 1). Il salvataggio automatico in conferma parte solo se il match supera la soglia forte (74%); i match deboli restano da confermare a mano.
 
 ### Corretto
+- Il nome della carta non include più il costo di mana in alto a destra (`Llanowar Elves G`, `Shivan Dragon 4RR`, `Counterspell UU`, `Pioppo Tagliaerbacce 2G`, simboli `{G}`). Il ritaglio del titolo lascia fuori il lato destro della barra. Se la ricerca per nome fallisce, si riprova senza quei token; se ci sono set e numero, quelli restano la prima query. Su Pokémon si ignora anche `PS 120` / `HP 120`.
 - Scan Magic che non trovava la carta (es. «Pioppo Tagliaerbacce», 83/150) con Scryfall in 429. Le chiamate sono in coda, distanziate (~10 al secondo), con cache anche dei «non trovato» e pausa dopo un HTTP 429 (`Retry-After`). In auto-scan, durante la pausa, compare «Scryfall occupato, riprovo…» e non partono nuove query. Lo stesso testo OCR non viene chiesto di nuovo a ogni frame.
 - Il numero e il set si leggono su tutta la fascia bassa della carta (sinistra, centro e destra, circa il 15% in basso), non solo in basso a sinistra. Un intervallo di copyright (`1993-2008`, anche `01993-20O8`) e la riga Wizards non diventano più set o numero. `N3/150` torna `83/150`. Se il titolo in alto è quasi uguale a una frase del testo completo, si usa quella.
 - Se il pack Magic non è installato, lo scan lo segnala: il riconoscimento resta sull’OCR.

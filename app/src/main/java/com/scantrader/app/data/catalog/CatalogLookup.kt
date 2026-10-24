@@ -35,33 +35,48 @@ class CatalogLookup(
             .filter { code -> code.any { it.isLetter() } && code.count { it.isDigit() } < 3 }
             .take(2)
         val number = OcrParser.collectorCandidates(parsed.collectorNumber).firstOrNull()
-        val searchName = OcrParser.cleanMtgNameGuess(name)
-        if (searchName.isNullOrBlank() && number.isNullOrBlank()) return emptyList()
+        val nameAttempts = OcrParser.mtgNameAttempts(name)
+        if (nameAttempts.isEmpty() && number.isNullOrBlank()) return emptyList()
 
-        // One set+number lookup. Stop as soon as a print is found.
+        // Set + collector number wins over a noisy title (mana pips glued to the name).
         for (set in setCandidates) {
             if (number.isNullOrBlank()) break
             val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.orRethrowBusy()
             if (card != null) return listOf(card.toIdentified(ocrScore = 0.98f))
         }
 
-        // Old frame: number in the bottom band, no set code. One combined query.
-        if (!searchName.isNullOrBlank() && !number.isNullOrBlank() && setCandidates.isEmpty()) {
-            val byNumber = searchOnce("cn:$number (lang:it name:\"$searchName\" OR name:\"$searchName\")")
-            if (byNumber.isNotEmpty()) return byNumber
-        }
-
-        if (!searchName.isNullOrBlank()) {
-            val fuzzy = runCatching { scryfall.namedFuzzy(searchName) }.orRethrowBusy()
-            val cnOk = number.isNullOrBlank() || collectorEquals(fuzzy?.collectorNumber, number)
-            if (fuzzy != null && cnOk) {
-                return listOf(fuzzy.toIdentified(ocrScore = 0.72f))
-            }
-            // Italian printed title when the English fuzzy name is a different card.
-            val italian = searchOnce("lang:it !\"$searchName\"")
-            if (italian.isNotEmpty()) return italian
+        for (searchName in nameAttempts) {
+            val found = lookupMtgByName(
+                searchName = searchName,
+                number = number,
+                nameAndNumber = number != null && setCandidates.isEmpty(),
+            )
+            if (found.isNotEmpty()) return found
         }
         return emptyList()
+    }
+
+    /**
+     * One name: collector+name when there is no set code, then fuzzy, then the Italian exact title.
+     * [lookupMtg] calls this again with the trailing mana token removed when the first try misses.
+     */
+    private suspend fun lookupMtgByName(
+        searchName: String,
+        number: String?,
+        nameAndNumber: Boolean,
+    ): List<IdentifiedCard> {
+        val safeName = searchName.replace("\"", "").trim()
+        if (safeName.isBlank()) return emptyList()
+        if (nameAndNumber && !number.isNullOrBlank()) {
+            val byNumber = searchOnce("cn:$number (lang:it name:\"$safeName\" OR name:\"$safeName\")")
+            if (byNumber.isNotEmpty()) return byNumber
+        }
+        val fuzzy = runCatching { scryfall.namedFuzzy(safeName) }.orRethrowBusy()
+        val cnOk = number.isNullOrBlank() || collectorEquals(fuzzy?.collectorNumber, number)
+        if (fuzzy != null && cnOk) {
+            return listOf(fuzzy.toIdentified(ocrScore = 0.72f))
+        }
+        return searchOnce("lang:it !\"$safeName\"")
     }
 
     private suspend fun searchOnce(query: String): List<IdentifiedCard> {

@@ -51,13 +51,23 @@ object CardFrameGeometry {
     }
 
     /**
-     * Top strip for the card title.
-     * Pokémon ~22% (title + HP). MTG ~14% (name bar only — avoid rules text).
+     * Share of the title-bar width kept for the name.
+     * MTG mana symbols and the Pokémon HP/PS box sit on the right.
+     */
+    const val MTG_TITLE_WIDTH_FRACTION = 0.72f
+    const val POKEMON_TITLE_WIDTH_FRACTION = 0.80f
+
+    /**
+     * Top strip for the card title, left side only.
+     * Pokémon ~22% tall (title row). MTG ~14% (name bar — avoid rules text).
+     * The right of the bar is the mana cost or the HP value, so it is left out.
      */
     fun topNameStrip(cardCrop: android.graphics.Bitmap, mtg: Boolean = false): android.graphics.Bitmap {
         val fraction = if (mtg) 0.14f else 0.22f
+        val widthFraction = if (mtg) MTG_TITLE_WIDTH_FRACTION else POKEMON_TITLE_WIDTH_FRACTION
         val stripH = (cardCrop.height * fraction).toInt().coerceAtLeast(1).coerceAtMost(cardCrop.height)
-        return android.graphics.Bitmap.createBitmap(cardCrop, 0, 0, cardCrop.width, stripH)
+        val stripW = (cardCrop.width * widthFraction).toInt().coerceIn(1, cardCrop.width)
+        return android.graphics.Bitmap.createBitmap(cardCrop, 0, 0, stripW, stripH)
     }
 
     /** Bottom ~24% of the card crop — full width (both corners). */

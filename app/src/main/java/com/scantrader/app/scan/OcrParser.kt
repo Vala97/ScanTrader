@@ -827,8 +827,9 @@ object OcrParser {
             .replace(Regex("""[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff々ーヶ]+"""), " ")
             // Fractions and collector glued to name: Noibat106/217, Smoliv 21/182
             .replace(Regex("""\d{1,3}\s*/\s*\d{2,3}"""), " ")
-            .replace(Regex("""(?i)\b(?:hp|pv)\s*\d{2,3}\b"""), " ")
-            .replace(Regex("""(?i)\b\d{2,3}\s*(?:hp|pv)\b"""), " ")
+            .replace(Regex("""(?i)\b(?:hp|pv|ps)\s*\d{1,3}\b"""), " ")
+            .replace(Regex("""(?i)\b\d{1,3}\s*(?:hp|pv|ps)\b"""), " ")
+            .replace(Regex("""(?i)(?<=\p{L})(?:hp|pv|ps)\s*\d{1,3}\b"""), " ")
             // Trailing/leading collector digits glued without slash: Smoliv21, 106Noibat
             .replace(Regex("""(?<=[A-Za-zÀ-ÖØ-öø-ÿ])\d{2,3}\b"""), " ")
             .replace(Regex("""\b\d{2,3}(?=[A-Za-zÀ-ÖØ-öø-ÿ])"""), " ")
@@ -850,7 +851,7 @@ object OcrParser {
                     token.length in 2..4 && token.all { it.isLetter() } &&
                         token == upper && PokemonSets.recognizedIds(upper).isNotEmpty() -> false
                     token.length in 2..3 && token.all { it.isLetter() } &&
-                        token == upper && upper in setOf("HP", "PV", "GX", "EX", "V", "VMAX", "VSTAR") -> false
+                        token == upper && upper in setOf("HP", "PV", "PS", "GX", "EX", "V", "VMAX", "VSTAR") -> false
                     else -> true
                 }
             }
@@ -939,12 +940,66 @@ object OcrParser {
         return true
     }
 
-    /** Drop OCR trailing mana/noise digits: `Trasformazione Raccapricciante 2` → title only. */
+    /**
+     * Names Scryfall should try, best first.
+     * The cleaned title comes before a copy with one more trailing mana token removed,
+     * so a failed exact/fuzzy query can be retried shorter.
+     */
+    fun mtgNameAttempts(name: String?): List<String> {
+        val cleaned = cleanMtgNameGuess(name) ?: return emptyList()
+        val attempts = linkedSetOf(cleaned)
+        val tokens = cleaned.split(Regex("""\s+"""))
+        if (tokens.size >= 2 && isManaCostToken(tokens.last())) {
+            val shorter = tokens.dropLast(1).joinToString(" ").trim()
+            if (shorter.length >= 3) attempts += shorter
+        }
+        return attempts.toList()
+    }
+
+    /**
+     * Drop mana-cost OCR stuck to the title bar:
+     * `Llanowar Elves G`, `Shivan Dragon 4RR`, `Counterspell UU`, `Pioppo Tagliaerbacce 2G`,
+     * `{2}{G}`, leading digits.
+     */
     fun cleanMtgNameGuess(name: String?): String? {
-        val trimmed = name?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        return trimmed
-            .replace(Regex("""\s+\d{1,3}$"""), "")
-            .trim()
-            .takeIf { it.length >= 3 } ?: trimmed
+        var text = name?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        text = text.replace(Regex("""\{[^}]{0,8}\}"""), " ")
+        text = text.replace(Regex("""[•·●★☆*|/\\\[\]()<>]+"""), " ")
+        text = text.replace(Regex("""\s+"""), " ").trim()
+        if (text.isEmpty()) return null
+        val tokens = text.split(Regex("""\s+""")).toMutableList()
+        while (tokens.size > 1 && isManaCostToken(tokens.last())) tokens.removeAt(tokens.lastIndex)
+        while (tokens.size > 1 && isManaCostToken(tokens.first())) tokens.removeAt(0)
+        if (tokens.isEmpty() || tokens.all { isManaCostToken(it) }) return null
+        tokens[tokens.lastIndex] = stripGluedManaSuffix(tokens.last())
+        if (tokens.last().isEmpty()) tokens.removeAt(tokens.lastIndex)
+        while (tokens.size > 1 && (tokens.last().isEmpty() || isManaCostToken(tokens.last()))) {
+            tokens.removeAt(tokens.lastIndex)
+        }
+        val cleaned = tokens.joinToString(" ").trim()
+        return cleaned.takeIf { it.length >= 3 && it.any { ch -> ch.isLetter() } }
+    }
+
+    /**
+     * `{G}`, `4RR`, `UU`, `2G`, `G`, `X`, `12`.
+     * A normal word such as `Bug` or `Ring` is not a cost: letter-only costs are
+     * a single pip or an ALL-CAPS run (`UU`, `WUBRG`).
+     */
+    internal fun isManaCostToken(token: String): Boolean {
+        val core = token.trim().trim('{', '}', '.', ',', ';', ':', '*')
+        if (core.isEmpty()) return false
+        if (core.all { it.isDigit() }) return core.length in 1..4
+        if (core.matches(Regex("""\d{1,2}[WUBRGCwubrgcXx]+"""))) return true
+        if (core.length == 1 && core[0] in "WUBRGCwubrgcXx") return true
+        return core.length in 2..6 && core.all { it in "WUBRGCX" }
+    }
+
+    /** `ElvesG`, `Dragon4RR`, `Tagliaerbacce2G`, `CounterspellUU`, `Name2`. */
+    private fun stripGluedManaSuffix(token: String): String {
+        val stripped = token.replace(
+            Regex("""(?<=\p{L})(?:\d{1,2}[WUBRGCwubrgc]{1,4}|[WUBRGC]{2,4}|(?<=[a-zà-öø-ÿ])[WUBRGC]|\d{1,3})$"""),
+            "",
+        )
+        return stripped.ifBlank { token }.trim()
     }
 }
