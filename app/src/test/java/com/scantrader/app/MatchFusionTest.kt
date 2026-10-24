@@ -231,12 +231,61 @@ class MatchFusionTest {
             setName = "Lorwyn",
             collectorNumber = "80",
             ocrScore = 0.615f,
-            visualScore = 0.59f,
+            visualScore = 0.50f,
             matchConfidence = 0.62f,
         )
         val decision = MatchFusion.evaluateAutoMatch(weak, parsed)
         assertFalse(decision.accepted)
         assertTrue(decision.nameConflict)
+    }
+
+    @Test
+    fun mtgSoftAcceptsItalianOcrAgainstEnglishGalleryWhenCollectorMatches() {
+        // Device log: OCR Ostinazione Mortale cn=17, gallery Mortal Obstinacy v≈0.59.
+        val parsed = ParsedCardText(
+            nameGuess = "Ostinazione Mortale",
+            collectorNumber = "17",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Mortal Obstinacy",
+            setCode = "jou",
+            setName = "Journey into Nyx",
+            collectorNumber = "17",
+            ocrScore = 0.60f,
+            visualScore = 0.586f,
+            matchConfidence = 0.598f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertTrue(decision.accepted)
+        assertEquals("cn+neural", decision.reason)
+        assertTrue(decision.cnOk)
+    }
+
+    @Test
+    fun mtgPrintedNameClearsItalianConflictWithEnglishOracle() {
+        val parsed = ParsedCardText(
+            nameGuess = "Ostinazione Mortale",
+            collectorNumber = "17",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Mortal Obstinacy",
+            setCode = "jou",
+            setName = "Journey into Nyx",
+            collectorNumber = "17",
+            ocrScore = 0.80f,
+            visualScore = 0.59f,
+            matchConfidence = 0.70f,
+            printedName = "Ostinazione Mortale",
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertTrue(decision.accepted)
+        assertTrue(decision.nameOk)
+        assertFalse(decision.nameConflict)
+        assertEquals("name+cn", decision.reason)
     }
 
     @Test

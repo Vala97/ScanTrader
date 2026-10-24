@@ -763,7 +763,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
 
             val tCat0 = System.currentTimeMillis()
-            val (catalogHits, galleryHits) = try {
+            val fetched = try {
                 coroutineScope {
                 val ocrJob = async {
                     if (!queryCatalog) {
@@ -789,7 +789,16 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                 com.scantrader.app.scan.ScanDebug.d("gallery skipped (MTG pack not installed)")
                                 emptyList()
                             } else {
-                                runCatching { app.galleryMatcher.matchMtg(cropped, parsed) }
+                                val printedLang = (
+                                    app.scanSession.language ?: CardLanguage.ENGLISH
+                                    ).scryfallLang()
+                                runCatching {
+                                    app.galleryMatcher.matchMtg(
+                                        cropped,
+                                        parsed,
+                                        printedLang = printedLang,
+                                    )
+                                }
                                     .onFailure {
                                         com.scantrader.app.scan.ScanDebug.e("gallery.matchMtg failed", it)
                                     }
@@ -820,13 +829,47 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 com.scantrader.app.scan.ScanDebug.d("catalog stopped (Scryfall 429)")
                 return@withContext false
             }
+            var catalogHits = fetched.first
+            val galleryHits = fetched.second
             val catalogMs = System.currentTimeMillis() - tCat0
             com.scantrader.app.scan.ScanDebug.d(
                 "catalogHits=${catalogHits.size} galleryHits=${galleryHits.size} " +
                     "galleryTop=${galleryHits.firstOrNull()?.let { "${it.name} v=${it.visualScore}" }} " +
                     "catalogMs=$catalogMs",
             )
-            val fingerprintRanked = if (fingerprint != null && catalogHits.isNotEmpty()) {
+            // Gallery hit with a conflicting title: do not wait out the stability loop.
+            if (autoMode && catalogHits.isEmpty() && galleryHits.isNotEmpty()) {
+                val preview = com.scantrader.app.vision.MatchFusion
+                    .fuse(galleryHits, parsed)
+                    .firstOrNull()
+                val previewGate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(preview, parsed)
+                if (!previewGate.accepted && previewGate.nameConflict &&
+                    catalogDebounce.forceQuery(catalogIdentity)
+                ) {
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "catalog now (nameConflict) id=$catalogIdentity",
+                    )
+                    catalogHits = try {
+                        app.catalog.identify(game.value, parsed)
+                    } catch (busy: ScryfallBusyException) {
+                        catalogDebounce.invalidateLastQuery()
+                        autoHold = AutoHold.BUSY
+                        app.scanSession.parsed = parsed
+                        com.scantrader.app.scan.ScanDebug.d("catalog stopped (Scryfall 429)")
+                        return@withContext false
+                    } catch (t: Throwable) {
+                        com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", t)
+                        emptyList()
+                    }
+                }
+            }
+            // Autosave must not wait on the card-art download. Confirm loads it with Coil.
+            val fingerprintRanked = if (autoMode) {
+                if (fingerprint != null && catalogHits.isNotEmpty()) {
+                    com.scantrader.app.scan.ScanDebug.d("card image async (autosave)")
+                }
+                catalogHits
+            } else if (fingerprint != null && catalogHits.isNotEmpty()) {
                 runCatching { app.visualRanker.rank(fingerprint, catalogHits) }
                     .onFailure { com.scantrader.app.scan.ScanDebug.w("visualRanker failed", it) }
                     .getOrDefault(catalogHits)
@@ -862,6 +905,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 }
             }
             val acceptAuto = autoOk && !blockedSameCard
+            if (requireMatch && acceptAuto) {
+                top?.imageUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                    coil.Coil.imageLoader(app).enqueue(
+                        coil.request.ImageRequest.Builder(app).data(url).build(),
+                    )
+                }
+            }
             if (requireMatch && acceptAuto && topKey != null) {
                 lastAcceptedCardKey = topKey
                 sameCardClearFrames = 0

@@ -340,7 +340,10 @@ object MatchFusion {
 
         val nameGuess = parsed.nameGuess?.trim().orEmpty()
         val namePresent = nameGuess.length >= 2
-        val nameOk = namePresent && mtgNameMatches(top.name, nameGuess)
+        val nameOk = namePresent && (
+            mtgNameMatches(top.name, nameGuess) ||
+                mtgNameMatches(top.printedName.orEmpty(), nameGuess)
+            )
         val numbers = OcrParser.collectorCandidates(parsed.collectorNumber)
         val cn = top.collectorNumber.trimStart('0').ifBlank { top.collectorNumber }
         val cnOk = numbers.any {
@@ -361,7 +364,9 @@ object MatchFusion {
             // Only trust the name-search band so IT title → EN Scryfall name is accepted,
             // while Divinatrice→Emrakul (cn mistook +1/+1) stays rejected.
             val fromNameSearch = ocr >= 0.85f && ocr < 0.95f
-            val neuralAgrees = cnOk && (visual ?: 0f) >= 0.60f && confidence >= 0.58f
+            // Gallery top (visual at or above the embedder floor) plus the same collector
+            // is enough: Italian OCR vs the English oracle name is not a different card.
+            val neuralAgrees = cnOk && (visual ?: 0f) >= GalleryMatcher.MIN_SCORE && confidence >= 0.58f
             val softReason = when {
                 fromNameSearch && confidence >= 0.58f -> "scryfallName"
                 neuralAgrees -> "cn+neural"
@@ -414,6 +419,12 @@ object MatchFusion {
             """(?i)\b(?:if|exile|target|creature|battlefield|mana|wizards|mtgstory)\b""",
         ).containsMatchIn(name) || name.trim().length < 4
 
+    /** True when [cardTitle] and the OCR title share enough tokens (EN or printed IT). */
+    fun titleMatches(cardTitle: String?, ocrTitle: String?): Boolean {
+        if (cardTitle.isNullOrBlank() || ocrTitle.isNullOrBlank()) return false
+        return mtgNameMatches(cardTitle, ocrTitle)
+    }
+
     /** Loose token overlap for EN/IT MTG titles (not Pokémon species matching). */
     private fun mtgNameMatches(cardName: String, query: String): Boolean {
         val tokens = query.lowercase()
@@ -460,11 +471,7 @@ object MatchFusion {
             val nameHit = if (card.game == Game.POKEMON) {
                 PokemonCatalog.nameMatches(card.name, name)
             } else {
-                val tokens = name.lowercase()
-                    .split(Regex("""[^a-z0-9àèéìòù]+"""))
-                    .filter { it.length >= 3 }
-                val cardName = card.name.lowercase()
-                tokens.isNotEmpty() && tokens.count { token -> cardName.contains(token) } > 0
+                titleMatches(card.name, name) || titleMatches(card.printedName, name)
             }
             if (nameHit) {
                 score += 0.25f

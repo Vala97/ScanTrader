@@ -23,6 +23,20 @@ enum class CardLanguage(val csvValue: String, val label: String) {
     JAPANESE("Japanese", "日本語"),
     KOREAN("Korean", "한국어"),
     CHINESE_S("Chinese", "简体中文"),
+    ;
+
+    /** Scryfall language code (`it`, `zhs`, …). */
+    fun scryfallLang(): String = when (this) {
+        ENGLISH -> "en"
+        ITALIAN -> "it"
+        FRENCH -> "fr"
+        GERMAN -> "de"
+        SPANISH -> "es"
+        PORTUGUESE -> "pt"
+        JAPANESE -> "ja"
+        KOREAN -> "ko"
+        CHINESE_S -> "zhs"
+    }
 }
 
 data class ParsedCardText(
@@ -54,6 +68,11 @@ data class IdentifiedCard(
     val visualScore: Float? = null,
     /** Fused confidence used for ranking and auto-scan. */
     val matchConfidence: Float? = null,
+    /**
+     * Localized title (Scryfall `printed_name`) when [name] is the English oracle name.
+     * Autoscan compares OCR against this so an Italian printing is not a name conflict.
+     */
+    val printedName: String? = null,
 ) {
     fun priceForExport(foil: Boolean): String? =
         if (foil) priceEurFoil?.takeIf { it.isNotBlank() } ?: priceEur else priceEur

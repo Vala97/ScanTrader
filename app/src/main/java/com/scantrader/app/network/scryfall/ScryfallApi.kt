@@ -12,6 +12,14 @@ interface ScryfallApi {
         @Path("number") number: String,
     ): ScryfallCard
 
+    /** Localized printing (`printed_name`) for a set and collector number. */
+    @GET("cards/{set}/{number}/{lang}")
+    suspend fun cardBySetNumberLang(
+        @Path("set") set: String,
+        @Path("number") number: String,
+        @Path("lang") lang: String,
+    ): ScryfallCard
+
     @GET("cards/{id}")
     suspend fun cardById(
         @Path("id") id: String,

@@ -44,6 +44,12 @@ class CatalogLookupTest {
             override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard =
                 error("unused")
 
+            override suspend fun cardBySetNumberLang(
+                set: String,
+                number: String,
+                lang: String,
+            ): ScryfallCard = error("unused")
+
             override suspend fun cardById(id: String): ScryfallCard = error("unused")
 
             override suspend fun search(query: String, unique: String): ScryfallSearchResponse {

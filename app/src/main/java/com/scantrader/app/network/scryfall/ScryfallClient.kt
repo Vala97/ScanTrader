@@ -24,6 +24,30 @@ class ScryfallClient(
         return read(key) { api.cardById(id) }
     }
 
+    /**
+     * Localized print for [set]/[number], or null when that language has no card.
+     * Cached, including the 404, so autoscan does not repeat it every frame.
+     */
+    suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard? {
+        val key = "setlang:${gate.normalize(set)}:${gate.normalize(number)}:${gate.normalize(lang)}"
+        return when (val hit = gate.cached(key)) {
+            is ScryfallGate.Cached.Value -> hit.payload as ScryfallCard
+            ScryfallGate.Cached.Empty -> null
+            null -> try {
+                val card = guarded { api.cardBySetNumberLang(set, number, lang) }
+                gate.store(key, ScryfallGate.Cached.Value(card))
+                card
+            } catch (e: HttpException) {
+                if (e.code() == 404) {
+                    gate.store(key, ScryfallGate.Cached.Empty)
+                    null
+                } else {
+                    throw e
+                }
+            }
+        }
+    }
+
     suspend fun search(query: String, unique: String = "prints"): ScryfallSearchResponse {
         val key = "q:${gate.normalize(query)}:$unique"
         return read(key) { api.search(query, unique) }

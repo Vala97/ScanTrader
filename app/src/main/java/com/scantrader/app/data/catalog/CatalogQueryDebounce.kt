@@ -49,6 +49,21 @@ class CatalogQueryDebounce(
         return true
     }
 
+    /**
+     * Lookup now, without waiting for [stableFramesNeeded].
+     * Used when a gallery hit disagrees with the OCR title: the catalog has to
+     * run on that first frame. The same id still waits [requeryAfterMs].
+     */
+    fun forceQuery(identity: String): Boolean {
+        val key = normalize(identity)
+        if (key.isBlank()) return false
+        val t = now()
+        if (key == lastQueried && t - lastQueryAtMs < requeryAfterMs) return false
+        lastQueried = key
+        lastQueryAtMs = t
+        return true
+    }
+
     /** The last identity failed (429 / cooldown). The next stable frame may query again. */
     fun invalidateLastQuery() {
         lastQueried = null

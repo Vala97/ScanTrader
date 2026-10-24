@@ -25,7 +25,8 @@ class GalleryMatcher(
         cardCrop: Bitmap,
         parsed: ParsedCardText,
         topK: Int = 8,
-    ): List<IdentifiedCard> = matchGame(Game.MTG, cardCrop, parsed, topK)
+        printedLang: String? = null,
+    ): List<IdentifiedCard> = matchGame(Game.MTG, cardCrop, parsed, topK, printedLang)
 
     suspend fun matchPokemon(
         cardCrop: Bitmap,
@@ -38,6 +39,7 @@ class GalleryMatcher(
         cardCrop: Bitmap,
         parsed: ParsedCardText,
         topK: Int,
+        printedLang: String? = null,
     ): List<IdentifiedCard> = withContext(Dispatchers.Default) {
         val t0 = System.currentTimeMillis()
         if (!pack.ensureLoaded(game)) {
@@ -78,7 +80,7 @@ class GalleryMatcher(
             ranked.map { (id, score) ->
                 async(Dispatchers.IO) {
                     when (game) {
-                        Game.MTG -> hydrateMtg(id, score, parsed)
+                        Game.MTG -> hydrateMtg(id, score, parsed, printedLang)
                         Game.POKEMON -> hydratePokemon(id, score, parsed)
                     }
                 }
@@ -90,26 +92,61 @@ class GalleryMatcher(
         id: String,
         score: Float,
         parsed: ParsedCardText,
+        printedLang: String?,
     ): IdentifiedCard? {
         val card = runCatching { scryfall.cardById(id) }
             .onFailure {
                 com.scantrader.app.scan.ScanDebug.w("gallery: scryfall $id failed", it)
             }
             .getOrNull() ?: return null
+        val printed = localizedTitle(card, parsed, printedLang)
+        val displayName = if (
+            printed != null && MatchFusion.titleMatches(printed, parsed.nameGuess)
+        ) {
+            printed
+        } else {
+            card.name
+        }
+        val stub = IdentifiedCard(
+            game = Game.MTG,
+            name = displayName,
+            setCode = card.set,
+            setName = card.setName.orEmpty(),
+            collectorNumber = card.collectorNumber,
+            scryfallId = card.id,
+            printedName = printed,
+        )
         return card.toIdentified(
             visualScore = score.coerceIn(0f, 1f),
-            ocrScore = MatchFusion.ocrAgreement(
-                IdentifiedCard(
-                    game = Game.MTG,
-                    name = card.name,
-                    setCode = card.set,
-                    setName = card.setName.orEmpty(),
-                    collectorNumber = card.collectorNumber,
-                    scryfallId = card.id,
-                ),
-                parsed,
-            ),
-        )
+            ocrScore = MatchFusion.ocrAgreement(stub, parsed),
+        ).copy(name = displayName, printedName = printed)
+    }
+
+    /**
+     * English gallery ids have no `printed_name`. Fetch the scan language
+     * (or Italian, the same fallback as the catalog) once and cache it.
+     */
+    private suspend fun localizedTitle(
+        card: ScryfallCard,
+        parsed: ParsedCardText,
+        printedLang: String?,
+    ): String? {
+        if (MatchFusion.titleMatches(card.name, parsed.nameGuess)) return null
+        val lang = when {
+            printedLang.isNullOrBlank() -> null
+            !printedLang.equals("en", ignoreCase = true) -> printedLang
+            else -> "it"
+        } ?: return null
+        if (card.set.isBlank() || card.collectorNumber.isBlank()) return null
+        val localized = runCatching {
+            scryfall.cardBySetNumberLang(card.set, card.collectorNumber, lang)
+        }.onFailure {
+            com.scantrader.app.scan.ScanDebug.w(
+                "gallery: printed $lang ${card.set}/${card.collectorNumber} failed",
+                it,
+            )
+        }.getOrNull()
+        return localized?.printedName?.takeIf { it.isNotBlank() }
     }
 
     private suspend fun hydratePokemon(
@@ -199,6 +236,7 @@ fun mergeHybridCandidates(
             imageUrl = existing.imageUrl ?: card.imageUrl,
             priceEur = existing.priceEur ?: card.priceEur,
             priceEurFoil = existing.priceEurFoil ?: card.priceEurFoil,
+            printedName = existing.printedName ?: card.printedName,
             tcgdexId = existing.tcgdexId ?: card.tcgdexId,
             scryfallId = existing.scryfallId ?: card.scryfallId,
         )

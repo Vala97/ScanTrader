@@ -564,6 +564,23 @@ class OcrParserTest {
             "Stendardiere del Lancio della Rana",
             OcrParser.parse("Stendardiere del Lancio della Rana 1B", Game.MTG).nameGuess,
         )
+        assertEquals("Ostinazione Mortale", OcrParser.cleanMtgNameGuess("'Ostinazione Mortale"))
+        assertEquals("Ostinazione Mortale", OcrParser.cleanMtgNameGuess("l'Ostinazione Mortale"))
+        assertEquals("Ostinazione Mortale", OcrParser.cleanMtgNameGuess("L'Ostinazione Mortale"))
+        assertEquals("Ostinazione Mortale", OcrParser.cleanMtgNameGuess("1'Ostinazione Mortale"))
+        assertEquals(
+            "Ostinazione Mortale",
+            OcrParser.cleanMtgNameGuess("l’Ostinazione Mortale"),
+        )
+        assertEquals(
+            "Ostinazione Mortale",
+            OcrParser.parse("'Ostinazione Mortale", Game.MTG).nameGuess,
+        )
+        assertEquals(
+            "Ostinazione Mortale",
+            OcrParser.parse("l'Ostinazione Mortale", Game.MTG).nameGuess,
+        )
+        assertEquals("Go for the Throat", OcrParser.cleanMtgNameGuess("Go for the Throat"))
         assertEquals(listOf("Shivan Dragon"), OcrParser.mtgNameAttempts("Shivan Dragon 4RR"))
         assertEquals(listOf("Counterspell"), OcrParser.mtgNameAttempts("Counterspell UU"))
     }

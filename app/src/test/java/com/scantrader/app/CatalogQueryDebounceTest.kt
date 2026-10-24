@@ -64,6 +64,23 @@ class CatalogQueryDebounceTest {
     }
 
     @Test
+    fun nameConflictForcesLookupOnTheFirstFrame() {
+        var t = 0L
+        val debounce = CatalogQueryDebounce(
+            stableFramesNeeded = 8,
+            requeryAfterMs = 2_000L,
+            now = { t },
+        )
+        assertTrue(!debounce.shouldQuery("ostinazione mortale|17|"))
+        assertTrue(debounce.forceQuery("ostinazione mortale|17|"))
+        t = 100L
+        assertTrue(!debounce.forceQuery("ostinazione mortale|17|"))
+        assertTrue(!debounce.shouldQuery("ostinazione mortale|17|"))
+        t = 2_100L
+        assertTrue(debounce.forceQuery("ostinazione mortale|17|"))
+    }
+
+    @Test
     fun aDifferentIdResetsTheWait() {
         var t = 0L
         val debounce = CatalogQueryDebounce(

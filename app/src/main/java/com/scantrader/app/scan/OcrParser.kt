@@ -956,6 +956,8 @@ object OcrParser {
         return attempts.toList()
     }
 
+    private const val NAME_EDGE = "\"'“”‘’«»`´.,;:!?¡¿*_•·●★☆|/\\[]()<>"
+
     /**
      * Drop mana-cost OCR stuck to the title bar:
      * `Llanowar Elves G`, `Shivan Dragon 4RR`, `Counterspell UU`, `Pioppo Tagliaerbacce 2G`,
@@ -963,6 +965,11 @@ object OcrParser {
      */
     fun cleanMtgNameGuess(name: String?): String? {
         var text = name?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        text = text.replace(Regex("""[`´‘’ʼ]"""), "'")
+        text = text.trim { it.isWhitespace() || it in NAME_EDGE }
+        // Border OCR glues a quote or "l'" / "1'" onto the title.
+        text = text.replace(Regex("""(?i)^(?:[ld]|1|i)'+(?=\p{L})"""), "")
+        text = text.trim { it.isWhitespace() || it in NAME_EDGE }
         text = text.replace(Regex("""\{[^}]{0,8}\}"""), " ")
         text = text.replace(Regex("""[•·●★☆*|/\\\[\]()<>]+"""), " ")
         text = text.replace(Regex("""\s+"""), " ").trim()
@@ -970,6 +977,7 @@ object OcrParser {
         val tokens = text.split(Regex("""\s+""")).toMutableList()
         while (tokens.size > 1 && isManaCostToken(tokens.last())) tokens.removeAt(tokens.lastIndex)
         while (tokens.size > 1 && isManaCostToken(tokens.first())) tokens.removeAt(0)
+        while (tokens.size > 1 && isBorderJunkToken(tokens.first())) tokens.removeAt(0)
         if (tokens.isEmpty() || tokens.all { isManaCostToken(it) }) return null
         tokens[tokens.lastIndex] = stripGluedManaSuffix(tokens.last())
         if (tokens.last().isEmpty()) tokens.removeAt(tokens.lastIndex)
@@ -985,6 +993,17 @@ object OcrParser {
      * A normal word such as `Bug` or `Ring` is not a cost: letter-only costs are
      * a single pip or an ALL-CAPS run (`UU`, `WUBRG`).
      */
+    /**
+     * A 1–2 character crumb from the card border: `l`, `l'`, `1'`, `'`.
+     * A real two-letter word (`Go`, `Of`) stays.
+     */
+    internal fun isBorderJunkToken(token: String): Boolean {
+        val core = token.trim { it.isWhitespace() || it in "'\".,;:" }
+        if (core.isEmpty()) return true
+        if (core.length <= 2 && core.any { !it.isLetter() }) return true
+        return core.matches(Regex("""(?i)^[ldi]'?$"""))
+    }
+
     internal fun isManaCostToken(token: String): Boolean {
         val core = token.trim().trim('{', '}', '.', ',', ';', ':', '*')
         if (core.isEmpty()) return false
