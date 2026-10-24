@@ -45,52 +45,28 @@ object ListingAverage {
         return PriceQuote(amount = amount, currency = currency, source = "CardTrader")
     }
 
-    /** Scryfall EUR, then USD, for the foil flag. Null when both are missing. */
-    fun fromScryfall(
-        eur: String?,
-        eurFoil: String?,
-        usd: String?,
-        usdFoil: String?,
-        foil: Boolean,
-    ): PriceQuote? {
-        val eurValue = positive(if (foil) eurFoil ?: eur else eur)
-        if (eurValue != null) return PriceQuote(eurValue, "EUR", "Scryfall")
-        val usdValue = positive(if (foil) usdFoil ?: usd else usd)
-        if (usdValue != null) return PriceQuote(usdValue, "USD", "Scryfall")
-        return null
-    }
-
+    /**
+     * Euro amount already stored on the card. USD is never shown.
+     * A foil line with no `eur_foil` uses the non-foil EUR of the same card.
+     */
     fun display(
         eur: String?,
         eurFoil: String?,
-        usd: String?,
-        usdFoil: String?,
-        currency: String?,
         source: String?,
         foil: Boolean,
     ): String? {
-        val quote = when (currency?.uppercase()) {
-            "USD" -> fromScryfall(null, null, usd, usdFoil, foil)?.copy(source = source ?: "Scryfall")
-            else -> {
-                val eurQuote = fromScryfall(eur, eurFoil, null, null, foil)
-                eurQuote?.copy(source = source ?: eurQuote.source)
-                    ?: fromScryfall(null, null, usd, usdFoil, foil)?.copy(source = source ?: "Scryfall")
-            }
-        } ?: return null
-        val symbol = if (quote.currency == "USD") "$" else "€"
-        val via = quote.source.let { " · $it" }
-        return "$symbol${quote.amount}$via"
+        val amount = positive(if (foil) eurFoil ?: eur else eur) ?: return null
+        val via = source?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+        return "€$amount$via"
     }
 
     fun apply(card: IdentifiedCard, quote: PriceQuote, foil: Boolean): IdentifiedCard {
-        val eur = quote.amount.takeIf { quote.currency.equals("EUR", ignoreCase = true) }
-        val usd = quote.amount.takeIf { quote.currency.equals("USD", ignoreCase = true) }
+        if (!quote.currency.equals("EUR", ignoreCase = true)) return card
+        val eur = quote.amount
         return card.copy(
-            priceEur = if (foil) card.priceEur else eur ?: card.priceEur,
-            priceEurFoil = if (foil) eur ?: card.priceEurFoil else card.priceEurFoil,
-            priceUsd = if (foil) card.priceUsd else usd ?: card.priceUsd,
-            priceUsdFoil = if (foil) usd ?: card.priceUsdFoil else card.priceUsdFoil,
-            priceCurrency = quote.currency,
+            priceEur = if (foil) card.priceEur else eur,
+            priceEurFoil = if (foil) eur else card.priceEurFoil,
+            priceCurrency = "EUR",
             priceSource = quote.source,
         )
     }

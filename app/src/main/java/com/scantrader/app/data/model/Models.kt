@@ -87,9 +87,9 @@ data class IdentifiedCard(
     val priceEurFoil: String? = null,
     val priceUsd: String? = null,
     val priceUsdFoil: String? = null,
-    /** `EUR` or `USD` for the amount shown as the proposed price. */
+    /** `EUR` for the amount shown as the proposed price. */
     val priceCurrency: String? = null,
-    /** `CardTrader`, `Scryfall`, or `Cardmarket`. */
+    /** `CardTrader`, `Scryfall`, `Scryfall (circa)`, or `Cardmarket`. */
     val priceSource: String? = null,
     /** Catalog/OCR prior in 0..1 (set+number strong, name weak). */
     val ocrScore: Float? = null,

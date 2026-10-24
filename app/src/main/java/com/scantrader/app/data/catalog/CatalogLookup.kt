@@ -317,14 +317,15 @@ class CatalogLookup(
             priceEurFoil = prices?.eurFoil?.takeIf { it.isNotBlank() },
             priceUsd = prices?.usd?.takeIf { it.isNotBlank() },
             priceUsdFoil = prices?.usdFoil?.takeIf { it.isNotBlank() },
-            priceCurrency = when {
-                !prices?.eur.isNullOrBlank() || !prices?.eurFoil.isNullOrBlank() -> "EUR"
-                !prices?.usd.isNullOrBlank() || !prices?.usdFoil.isNullOrBlank() -> "USD"
-                else -> null
+            priceCurrency = if (
+                !prices?.eur.isNullOrBlank() || !prices?.eurFoil.isNullOrBlank()
+            ) {
+                "EUR"
+            } else {
+                null
             },
             priceSource = if (
-                !prices?.eur.isNullOrBlank() || !prices?.eurFoil.isNullOrBlank() ||
-                !prices?.usd.isNullOrBlank() || !prices?.usdFoil.isNullOrBlank()
+                !prices?.eur.isNullOrBlank() || !prices?.eurFoil.isNullOrBlank()
             ) {
                 "Scryfall"
             } else {

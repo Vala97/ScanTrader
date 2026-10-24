@@ -135,9 +135,6 @@ fun CollectionScreen(
                                 val avgPrice = com.scantrader.app.data.catalog.ListingAverage.display(
                                     eur = card.priceEur,
                                     eurFoil = card.priceEurFoil,
-                                    usd = card.priceUsd,
-                                    usdFoil = card.priceUsdFoil,
-                                    currency = card.priceCurrency,
                                     source = card.priceSource,
                                     foil = card.foil,
                                 )

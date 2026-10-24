@@ -281,9 +281,9 @@ private fun CardTraderTokenField(
     Text("Token API CardTrader")
     Text(
         if (saved) {
-            "Token salvato sul telefono, cifrato. Senza token il prezzo resta quello di Scryfall."
+            "Token salvato sul telefono, cifrato. Il prezzo Magic è la media CardTrader. Senza token resta Scryfall in euro."
         } else {
-            "Senza token il prezzo Magic usa solo Scryfall (EUR, oppure USD). Il token non esce dal telefono."
+            "Senza token il prezzo Magic è solo Scryfall in euro: nessuna chiamata a CardTrader. Con un token si usa la media delle inserzioni. Il token non esce dal telefono."
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,

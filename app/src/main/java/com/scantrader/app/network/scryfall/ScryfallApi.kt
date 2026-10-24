@@ -50,6 +50,12 @@ data class ScryfallCard(
     val set: String,
     @SerializedName("set_name") val setName: String? = null,
     @SerializedName("collector_number") val collectorNumber: String = "",
+    /** Scryfall language code of this printing (`en`, `it`, …). */
+    val lang: String? = null,
+    /** Shared by every printing of the same card. Used to find an EUR price elsewhere. */
+    @SerializedName("oracle_id") val oracleId: String? = null,
+    /** `YYYY-MM-DD`. Tie-break when several prints share the cheapest EUR. */
+    @SerializedName("released_at") val releasedAt: String? = null,
     @SerializedName("image_uris") val imageUris: ScryfallImages? = null,
     @SerializedName("card_faces") val cardFaces: List<ScryfallFace>? = null,
     @SerializedName("tcgplayer_id") val tcgplayerId: Long? = null,

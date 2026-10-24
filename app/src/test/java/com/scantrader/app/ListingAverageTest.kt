@@ -1,12 +1,21 @@
 package com.scantrader.app
 
+import com.scantrader.app.data.catalog.CardTraderPrices
 import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.catalog.MarketListing
+import com.scantrader.app.data.catalog.PriceQuote
+import com.scantrader.app.data.model.CardCondition
+import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.data.model.Game
+import com.scantrader.app.data.model.IdentifiedCard
+import com.scantrader.app.network.cardtrader.CardTraderApi
 import com.scantrader.app.network.cardtrader.CardTraderCatalog
 import com.scantrader.app.network.cardtrader.CtBlueprint
 import com.scantrader.app.network.cardtrader.CtExpansion
+import com.scantrader.app.network.cardtrader.CtProduct
 import com.google.gson.Gson
 import com.scantrader.app.network.scryfall.ScryfallCard
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -42,25 +51,71 @@ class ListingAverageTest {
     }
 
     @Test
-    fun scryfallFallsBackToUsdWhenEurIsMissing() {
-        assertEquals("EUR", ListingAverage.fromScryfall("0.12", null, "0.15", null, foil = false)?.currency)
-        val usd = ListingAverage.fromScryfall(null, null, "0.15", "0.40", foil = true)
-        assertEquals("0.40", usd?.amount)
-        assertEquals("USD", usd?.currency)
-        assertEquals("Scryfall", usd?.source)
-        assertNull(ListingAverage.fromScryfall(null, null, null, null, foil = false))
+    fun labelIncludesTheEuroSourceAndSkipsUsd() {
+        assertEquals(
+            "€0.12 · Scryfall",
+            ListingAverage.display("0.12", null, "Scryfall", foil = false),
+        )
+        assertEquals(
+            "€0.40 · Scryfall (circa)",
+            ListingAverage.display("0.12", "0.40", "Scryfall (circa)", foil = true),
+        )
+        assertNull(ListingAverage.display(null, null, "Scryfall", foil = false))
+        assertEquals(
+            "€1.50 · Cardmarket",
+            ListingAverage.display("1.5", null, "Cardmarket", foil = false),
+        )
     }
 
     @Test
-    fun labelIncludesTheSource() {
-        assertEquals(
-            "€0.12 · Scryfall",
-            ListingAverage.display("0.12", null, "0.15", null, "EUR", "Scryfall", foil = false),
+    fun usdQuoteIsNotApplied() {
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Mortal Obstinacy",
+            setCode = "jou",
+            setName = "Journey into Nyx",
+            collectorNumber = "17",
         )
-        assertEquals(
-            "$0.15 · Scryfall",
-            ListingAverage.display(null, null, "0.15", null, "USD", "Scryfall", foil = false),
+        val same = ListingAverage.apply(card, PriceQuote("0.15", "USD", "Scryfall"), foil = false)
+        assertNull(same.priceEur)
+        assertNull(same.priceCurrency)
+        assertNull(same.priceSource)
+    }
+
+    @Test
+    fun cardTraderQuoteDoesNotCallTheApiWithoutAToken() = runBlocking {
+        var calls = 0
+        val api = object : CardTraderApi {
+            override suspend fun expansions(): List<CtExpansion> {
+                calls++
+                error("no token")
+            }
+
+            override suspend fun blueprints(expansionId: Int): List<CtBlueprint> {
+                calls++
+                error("no token")
+            }
+
+            override suspend fun products(blueprintId: Int): Map<String, List<CtProduct>> {
+                calls++
+                error("no token")
+            }
+        }
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Mortal Obstinacy",
+            setCode = "jou",
+            setName = "Journey into Nyx",
+            collectorNumber = "17",
+            scryfallId = "it-id",
         )
+        assertNull(
+            CardTraderPrices(api) { null }.quote(card, CardLanguage.ITALIAN, CardCondition.NEAR_MINT, false),
+        )
+        assertNull(
+            CardTraderPrices(api) { "  " }.quote(card, CardLanguage.ITALIAN, CardCondition.NEAR_MINT, false),
+        )
+        assertEquals(0, calls)
     }
 
     @Test
@@ -91,12 +146,18 @@ class ListingAverageTest {
               "set": "jou",
               "set_name": "Journey into Nyx",
               "collector_number": "17",
+              "lang": "en",
+              "oracle_id": "oracle-mortal",
+              "released_at": "2014-04-26",
               "prices": {"usd": "0.15", "usd_foil": "0.40", "eur": "0.12", "eur_foil": null}
             }
             """.trimIndent(),
             ScryfallCard::class.java,
         )
         assertEquals("0.12", card.prices?.eur)
+        assertEquals("en", card.lang)
+        assertEquals("oracle-mortal", card.oracleId)
+        assertEquals("2014-04-26", card.releasedAt)
         assertEquals("0.15", card.prices?.usd)
         assertEquals("0.40", card.prices?.usdFoil)
         assertNull(card.prices?.eurFoil)

@@ -6,6 +6,7 @@ import coil.ImageLoaderFactory
 import com.scantrader.app.data.catalog.CardLanguageResolver
 import com.scantrader.app.data.catalog.CardTraderPrices
 import com.scantrader.app.data.catalog.CatalogLookup
+import com.scantrader.app.data.catalog.ScryfallEurPrices
 import com.scantrader.app.data.db.AppDatabase
 import com.scantrader.app.data.prefs.SecretStore
 import com.scantrader.app.data.prefs.UserPreferences
@@ -44,6 +45,8 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         private set
     lateinit var scryfall: ScryfallClient
         private set
+    lateinit var scryfallEur: ScryfallEurPrices
+        private set
     lateinit var secrets: SecretStore
         private set
     lateinit var cardTraderPrices: CardTraderPrices
@@ -66,6 +69,7 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         val tcgdex = NetworkModule.retrofit("https://api.tcgdex.net/", http)
             .create(TcgdexApi::class.java)
         catalog = CatalogLookup(scryfall, tcgdex)
+        scryfallEur = ScryfallEurPrices(scryfall)
         secrets = SecretStore(this)
         cardTraderPrices = CardTraderPrices(
             NetworkModule.retrofit(
