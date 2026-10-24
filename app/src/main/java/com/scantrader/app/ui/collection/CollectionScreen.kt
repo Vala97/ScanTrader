@@ -132,17 +132,17 @@ fun CollectionScreen(
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
-                                val avgPrice = if (card.foil) {
-                                    card.priceEurFoil?.takeIf { it.isNotBlank() } ?: card.priceEur
-                                } else {
-                                    card.priceEur
-                                }
+                                val avgPrice = com.scantrader.app.data.catalog.ListingAverage.display(
+                                    eur = card.priceEur,
+                                    eurFoil = card.priceEurFoil,
+                                    usd = card.priceUsd,
+                                    usdFoil = card.priceUsdFoil,
+                                    currency = card.priceCurrency,
+                                    source = card.priceSource,
+                                    foil = card.foil,
+                                )
                                 Text(
-                                    text = if (!avgPrice.isNullOrBlank()) {
-                                        "Prezzo medio: €$avgPrice"
-                                    } else {
-                                        "Prezzo medio: n/d"
-                                    },
+                                    text = avgPrice?.let { "Prezzo medio: $it" } ?: "Prezzo medio: n/d",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Medium,

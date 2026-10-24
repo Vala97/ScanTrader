@@ -22,15 +22,22 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalContext
@@ -54,6 +61,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
 ) {
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
+    val tokenSaved by viewModel.hasCardTraderToken.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
     val pokemonNeural by viewModel.pokemonPackState.collectAsStateWithLifecycle()
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
@@ -123,6 +131,29 @@ fun SettingsScreen(
                         "salva in collezione dopo N secondi. I match deboli restano in conferma.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Rileva lingua dalla carta")
+                        Text(
+                            "In conferma preseleziona la lingua letta sul titolo. Se non è chiara, resta l’ultima scelta.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = defaults.detectCardLanguage,
+                        onCheckedChange = viewModel::setDetectCardLanguage,
+                    )
+                }
+                CardTraderTokenField(
+                    saved = tokenSaved,
+                    onSave = viewModel::saveCardTraderToken,
+                    onClear = viewModel::clearCardTraderToken,
                 )
                 if (lensOptions.size > 1) {
                     LensDropdown(
@@ -236,6 +267,47 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun CardTraderTokenField(
+    saved: Boolean,
+    onSave: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    var draft by remember { mutableStateOf("") }
+    Text("Token API CardTrader")
+    Text(
+        if (saved) {
+            "Token salvato sul telefono, cifrato. Senza token il prezzo resta quello di Scryfall."
+        } else {
+            "Senza token il prezzo Magic usa solo Scryfall (EUR, oppure USD). Il token non esce dal telefono."
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { draft = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(if (saved) "Sostituisci token" else "Token") },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            onClick = {
+                onSave(draft)
+                draft = ""
+            },
+            enabled = draft.isNotBlank(),
+        ) {
+            Text("Salva token")
+        }
+        if (saved) {
+            TextButton(onClick = onClear) { Text("Rimuovi") }
         }
     }
 }

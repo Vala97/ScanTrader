@@ -43,6 +43,12 @@ data class CardEntryEntity(
     /** Cardmarket EUR (non-foil). Exported as CardTrader `price_cents`. */
     val priceEur: String? = null,
     val priceEurFoil: String? = null,
+    val priceUsd: String? = null,
+    val priceUsdFoil: String? = null,
+    /** `EUR` or `USD`. */
+    val priceCurrency: String? = null,
+    /** `CardTrader`, `Scryfall`, or `Cardmarket`. */
+    val priceSource: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 

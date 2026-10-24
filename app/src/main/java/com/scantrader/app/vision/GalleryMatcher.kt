@@ -101,9 +101,9 @@ class GalleryMatcher(
             .getOrNull() ?: return null
         val printed = localizedTitle(card, parsed, printedLang)
         val displayName = if (
-            printed != null && MatchFusion.titleMatches(printed, parsed.nameGuess)
+            printed != null && MatchFusion.titleMatches(printed.name, parsed.nameGuess)
         ) {
-            printed
+            printed.name
         } else {
             card.name
         }
@@ -114,12 +114,13 @@ class GalleryMatcher(
             setName = card.setName.orEmpty(),
             collectorNumber = card.collectorNumber,
             scryfallId = card.id,
-            printedName = printed,
+            printedName = printed?.name,
+            printedLang = printed?.lang,
         )
         return card.toIdentified(
             visualScore = score.coerceIn(0f, 1f),
             ocrScore = MatchFusion.ocrAgreement(stub, parsed),
-        ).copy(name = displayName, printedName = printed)
+        ).copy(name = displayName, printedName = printed?.name, printedLang = printed?.lang)
     }
 
     /**
@@ -130,7 +131,7 @@ class GalleryMatcher(
         card: ScryfallCard,
         parsed: ParsedCardText,
         printedLang: String?,
-    ): String? {
+    ): PrintedTitle? {
         if (MatchFusion.titleMatches(card.name, parsed.nameGuess)) return null
         val lang = when {
             printedLang.isNullOrBlank() -> null
@@ -146,8 +147,11 @@ class GalleryMatcher(
                 it,
             )
         }.getOrNull()
-        return localized?.printedName?.takeIf { it.isNotBlank() }
+        val title = localized?.printedName?.takeIf { it.isNotBlank() } ?: return null
+        return PrintedTitle(title, lang)
     }
+
+    private data class PrintedTitle(val name: String, val lang: String)
 
     private suspend fun hydratePokemon(
         id: String,
@@ -176,6 +180,8 @@ class GalleryMatcher(
             priceEurFoil = formatEur(
                 card.pricing?.cardmarket?.avgHolo ?: card.pricing?.cardmarket?.trendHolo,
             ),
+            priceCurrency = "EUR",
+            priceSource = "Cardmarket",
         )
     }
 
@@ -191,6 +197,21 @@ class GalleryMatcher(
             imageUrl = bestImageUrl(),
             priceEur = prices?.eur?.takeIf { it.isNotBlank() },
             priceEurFoil = prices?.eurFoil?.takeIf { it.isNotBlank() },
+            priceUsd = prices?.usd?.takeIf { it.isNotBlank() },
+            priceUsdFoil = prices?.usdFoil?.takeIf { it.isNotBlank() },
+            priceCurrency = when {
+                !prices?.eur.isNullOrBlank() || !prices?.eurFoil.isNullOrBlank() -> "EUR"
+                !prices?.usd.isNullOrBlank() || !prices?.usdFoil.isNullOrBlank() -> "USD"
+                else -> null
+            },
+            priceSource = if (
+                !prices?.eur.isNullOrBlank() || !prices?.usd.isNullOrBlank() ||
+                !prices?.eurFoil.isNullOrBlank() || !prices?.usdFoil.isNullOrBlank()
+            ) {
+                "Scryfall"
+            } else {
+                null
+            },
             ocrScore = ocrScore,
             visualScore = visualScore,
         )
@@ -236,7 +257,12 @@ fun mergeHybridCandidates(
             imageUrl = existing.imageUrl ?: card.imageUrl,
             priceEur = existing.priceEur ?: card.priceEur,
             priceEurFoil = existing.priceEurFoil ?: card.priceEurFoil,
+            priceUsd = existing.priceUsd ?: card.priceUsd,
+            priceUsdFoil = existing.priceUsdFoil ?: card.priceUsdFoil,
+            priceCurrency = existing.priceCurrency ?: card.priceCurrency,
+            priceSource = existing.priceSource ?: card.priceSource,
             printedName = existing.printedName ?: card.printedName,
+            printedLang = existing.printedLang ?: card.printedLang,
             tcgdexId = existing.tcgdexId ?: card.tcgdexId,
             scryfallId = existing.scryfallId ?: card.scryfallId,
         )

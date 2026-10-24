@@ -37,6 +37,29 @@ enum class CardLanguage(val csvValue: String, val label: String) {
         KOREAN -> "ko"
         CHINESE_S -> "zhs"
     }
+
+    /** CardTrader `mtg_language` (`jp`, `zh-CN`, …). */
+    fun cardTraderLang(): String = when (this) {
+        JAPANESE -> "jp"
+        KOREAN -> "kr"
+        CHINESE_S -> "zh-CN"
+        else -> scryfallLang()
+    }
+
+    companion object {
+        fun fromCatalogCode(code: String): CardLanguage? = when (code.trim().lowercase()) {
+            "en", "english" -> ENGLISH
+            "it", "italian" -> ITALIAN
+            "fr", "french" -> FRENCH
+            "de", "german" -> GERMAN
+            "es", "spanish" -> SPANISH
+            "pt", "portuguese" -> PORTUGUESE
+            "ja", "jp", "japanese" -> JAPANESE
+            "ko", "kr", "korean" -> KOREAN
+            "zhs", "zh", "zh-cn", "zh_cn", "chinese" -> CHINESE_S
+            else -> null
+        }
+    }
 }
 
 data class ParsedCardText(
@@ -62,6 +85,12 @@ data class IdentifiedCard(
     val priceEur: String? = null,
     /** Cardmarket EUR foil from Scryfall. */
     val priceEurFoil: String? = null,
+    val priceUsd: String? = null,
+    val priceUsdFoil: String? = null,
+    /** `EUR` or `USD` for the amount shown as the proposed price. */
+    val priceCurrency: String? = null,
+    /** `CardTrader`, `Scryfall`, or `Cardmarket`. */
+    val priceSource: String? = null,
     /** Catalog/OCR prior in 0..1 (set+number strong, name weak). */
     val ocrScore: Float? = null,
     /** On-device art similarity vs scan crop in 0..1. */
@@ -73,6 +102,8 @@ data class IdentifiedCard(
      * Autoscan compares OCR against this so an Italian printing is not a name conflict.
      */
     val printedName: String? = null,
+    /** Scryfall/TCGdex code of [printedName], when it was resolved (`it`, `ja`, …). */
+    val printedLang: String? = null,
 ) {
     fun priceForExport(foil: Boolean): String? =
         if (foil) priceEurFoil?.takeIf { it.isNotBlank() } ?: priceEur else priceEur

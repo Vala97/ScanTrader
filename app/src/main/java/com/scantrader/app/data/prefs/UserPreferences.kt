@@ -1,6 +1,7 @@
 package com.scantrader.app.data.prefs
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -28,6 +29,7 @@ class UserPreferences(private val context: Context) {
             autoSaveWaitSeconds = prefs[AUTO_SAVE_WAIT_SECONDS]
                 ?.takeIf { it in AUTO_SAVE_WAIT_OPTIONS }
                 ?: 0,
+            detectCardLanguage = prefs[DETECT_LANGUAGE] ?: true,
         )
     }
 
@@ -60,6 +62,10 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { it[AUTO_SAVE_WAIT_SECONDS] = safe }
     }
 
+    suspend fun setDetectCardLanguage(enabled: Boolean) {
+        context.dataStore.edit { it[DETECT_LANGUAGE] = enabled }
+    }
+
     suspend fun currentDefaults(): ScanDefaults = defaults.first()
 
     private companion object {
@@ -69,6 +75,7 @@ class UserPreferences(private val context: Context) {
         val LENS_KEY = stringPreferencesKey("preferred_lens")
         val ZOOM_RATIO = floatPreferencesKey("scan_zoom_ratio")
         val AUTO_SAVE_WAIT_SECONDS = intPreferencesKey("auto_save_wait_seconds")
+        val DETECT_LANGUAGE = booleanPreferencesKey("detect_card_language")
     }
 }
 
@@ -82,4 +89,6 @@ data class ScanDefaults(
     val lensKey: String? = null,
     val zoomRatio: Float = 1f,
     val autoSaveWaitSeconds: Int = 0,
+    /** When true, confirm preselects the language read on the card. */
+    val detectCardLanguage: Boolean = true,
 )

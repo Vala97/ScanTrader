@@ -98,7 +98,13 @@ class CatalogLookup(
             val print = sameNumber.firstOrNull()
             if (print != null) {
                 val title = italian.printedName?.takeIf { it.isNotBlank() } ?: safeName
-                return listOf(print.toIdentified(ocrScore = 0.9f).copy(name = title))
+                return listOf(
+                    print.toIdentified(ocrScore = 0.9f).copy(
+                        name = title,
+                        printedName = title,
+                        printedLang = "it",
+                    ),
+                )
             }
         }
         return listOf(italian.toIdentified(ocrScore = 0.88f))
@@ -309,6 +315,22 @@ class CatalogLookup(
             imageUrl = bestImageUrl(),
             priceEur = prices?.eur?.takeIf { it.isNotBlank() },
             priceEurFoil = prices?.eurFoil?.takeIf { it.isNotBlank() },
+            priceUsd = prices?.usd?.takeIf { it.isNotBlank() },
+            priceUsdFoil = prices?.usdFoil?.takeIf { it.isNotBlank() },
+            priceCurrency = when {
+                !prices?.eur.isNullOrBlank() || !prices?.eurFoil.isNullOrBlank() -> "EUR"
+                !prices?.usd.isNullOrBlank() || !prices?.usdFoil.isNullOrBlank() -> "USD"
+                else -> null
+            },
+            priceSource = if (
+                !prices?.eur.isNullOrBlank() || !prices?.eurFoil.isNullOrBlank() ||
+                !prices?.usd.isNullOrBlank() || !prices?.usdFoil.isNullOrBlank()
+            ) {
+                "Scryfall"
+            } else {
+                null
+            },
+            printedName = printedName?.takeIf { it.isNotBlank() },
             ocrScore = ocrScore,
         )
 
@@ -325,6 +347,8 @@ class CatalogLookup(
             imageUrl = image?.let { "$it/low.webp" },
             priceEur = formatEur(cm?.avg ?: cm?.trend),
             priceEurFoil = formatEur(cm?.avgHolo ?: cm?.trendHolo),
+            priceCurrency = if (cm?.avg != null || cm?.trend != null || cm?.avgHolo != null) "EUR" else null,
+            priceSource = if (cm?.avg != null || cm?.trend != null || cm?.avgHolo != null) "Cardmarket" else null,
         )
     }
 

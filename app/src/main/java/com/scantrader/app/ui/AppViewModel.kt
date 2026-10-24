@@ -120,6 +120,22 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setAutoSaveWaitSeconds(seconds) }
     }
 
+    fun setDetectCardLanguage(enabled: Boolean) {
+        viewModelScope.launch { app.prefs.setDetectCardLanguage(enabled) }
+    }
+
+    val hasCardTraderToken = MutableStateFlow(app.secrets.hasCardTraderToken())
+
+    fun saveCardTraderToken(token: String) {
+        app.secrets.setCardTraderToken(token)
+        hasCardTraderToken.value = app.secrets.hasCardTraderToken()
+    }
+
+    fun clearCardTraderToken() {
+        app.secrets.setCardTraderToken(null)
+        hasCardTraderToken.value = false
+    }
+
     fun downloadNeuralPack() {
         viewModelScope.launch {
             app.neuralPack.downloadAndInstall()
@@ -1062,6 +1078,76 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     fun setLanguage(language: CardLanguage) {
         app.scanSession.language = language
         viewModelScope.launch { app.prefs.setLanguage(language) }
+    }
+
+    suspend fun detectCardLanguage(card: IdentifiedCard): CardLanguage? {
+        if (!app.prefs.currentDefaults().detectCardLanguage) return null
+        return runCatching { app.languageResolver.detect(card, parsed?.nameGuess) }.getOrNull()
+    }
+
+    /**
+     * CardTrader average when a token is saved. Otherwise Scryfall EUR, then USD.
+     * A missing scan-time price is re-read from Scryfall by id before giving up.
+     */
+    suspend fun proposePrice(
+        card: IdentifiedCard,
+        language: CardLanguage,
+        condition: CardCondition,
+        foil: Boolean,
+    ): IdentifiedCard {
+        var current = card
+        if (current.game == Game.MTG &&
+            current.priceEur.isNullOrBlank() &&
+            current.priceUsd.isNullOrBlank() &&
+            !current.scryfallId.isNullOrBlank()
+        ) {
+            val fresh = runCatching { app.scryfall.cardById(current.scryfallId) }.getOrNull()
+            val prices = fresh?.prices
+            if (prices != null) {
+                current = current.copy(
+                    priceEur = prices.eur?.takeIf { it.isNotBlank() },
+                    priceEurFoil = prices.eurFoil?.takeIf { it.isNotBlank() },
+                    priceUsd = prices.usd?.takeIf { it.isNotBlank() },
+                    priceUsdFoil = prices.usdFoil?.takeIf { it.isNotBlank() },
+                    priceCurrency = when {
+                        !prices.eur.isNullOrBlank() || !prices.eurFoil.isNullOrBlank() -> "EUR"
+                        !prices.usd.isNullOrBlank() || !prices.usdFoil.isNullOrBlank() -> "USD"
+                        else -> null
+                    },
+                    priceSource = "Scryfall",
+                )
+            }
+        }
+        val market = if (app.secrets.hasCardTraderToken()) {
+            val englishId = if (current.game == Game.MTG && current.setCode.isNotBlank() &&
+                current.collectorNumber.isNotBlank()
+            ) {
+                runCatching {
+                    app.scryfall.cardBySetAndNumber(current.setCode, current.collectorNumber).id
+                }.getOrNull()
+            } else {
+                null
+            }
+            runCatching {
+                app.cardTraderPrices.quote(
+                    current,
+                    language,
+                    condition,
+                    foil,
+                    listOfNotNull(englishId),
+                )
+            }.getOrNull()
+        } else {
+            null
+        }
+        val quote = market ?: com.scantrader.app.data.catalog.ListingAverage.fromScryfall(
+            eur = current.priceEur,
+            eurFoil = current.priceEurFoil,
+            usd = current.priceUsd,
+            usdFoil = current.priceUsdFoil,
+            foil = foil,
+        )
+        return if (quote == null) current else com.scantrader.app.data.catalog.ListingAverage.apply(current, quote, foil)
     }
 
     fun setCondition(condition: CardCondition) {

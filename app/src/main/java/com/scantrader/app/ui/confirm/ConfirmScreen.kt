@@ -49,6 +49,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.scantrader.app.data.catalog.CardLanguageDetector
+import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.IdentifiedCard
@@ -74,6 +76,7 @@ fun ConfirmScreen(
     var query by remember { mutableStateOf(viewModel.parsed?.nameGuess.orEmpty()) }
     var selected by remember { mutableStateOf<IdentifiedCard?>(null) }
     var quantity by remember { mutableIntStateOf(1) }
+    var languageTouched by remember { mutableStateOf(false) }
     var language by remember {
         mutableStateOf(viewModel.sessionLanguage ?: defaults.language)
     }
@@ -116,9 +119,30 @@ fun ConfirmScreen(
 
     LaunchedEffect(Unit) { viewModel.reload() }
     LaunchedEffect(defaults) {
-        // Prefer last choice from this session; otherwise follow saved defaults.
-        language = viewModel.sessionLanguage ?: defaults.language
         condition = viewModel.sessionCondition ?: defaults.condition
+        if (!languageTouched && !defaults.detectCardLanguage) {
+            language = viewModel.sessionLanguage ?: defaults.language
+        }
+    }
+    LaunchedEffect(selected?.identityKey(), defaults.detectCardLanguage) {
+        if (languageTouched || !defaults.detectCardLanguage) return@LaunchedEffect
+        val card = selected ?: return@LaunchedEffect
+        val detected = viewModel.detectCardLanguage(card)
+        language = CardLanguageDetector.choose(
+            detectEnabled = true,
+            detected = detected,
+            lastChosen = viewModel.sessionLanguage ?: defaults.language,
+        )
+    }
+    LaunchedEffect(selected?.identityKey(), language, condition, foil) {
+        val card = selected ?: return@LaunchedEffect
+        val priced = viewModel.proposePrice(card, language, condition, foil)
+        val changed = priced.priceEur != card.priceEur ||
+            priced.priceEurFoil != card.priceEurFoil ||
+            priced.priceUsd != card.priceUsd ||
+            priced.priceSource != card.priceSource ||
+            priced.priceCurrency != card.priceCurrency
+        if (changed) selected = priced
     }
     LaunchedEffect(candidates) {
         if (selected == null || candidates.none { sameCard(it, selected) }) {
@@ -151,8 +175,16 @@ fun ConfirmScreen(
         }
     }
 
-    val displayedPrice = selected?.let { card ->
-        if (foil) card.priceEurFoil?.takeIf { it.isNotBlank() } ?: card.priceEur else card.priceEur
+    val priceLine = selected?.let { card ->
+        ListingAverage.display(
+            eur = card.priceEur,
+            eurFoil = card.priceEurFoil,
+            usd = card.priceUsd,
+            usdFoil = card.priceUsdFoil,
+            currency = card.priceCurrency,
+            source = card.priceSource,
+            foil = foil,
+        )
     }
     val canSave = selected != null && collectionId != null && !saving
     val saveLabel = when {
@@ -271,11 +303,7 @@ fun ConfirmScreen(
                             )
                         }
                         Text(
-                            text = when {
-                                displayedPrice != null && foil -> "Prezzo Cardmarket (foil): €$displayedPrice"
-                                displayedPrice != null -> "Prezzo Cardmarket: €$displayedPrice"
-                                else -> "Prezzo EUR non disponibile su Scryfall"
-                            },
+                            text = priceLine?.let { "Prezzo medio: $it" } ?: "Prezzo medio: n/d",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium,
@@ -311,6 +339,7 @@ fun ConfirmScreen(
                         selected = language,
                         onSelect = {
                             cancelAutoSave()
+                            languageTouched = true
                             language = it
                             viewModel.setLanguage(it)
                         },

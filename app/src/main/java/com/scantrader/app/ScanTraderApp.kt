@@ -3,9 +3,13 @@ package com.scantrader.app
 import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import com.scantrader.app.data.catalog.CardLanguageResolver
+import com.scantrader.app.data.catalog.CardTraderPrices
 import com.scantrader.app.data.catalog.CatalogLookup
 import com.scantrader.app.data.db.AppDatabase
+import com.scantrader.app.data.prefs.SecretStore
 import com.scantrader.app.data.prefs.UserPreferences
+import com.scantrader.app.network.cardtrader.CardTraderApi
 import com.scantrader.app.data.repo.CardRepository
 import com.scantrader.app.network.NetworkModule
 import com.scantrader.app.network.scryfall.ScryfallApi
@@ -40,6 +44,12 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         private set
     lateinit var scryfall: ScryfallClient
         private set
+    lateinit var secrets: SecretStore
+        private set
+    lateinit var cardTraderPrices: CardTraderPrices
+        private set
+    lateinit var languageResolver: CardLanguageResolver
+        private set
     val scanSession = ScanSession()
 
     private val http by lazy { NetworkModule.client() }
@@ -56,6 +66,15 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         val tcgdex = NetworkModule.retrofit("https://api.tcgdex.net/", http)
             .create(TcgdexApi::class.java)
         catalog = CatalogLookup(scryfall, tcgdex)
+        secrets = SecretStore(this)
+        cardTraderPrices = CardTraderPrices(
+            NetworkModule.retrofit(
+                "https://api.cardtrader.com/api/v2/",
+                NetworkModule.cardTraderClient { secrets.getCardTraderToken() },
+            ).create(CardTraderApi::class.java),
+            token = { secrets.getCardTraderToken() },
+        )
+        languageResolver = CardLanguageResolver(scryfall, tcgdex)
         prefs = UserPreferences(this)
         ocr = CardOcr()
         visualRanker = VisualRanker(http)
