@@ -54,6 +54,8 @@ object PokemonCatalog {
             return listOf(full)
         }
         val out = linkedSetOf(full)
+        // "Kilowattrel di Kissara" is Kissara's Kilowattrel on the English catalog.
+        CardIdentity.englishOwnerName(full)?.let { out += it }
         val parts = full.split(Regex("""\s+""")).filter { it.length >= 3 }
         parts.firstOrNull()?.let { out += it }
         if (parts.size >= 2) {
@@ -66,7 +68,10 @@ object PokemonCatalog {
             .trim()
         if (withoutOwner.length >= 3) out += withoutOwner
         withoutOwner.split(Regex("""\s+""")).firstOrNull { it.length >= 4 }?.let { out += it }
-        return out.filter { it.length >= 2 }.distinct().take(5)
+        return out
+            .filter { it.length >= 2 && !it.matches(Regex("""(?i)^(di|del|della|dei|the|of)\b.*""")) }
+            .distinct()
+            .take(6)
     }
 
     /** TCGdex card ids. International numbers are zero-padded (`sv03-001`); both forms are tried. */
@@ -124,6 +129,8 @@ object PokemonCatalog {
             val cardVariant = cardTokens.any { it in variantTokens }
             if (!queryVariant || cardVariant) return true
         }
+        // "Kilowattrel di Kissara" / "Kissara's Kilowattrel" / OCR "Kisara".
+        if (CardIdentity.ownerTokensMatch(card, query) || CardIdentity.namesSimilar(card, query)) return true
         return false
     }
 

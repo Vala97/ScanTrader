@@ -34,52 +34,63 @@ class CardRepository(private val db: AppDatabase) {
         condition: CardCondition,
         foil: Boolean,
     ) {
+        val stored = card.withoutPokemonFoil()
+        val storedFoil = foil && card.game != com.scantrader.app.data.model.Game.POKEMON
         val existing = db.cards().findDuplicate(
             collectionId = collectionId,
-            game = card.game,
-            name = card.name,
-            setCode = card.setCode,
-            collectorNumber = card.collectorNumber,
+            game = stored.game,
+            name = stored.name,
+            setCode = stored.setCode,
+            collectorNumber = stored.collectorNumber,
             language = language.csvValue,
             condition = condition.csvValue,
-            foil = foil,
-            scryfallId = card.scryfallId,
+            foil = storedFoil,
+            scryfallId = stored.scryfallId,
         )
         if (existing != null) {
             db.cards().update(
                 existing.copy(
                     quantity = existing.quantity + quantity,
-                    priceEur = card.priceEur ?: existing.priceEur,
-                    priceEurFoil = card.priceEurFoil ?: existing.priceEurFoil,
-                    priceUsd = card.priceUsd ?: existing.priceUsd,
-                    priceUsdFoil = card.priceUsdFoil ?: existing.priceUsdFoil,
-                    priceCurrency = card.priceCurrency ?: existing.priceCurrency,
-                    priceSource = card.priceSource ?: existing.priceSource,
-                    imageUrl = card.imageUrl ?: existing.imageUrl,
+                    foil = storedFoil,
+                    priceEur = stored.priceEur ?: existing.priceEur,
+                    priceEurFoil = if (stored.game == com.scantrader.app.data.model.Game.POKEMON) {
+                        null
+                    } else {
+                        stored.priceEurFoil ?: existing.priceEurFoil
+                    },
+                    priceUsd = stored.priceUsd ?: existing.priceUsd,
+                    priceUsdFoil = if (stored.game == com.scantrader.app.data.model.Game.POKEMON) {
+                        null
+                    } else {
+                        stored.priceUsdFoil ?: existing.priceUsdFoil
+                    },
+                    priceCurrency = stored.priceCurrency ?: existing.priceCurrency,
+                    priceSource = stored.priceSource ?: existing.priceSource,
+                    imageUrl = stored.imageUrl ?: existing.imageUrl,
                 ),
             )
         } else {
             db.cards().insert(
                 CardEntryEntity(
                     collectionId = collectionId,
-                    game = card.game,
-                    name = card.name,
-                    setCode = card.setCode,
-                    setName = card.setName,
-                    collectorNumber = card.collectorNumber,
-                    scryfallId = card.scryfallId,
-                    tcgplayerId = card.tcgplayerId,
-                    imageUrl = card.imageUrl,
+                    game = stored.game,
+                    name = stored.name,
+                    setCode = stored.setCode,
+                    setName = stored.setName,
+                    collectorNumber = stored.collectorNumber,
+                    scryfallId = stored.scryfallId,
+                    tcgplayerId = stored.tcgplayerId,
+                    imageUrl = stored.imageUrl,
                     quantity = quantity,
                     language = language.csvValue,
                     condition = condition.csvValue,
-                    foil = foil,
-                    priceEur = card.priceEur,
-                    priceEurFoil = card.priceEurFoil,
-                    priceUsd = card.priceUsd,
-                    priceUsdFoil = card.priceUsdFoil,
-                    priceCurrency = card.priceCurrency,
-                    priceSource = card.priceSource,
+                    foil = storedFoil,
+                    priceEur = stored.priceEur,
+                    priceEurFoil = stored.priceEurFoil,
+                    priceUsd = stored.priceUsd,
+                    priceUsdFoil = stored.priceUsdFoil,
+                    priceCurrency = stored.priceCurrency,
+                    priceSource = stored.priceSource,
                 ),
             )
         }

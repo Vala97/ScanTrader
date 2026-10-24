@@ -139,8 +139,9 @@ class CatalogLookup(
 
     private suspend fun lookupPokemon(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
         val number = OcrParser.collectorCandidates(parsed.collectorNumber).firstOrNull()
-        val noisyName = OcrParser.looksLikeAbilityOrAttackName(name)
-        // When OCR grabbed an ability/attack, ignore name for search — identity is set+number.
+        val noisyName = OcrParser.looksLikeAbilityOrAttackName(name) ||
+            (name != null && com.scantrader.app.data.catalog.CardIdentity.isStageNoise(name))
+        // When OCR grabbed an ability/attack or a stage crumb, ignore name — identity is set+number.
         val searchName = name.takeUnless { noisyName }
         val hasSolidId = !number.isNullOrBlank() &&
             (!parsed.setCode.isNullOrBlank() || parsed.setCardCount != null)
@@ -239,16 +240,11 @@ class CatalogLookup(
     }
 
     private fun resolvePokemonSetIds(lang: String, parsed: ParsedCardText): List<String> {
-        val fromPrinted = if (lang == PokemonCatalog.EN || lang == PokemonCatalog.IT) {
-            val mapped = OcrParser.setCodeCandidates(parsed.setCode)
-                .flatMap { PokemonSets.recognizedIds(it) }
-                .distinct()
-            mapped.ifEmpty { PokemonSets.idsFor(parsed.setCode, lang) }
-        } else {
-            PokemonSets.idsFor(parsed.setCode, lang)
-        }
-        val fromCount = PokemonSets.idsForCardCount(parsed.setCardCount)
-        return (fromPrinted + fromCount).distinct()
+        val direct = PokemonSets.directIds(parsed.setCode, parsed.setCardCount)
+        if (lang == PokemonCatalog.EN || lang == PokemonCatalog.IT) return direct
+        // Japanese and Chinese print their own set id. Keep that token.
+        val raw = PokemonSets.idsFor(parsed.setCode, lang)
+        return (raw + PokemonSets.idsForCardCount(parsed.setCardCount)).distinct()
     }
 
     private suspend fun fetchBriefs(
@@ -347,9 +343,8 @@ class CatalogLookup(
             tcgdexId = id,
             imageUrl = image?.let { "$it/low.webp" },
             priceEur = formatEur(cm?.avg ?: cm?.trend),
-            priceEurFoil = formatEur(cm?.avgHolo ?: cm?.trendHolo),
-            priceCurrency = if (cm?.avg != null || cm?.trend != null || cm?.avgHolo != null) "EUR" else null,
-            priceSource = if (cm?.avg != null || cm?.trend != null || cm?.avgHolo != null) "Cardmarket" else null,
+            priceCurrency = if (cm?.avg != null || cm?.trend != null) "EUR" else null,
+            priceSource = if (cm?.avg != null || cm?.trend != null) "Cardmarket" else null,
         )
     }
 

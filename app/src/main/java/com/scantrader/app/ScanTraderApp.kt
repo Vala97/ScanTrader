@@ -15,7 +15,10 @@ import com.scantrader.app.data.repo.CardRepository
 import com.scantrader.app.network.NetworkModule
 import com.scantrader.app.network.scryfall.ScryfallApi
 import com.scantrader.app.network.scryfall.ScryfallClient
+import com.scantrader.app.network.tcgdex.CachingTcgdexApi
 import com.scantrader.app.network.tcgdex.TcgdexApi
+import com.scantrader.app.network.tcgdex.TcgdexResponseCache
+import java.io.File
 import com.scantrader.app.scan.CardOcr
 import com.scantrader.app.scan.ScanSession
 import com.scantrader.app.vision.GalleryMatcher
@@ -66,8 +69,10 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
             NetworkModule.retrofit("https://api.scryfall.com/", http)
                 .create(ScryfallApi::class.java),
         )
-        val tcgdex = NetworkModule.retrofit("https://api.tcgdex.net/", http)
-            .create(TcgdexApi::class.java)
+        val tcgdex = CachingTcgdexApi(
+            NetworkModule.retrofit("https://api.tcgdex.net/", http).create(TcgdexApi::class.java),
+            TcgdexResponseCache(File(cacheDir, "tcgdex")),
+        )
         catalog = CatalogLookup(scryfall, tcgdex)
         scryfallEur = ScryfallEurPrices(scryfall)
         secrets = SecretStore(this)

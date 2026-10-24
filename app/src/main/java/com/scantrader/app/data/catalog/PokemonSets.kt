@@ -1,5 +1,7 @@
 package com.scantrader.app.data.catalog
 
+import com.scantrader.app.scan.OcrParser
+
 /**
  * Printed codes on international cards (DRI, OBF, …) → TCGdex set ids (`sv10`, `sv03`).
  * Japanese and Chinese cards print their own set id (SV2a, CSV3C); those are not remapped.
@@ -144,6 +146,43 @@ object PokemonSets {
     fun idsForCardCount(officialCount: Int?): List<String> {
         if (officialCount == null) return emptyList()
         return byOfficialCount[officialCount].orEmpty()
+    }
+
+    /**
+     * TCGdex set ids to try from a printed code and/or the `NN/NNN` total.
+     * Unknown OCR tokens (`wird`) are dropped. A known code (`dri`, `oasc`) and
+     * the printed total (`102` → `base1`) are the direct id path.
+     */
+    fun directIds(printed: String?, count: Int?): List<String> {
+        val tokens = OcrParser.setCodeCandidates(printed)
+        val known = tokens.flatMap { recognizedIds(it) }
+        val canon = tokens.mapNotNull { canonicalizePrinted(it) }.flatMap { recognizedIds(it) }
+        return (known + canon + idsForCardCount(count)).distinct()
+    }
+
+    /**
+     * Map an OCR set token onto a known printed code.
+     * Trailing/leading junk (`asch`, `dasc`, `oasc`, `asca`) collapses to `asc`.
+     * Already-known printed codes and TCGdex ids are returned unchanged.
+     */
+    fun canonicalizePrinted(raw: String?): String? {
+        val trimmed = raw?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+        if (trimmed in internationalPrinted || toTcgdex.containsKey(trimmed)) return trimmed
+        val compact = trimmed.filter { it.isLetterOrDigit() }
+        if (compact in internationalPrinted || toTcgdex.containsKey(compact)) return compact
+        if (!compact.all { it.isLetter() } || compact.length !in 4..6) return null
+        var best: String? = null
+        var bestExtra = Int.MAX_VALUE
+        for (code in internationalPrinted) {
+            if (!compact.contains(code)) continue
+            val extra = compact.length - code.length
+            if (extra !in 1..2) continue
+            if (extra < bestExtra || (extra == bestExtra && code.length > (best?.length ?: 0))) {
+                best = code
+                bestExtra = extra
+            }
+        }
+        return best
     }
 
     private fun normalize(value: String?): String? =

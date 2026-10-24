@@ -529,7 +529,27 @@ class MatchFusionTest {
             autoSaveCancelled = true,
         )
         assertEquals(MatchFusion.ConfirmMatchTone.CONFIRM, note.tone)
+        assertEquals("Salvataggio automatico annullato", note.title)
         assertTrue(note.body.contains("Hai modificato la scheda"))
+        assertTrue(note.body.contains("Salva in collezione"))
+        assertFalse(note.body.contains("da sola"))
+    }
+
+    @Test
+    fun cancelledAutoSaveWinsOverADifferentPrint() {
+        val strong = MatchFusion.score(
+            card("Lightning Bolt", "m21", "161", ocr = 0.90f, visual = 0.88f),
+            parsed,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(strong, parsed)
+        val note = MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+            selectedMatchesGate = false,
+            autoSaveCancelled = true,
+        )
+        assertEquals("Salvataggio automatico annullato", note.title)
         assertFalse(note.body.contains("da sola"))
     }
 

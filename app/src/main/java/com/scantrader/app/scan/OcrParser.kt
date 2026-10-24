@@ -1,5 +1,6 @@
 package com.scantrader.app.scan
 
+import com.scantrader.app.data.catalog.CardIdentity
 import com.scantrader.app.data.catalog.PokemonSets
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.ParsedCardText
@@ -77,6 +78,23 @@ object OcrParser {
         """(?i)\b([A-Z][A-Za-z]{2,}'s)\s+([A-Z][A-Za-z]{2,})\b""",
     )
 
+    /**
+     * Multi-word trainer / Team Rocket titles: "Maxus del Team Rocket", "Muk della Squadra".
+     * The particle is del/della/dello/dei/delle — not the owner "di" used on creature cards.
+     */
+    private val italianGroupTitle = Regex(
+        """(?i)\b([A-ZÀ-ÖØ-öø-ÿ][\p{L}'’-]{2,})\s+(del|della|dello|dei|delle)\s+""" +
+            """((?:Team\s+|Squadra\s+)?[A-ZÀ-ÖØ-öø-ÿ][\p{L}'’-]{2,}(?:\s+[A-ZÀ-ÖØ-öø-ÿ][\p{L}'’-]{2,})?)\b""",
+    )
+
+    /** Printed category label on Trainer, Supporter, Item and Stadium cards. Not a title. */
+    private val trainerLayoutWords = setOf(
+        "aiuto", "strumento", "oggetto", "stadio", "allenatore",
+        "supporter", "trainer", "stadium", "item",
+        "unterstutzer", "stadion", "dresseur", "objet", "stade",
+        "partidario", "apoyo", "objeto", "estadio", "apoiador",
+    )
+
     /** Italian Base layout: `60 PV` … `Kadabra` … `FASE I`. */
     private val nameBetweenPvAndFase = Regex(
         """(?i)\b\d{1,3}\s*PV\b[\s\S]{0,80}?\b([A-ZÀ-Ö][A-Za-zÀ-ÖØ-öø-ÿ' \-]{2,28})\b[\s\S]{0,40}?FASE""",
@@ -136,6 +154,11 @@ object OcrParser {
         "evoluzione", "base", "stage", "ability", "abilità", "attacco", "weakness",
         "sievolve", "evolve", "evolves", "ripresa", "superpsico", "lunghezza", "peso",
         "costo", "illus", "wizards", "nintendo",
+        // Trainer / Supporter / Item / Stadium category labels, not the card title.
+        // Italian "Aiuto" is Supporter; OCR often reads it as AIUtO.
+        "aiuto", "strumento", "oggetto", "stadio", "allenatore",
+        "unterstutzer", "stadion", "dresseur", "objet", "stade",
+        "partidario", "apoyo", "objeto", "estadio", "apoiador",
         // Common Italian attack / rules OCR noise mistaken for titles.
         "calciobasso", "fuoco continuo", "fuococontinuo", "nirata", "htirata",
         "coniglio", "fregata", "pokermon", "cooigio", "aitezaa", "aiezza",
@@ -450,7 +473,7 @@ object OcrParser {
         if (game == Game.POKEMON) {
             preferSources(bottom, raw).forEach { source ->
                 pokemonBottomPair.find(source)?.groupValues?.getOrNull(1)?.let {
-                    if (isPlausiblePokemonSet(it)) return normalizeSet(it)
+                    pokemonSetOrNull(it)?.let { code -> return code }
                 }
             }
             preferSources(bottom, raw).forEach { source ->
@@ -458,26 +481,28 @@ object OcrParser {
                     val letters = match.groupValues[1]
                     val digits = match.groupValues[2]
                     // Only trust glued letters when collector looks real (2–3 digits).
-                    if (digits.length in 2..3 && letters.length in 2..4 && isPlausiblePokemonSet(letters)) {
-                        return normalizeSet(letters)
+                    if (digits.length in 2..3 && letters.length in 2..4) {
+                        pokemonSetOrNull(letters)?.let { return it }
                     }
                 }
             }
             preferSources(bottom, raw).forEach { source ->
                 val nearFraction = Regex(
-                    """(?i)\b([A-Z]{2,4})\b(?=[^\n]{0,12}\d{2,3}\s*/\s*\d{1,3}\b)""",
+                    """(?i)\b([A-Z]{2,5})\b(?=[^\n]{0,12}\d{2,3}\s*/\s*\d{1,3}\b)""",
                 ).find(source)?.groupValues?.getOrNull(1)
                 // Near-fraction is a weak signal — only accept known printed set codes.
-                if (nearFraction != null && isKnownPokemonSet(nearFraction)) {
-                    return normalizeSet(nearFraction)
+                if (nearFraction != null && (isKnownPokemonSet(nearFraction) ||
+                        PokemonSets.canonicalizePrinted(nearFraction) != null)
+                ) {
+                    pokemonSetOrNull(nearFraction)?.let { return it }
                 }
                 // Set on the next line after the fraction: `004/165\nMEW`
                 Regex("""(?i)\d{2,3}[A-Za-z]?\s*/\s*\d{2,3}\s*[\n|]+\s*([A-Z]{2,5})\b""")
                     .find(source)
                     ?.groupValues
                     ?.getOrNull(1)
-                    ?.takeIf { isKnownPokemonSet(it) }
-                    ?.let { return normalizeSet(it) }
+                    ?.takeIf { isKnownPokemonSet(it) || PokemonSets.canonicalizePrinted(it) != null }
+                    ?.let { token -> pokemonSetOrNull(token)?.let { return it } }
             }
             return null
         }
@@ -554,7 +579,9 @@ object OcrParser {
         if (game == Game.MTG) {
             return extractMtgTitle(lines)
         }
-        val nameLines = lines.filterNot { isEvolveFromLine(it) }
+        val nameLines = lines
+            .filterNot { isEvolveFromLine(it) || isStageNoiseLine(it) }
+            .map { it.replace(Regex("""(?<=\p{L})\d+\b"""), "") }
         val haystack = nameLines.joinToString("\n")
         // Stop before ability / attack / retreat so those never become the title.
         val header = headerRegion(haystack)
@@ -572,6 +599,11 @@ object OcrParser {
         italianOwnerName.findAll(header)
             .map { it.value }
             .filter { isPlausibleOwnerTitle(it) }
+            .maxByOrNull { it.length }
+            ?.let { return cleanPokemonLatinName(it) }
+        italianGroupTitle.findAll(header)
+            .map { it.value }
+            .filter { isPlausibleGroupTitle(it) }
             .maxByOrNull { it.length }
             ?.let { return cleanPokemonLatinName(it) }
         // Single Title-case name near the top (Smoliv, Noibat) when no owner title.
@@ -679,6 +711,18 @@ object OcrParser {
     private fun lowerTokensOk(tokens: List<String>, skip: Set<String>): Boolean =
         tokens.none { it.lowercase() in skip || isNoisePokemonName(it) }
 
+    private fun isPlausibleGroupTitle(candidate: String): Boolean {
+        val parts = candidate.split(Regex("""\s+(?:del|della|dello|dei|delle)\s+""", RegexOption.IGNORE_CASE))
+        if (parts.size != 2) return false
+        val first = parts[0].trim()
+        val second = parts[1].trim()
+        if (first.length < 3 || second.length < 3) return false
+        if (!first.first().isUpperCase() || !second.first().isUpperCase()) return false
+        if (isTrainerLayoutWord(first) || isTrainerLayoutWord(second)) return false
+        if (first.lowercase() in falseOwnerFirst) return false
+        return !isNoisePokemonName(candidate)
+    }
+
     private fun isPlausibleOwnerTitle(candidate: String): Boolean {
         val parts = candidate.split(Regex("""\s+di\s+""", RegexOption.IGNORE_CASE))
         if (parts.size != 2) return false
@@ -779,22 +823,30 @@ object OcrParser {
         return cleanMtgNameGuess(candidates.firstOrNull()?.trim())
     }
 
+    private fun isStageNoiseLine(line: String): Boolean = CardIdentity.isStageNoise(line)
+
     private fun isEvolveFromLine(line: String): Boolean {
         val trimmed = line.trim()
         if (trimmed.isBlank()) return false
         if (evolveFromLine.containsMatchIn(trimmed)) return true
         // OCR often drops the "Si" and glues: "Sievalveda Scorbunny" / "ve da Scorbunny"
+        // or mangles the verb: Sievoheda, Slevolve, Stevolve, Sierolve, Sieoleda.
         val lower = trimmed.lowercase()
         return lower.contains("evolve da") ||
             lower.contains("evolves from") ||
             lower.contains("sievolve") ||
             Regex("""(?i)\bve\s+da\b""").containsMatchIn(lower) ||
-            Regex("""(?i)sie?valve\s*da""").containsMatchIn(lower)
+            Regex("""(?i)sie?valve\s*da""").containsMatchIn(lower) ||
+            Regex(
+                """(?i)\b(?:s[ilt]?e?vol\w{0,8}|sievohe\w{0,6}|sierol\w{0,6}|sieole\w{0,6})\s*da\b""",
+            ).containsMatchIn(lower)
     }
 
     private fun isNoisePokemonName(name: String): Boolean {
         val lower = name.trim().lowercase()
+        if (isTrainerLayoutWord(name)) return true
         if (lower in skipName) return true
+        if (isStageNoiseLine(name)) return true
         if (isEvolveFromLine(name)) return true
         // "ve da Scorbunny" / leftover evolve crumbs used as the whole name.
         if (Regex("""(?i)^(?:si\s*)?(?:e?volv\w*|ve)\s+da\b""").containsMatchIn(lower)) return true
@@ -822,6 +874,8 @@ object OcrParser {
         if (raw.isNullOrBlank()) return null
         if (isEvolveFromLine(raw) || isNoisePokemonName(raw)) return null
         var text = raw
+            // "KilowattreldiKissara" → "Kilowattrel di Kissara"
+            .replace(Regex("""(?i)(?<=[A-Za-zÀ-ÖØ-öø-ÿ])di(?=[A-ZÀ-Ö])"""), " di ")
             // Drop evolve-from crumbs glued into the title line.
             .replace(Regex("""(?i)^(?:si\s*)?(?:e?volv\w*|sievalve|ve)\s+da\s+"""), "")
             .replace(Regex("""[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff々ーヶ]+"""), " ")
@@ -830,8 +884,8 @@ object OcrParser {
             .replace(Regex("""(?i)\b(?:hp|pv|ps)\s*\d{1,3}\b"""), " ")
             .replace(Regex("""(?i)\b\d{1,3}\s*(?:hp|pv|ps)\b"""), " ")
             .replace(Regex("""(?i)(?<=\p{L})(?:hp|pv|ps)\s*\d{1,3}\b"""), " ")
-            // Trailing/leading collector digits glued without slash: Smoliv21, 106Noibat
-            .replace(Regex("""(?<=[A-Za-zÀ-ÖØ-öø-ÿ])\d{2,3}\b"""), " ")
+            // Trailing/leading collector digits glued without slash: Smoliv21, Kissara2, 106Noibat
+            .replace(Regex("""(?<=[A-Za-zÀ-ÖØ-öø-ÿ])\d{1,3}\b"""), " ")
             .replace(Regex("""\b\d{2,3}(?=[A-Za-zÀ-ÖØ-öø-ÿ])"""), " ")
             .replace(Regex("""\b\d{2,4}\b"""), " ")
             .replace(Regex("""[|•·]+"""), " ")
@@ -862,11 +916,14 @@ object OcrParser {
         if (skipName.any { lower == it || lower.startsWith("$it ") }) return null
         if (isNoisePokemonName(latinOnly)) return null
         if (looksLikeAbilityOrAttackName(latinOnly)) return null
-        // Drop tiny garbage tokens.
-        val tokens = latinOnly.split(Regex("""\s+""")).filter { it.length >= 2 }
+        // Drop tiny garbage tokens and stage crumbs (FASE, FASEl) stuck on the title.
+        val tokens = latinOnly.split(Regex("""\s+"""))
+            .filter { it.length >= 2 && !isStageNoiseLine(it) }
         if (tokens.isEmpty()) return null
-        val cleaned = tokens.joinToString(" ").trim().takeIf { it.length >= 3 } ?: return null
-        return cleaned.takeUnless { looksLikeAbilityOrAttackName(it) }
+        val cleaned = CardIdentity.repairOwnerName(tokens.joinToString(" "))
+            .trim()
+            .takeIf { it.length >= 3 } ?: return null
+        return cleaned.takeUnless { looksLikeAbilityOrAttackName(it) || isStageNoiseLine(it) }
     }
 
     fun isLatinDominant(text: String): Boolean {
@@ -903,10 +960,21 @@ object OcrParser {
 
     fun normalizeSet(value: String): String = value.trim().lowercase()
 
+    /**
+     * Known printed code when OCR glued a crumb (`asch`/`dasc`/`oasc` → `asc`).
+     * Falls back to the raw token when it is a plausible set but not in the list.
+     */
+    private fun pokemonSetOrNull(raw: String): String? {
+        PokemonSets.canonicalizePrinted(raw)?.let { return it }
+        if (isPlausiblePokemonSet(raw)) return normalizeSet(raw)
+        return null
+    }
+
     /** OCR often confuses O/0 and I/1/l in set codes — return lookup variants. */
     fun setCodeCandidates(raw: String?): List<String> {
         val base = raw?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return emptyList()
         val out = linkedSetOf(base)
+        PokemonSets.canonicalizePrinted(base)?.let { out += it }
         out += base.replace('0', 'o')
         out += base.replace('o', '0')
         out += base.replace('1', 'i')
@@ -928,16 +996,58 @@ object OcrParser {
     }
 
     /**
+     * True when [name] is only the category label (Aiuto, Supporter, Item, Stadium, …).
+     * OCR case such as `AIUtO` still counts.
+     */
+    fun isTrainerLayoutWord(name: String?): Boolean {
+        val folded = foldLetters(name) ?: return false
+        return folded in trainerLayoutWords
+    }
+
+    /**
+     * Trainer / Supporter / Item / Stadium cards print a category word in the title band.
+     * Their rules and collector line are not in the creature-card strips.
+     */
+    fun looksLikeTrainerLayout(text: String): Boolean {
+        if (text.isBlank()) return false
+        return text.split(Regex("""[^\p{L}]+""")).any { isTrainerLayoutWord(it) }
+    }
+
+    /**
+     * Stable autoscan key for a trainer title when the collector number was not read.
+     * "Maxus del Team Rocket" counts; a one-word crumb or "Aiuto" does not.
+     */
+    fun trainerStabilityName(name: String?): String? {
+        val raw = name?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        if (isTrainerLayoutWord(raw) || CardIdentity.isStageNoise(raw)) return null
+        if (!Regex("""(?i)\b(?:del|della|dello|dei|delle)\b""").containsMatchIn(raw)) return null
+        val tokens = CardIdentity.normalizeName(raw).split(" ").filter { it.length >= 3 }
+        if (tokens.size < 2) return null
+        return tokens.joinToString(" ")
+    }
+
+    /**
      * Enough identity from strips to skip full-card OCR (and heavy gallery) on auto-scan.
      * Both games: collector + set; name is optional.
      * MTG set must look like a real code (has a letter) — never `165` from `74/165`.
+     * Trainer layouts are not ready: the category word, rules, and bottom number still need a pass.
+     * [sourceText] is the strip OCR. A parsed title can already be the real name while the
+     * strip still contains "Aiuto".
      */
-    fun identityReadyForFastPath(parsed: ParsedCardText): Boolean {
+    fun identityReadyForFastPath(parsed: ParsedCardText, sourceText: String = ""): Boolean {
+        if (looksLikeTrainerLayout(sourceText) || isTrainerLayoutWord(parsed.nameGuess)) return false
         val cn = parsed.collectorNumber?.trim().orEmpty()
         val set = parsed.setCode?.trim().orEmpty()
         if (cn.isEmpty() || set.isEmpty()) return false
         if (!set.any { it.isLetter() }) return false
         return true
+    }
+
+    private fun foldLetters(raw: String?): String? {
+        val text = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val decomposed = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD)
+            .replace(Regex("""\p{Mn}+"""), "")
+        return decomposed.lowercase().replace(Regex("""[^a-z]"""), "").takeIf { it.isNotEmpty() }
     }
 
     /**

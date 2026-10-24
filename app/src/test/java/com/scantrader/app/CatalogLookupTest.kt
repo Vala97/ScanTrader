@@ -100,6 +100,63 @@ class CatalogLookupTest {
         assertTrue(printedAt >= 0 && morningtideAt > printedAt)
     }
 
+    @Test
+    fun unknownPrintedSetUsesTheCardCountAsADirectId() = runBlocking {
+        val cardCalls = mutableListOf<String>()
+        var searches = 0
+        val tcgdex = object : TcgdexApi {
+            override suspend fun search(
+                lang: String,
+                name: String?,
+                localId: String?,
+            ): List<TcgdexCardBrief> {
+                searches++
+                return emptyList()
+            }
+
+            override suspend fun card(lang: String, id: String): TcgdexCard {
+                cardCalls += "$lang:$id"
+                if (id == "base1-52") {
+                    return TcgdexCard(
+                        id = "base1-52",
+                        localId = "52",
+                        name = "Machop",
+                        image = "https://assets.tcgdex.net/$lang/base1/52",
+                        set = com.scantrader.app.network.tcgdex.TcgdexSet(
+                            id = "base1",
+                            name = "Base Set",
+                            cardCount = com.scantrader.app.network.tcgdex.TcgdexCardCount(official = 102),
+                        ),
+                    )
+                }
+                throw notFound()
+            }
+        }
+        val lookup = CatalogLookup(
+            ScryfallClient(unusedScryfall(), ScryfallGate(minSpacingMs = 0L, now = { 0L })),
+            tcgdex,
+        )
+        val hits = lookup.identify(
+            Game.POKEMON,
+            ParsedCardText(nameGuess = "Machop", collectorNumber = "52", setCode = "wird", setCardCount = 102),
+        )
+        assertEquals(0, searches)
+        assertTrue(cardCalls.isNotEmpty())
+        assertTrue(cardCalls.all { it.endsWith(":base1-52") || it.endsWith(":base1-052") })
+        assertTrue(cardCalls.none { it.contains("wird") })
+        assertEquals("base1", hits.first().setCode)
+        assertEquals("52", hits.first().collectorNumber)
+    }
+
+    private fun unusedScryfall(): ScryfallApi = object : ScryfallApi {
+        override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard = error("unused")
+        override suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard =
+            error("unused")
+        override suspend fun cardById(id: String): ScryfallCard = error("unused")
+        override suspend fun search(query: String, unique: String): ScryfallSearchResponse = error("unused")
+        override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = error("unused")
+    }
+
     private fun notFound(): HttpException {
         val body = "no".toResponseBody("text/plain".toMediaType())
         return HttpException(Response.error<String>(404, body))

@@ -2,6 +2,8 @@ package com.scantrader.app.ui.confirm
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,8 +12,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -45,11 +51,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.scantrader.app.data.catalog.CardLanguageDetector
+import com.scantrader.app.scan.ScanDebug
 import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
@@ -74,28 +89,50 @@ fun ConfirmScreen(
     val searching by viewModel.searching.collectAsStateWithLifecycle()
     val saving by viewModel.saving.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf(viewModel.parsed?.nameGuess.orEmpty()) }
-    var selected by remember { mutableStateOf<IdentifiedCard?>(null) }
-    var quantity by remember { mutableIntStateOf(1) }
+    val selectedState = remember { mutableStateOf<IdentifiedCard?>(null) }
+    var selected by selectedState
+    val quantityState = remember { mutableIntStateOf(1) }
+    var quantity by quantityState
     var languageTouched by remember { mutableStateOf(false) }
-    var language by remember {
+    val languageState = remember {
         mutableStateOf(viewModel.sessionLanguage ?: defaults.language)
     }
-    var condition by remember {
+    var language by languageState
+    val conditionState = remember {
         mutableStateOf(viewModel.sessionCondition ?: defaults.condition)
     }
-    var foil by remember { mutableStateOf(false) }
-    var collectionId by remember { mutableStateOf(viewModel.preferredCollectionId) }
-    var autoSaveCancelled by remember { mutableStateOf(false) }
-    var secondsLeft by remember { mutableIntStateOf(0) }
+    var condition by conditionState
+    val foilState = remember { mutableStateOf(false) }
+    var foil by foilState
+    val collectionIdState = remember { mutableStateOf(viewModel.preferredCollectionId) }
+    var collectionId by collectionIdState
+    val scanIdentity = listOf(
+        viewModel.autoMatchCardKey,
+        viewModel.parsed?.nameGuess,
+        viewModel.parsed?.collectorNumber,
+        viewModel.parsed?.setCode,
+    ).joinToString("|")
+    val autoSaveCancelledState = remember(scanIdentity) { mutableStateOf(false) }
+    val secondsLeftState = remember(scanIdentity) { mutableIntStateOf(0) }
+    val autoSaveOfferedState = remember { mutableStateOf(false) }
+    val autoSaveCancelled = autoSaveCancelledState.value
+    var secondsLeft by secondsLeftState
     val autoMatch = viewModel.autoMatch
     val gatedKey = viewModel.autoMatchCardKey
     val selectedKey = selected?.identityKey()
     val selectedMatchesGate = gatedKey == null || selectedKey == null || gatedKey == selectedKey
-    val autoSaveArmed = viewModel.fromAutoScan &&
+    val autoSaveOffered = viewModel.fromAutoScan &&
         defaults.autoSaveWaitSeconds > 0 &&
-        MatchFusion.allowsAutoSave(autoMatch) &&
-        selectedMatchesGate &&
-        !autoSaveCancelled
+        MatchFusion.allowsAutoSave(autoMatch)
+    autoSaveOfferedState.value = autoSaveOffered
+    val saveLabels = AutoSaveControl.present(
+        offered = autoSaveOffered,
+        cancelled = autoSaveCancelled,
+        selectedMatchesGate = selectedMatchesGate,
+        secondsLeft = secondsLeft,
+        saving = saving,
+    )
+    val autoSaveArmed = saveLabels.armed
     val matchNote = autoMatch?.let { decision ->
         MatchFusion.confirmMatchNote(
             decision = decision,
@@ -106,14 +143,26 @@ fun ConfirmScreen(
         )
     }
 
-    fun cancelAutoSave() {
-        autoSaveCancelled = true
+    fun cancelAutoSave(gesture: AutoSaveControl.Gesture) {
+        if (!AutoSaveControl.onUserInteraction(autoSaveOfferedState.value, gesture)) return
+        if (!autoSaveCancelledState.value) {
+            ScanDebug.d("autosave: cancelled(${gesture.name.lowercase()})")
+        }
+        autoSaveCancelledState.value = true
+        secondsLeft = 0
     }
+
+    val cancelAutoSaveRef = remember {
+        object {
+            var block: (AutoSaveControl.Gesture) -> Unit = {}
+        }
+    }
+    cancelAutoSaveRef.block = { gesture -> cancelAutoSave(gesture) }
 
     fun doSave() {
         val card = selected ?: return
         val target = collectionId ?: return
-        cancelAutoSave()
+        cancelAutoSave(AutoSaveControl.Gesture.TAP)
         viewModel.save(card, target, quantity, language, condition, foil, onSaved)
     }
 
@@ -127,7 +176,13 @@ fun ConfirmScreen(
     LaunchedEffect(selected?.identityKey(), defaults.detectCardLanguage) {
         if (languageTouched || !defaults.detectCardLanguage) return@LaunchedEffect
         val card = selected ?: return@LaunchedEffect
+        val locked = viewModel.autoMatchCardKey
+        if (locked != null && card.identityKey() != locked) return@LaunchedEffect
         val detected = viewModel.detectCardLanguage(card)
+        autoSaveCancelledState.value = AutoSaveControl.onProgrammaticUpdate(
+            autoSaveCancelledState.value,
+            AutoSaveControl.Program.DETECTED_LANGUAGE,
+        )
         language = CardLanguageDetector.choose(
             detectEnabled = true,
             detected = detected,
@@ -137,6 +192,10 @@ fun ConfirmScreen(
     LaunchedEffect(selected?.identityKey(), language, condition, foil) {
         val card = selected ?: return@LaunchedEffect
         val priced = viewModel.proposePrice(card, language, condition, foil)
+        autoSaveCancelledState.value = AutoSaveControl.onProgrammaticUpdate(
+            autoSaveCancelledState.value,
+            AutoSaveControl.Program.PRICE,
+        )
         val changed = priced.priceEur != card.priceEur ||
             priced.priceEurFoil != card.priceEurFoil ||
             priced.priceUsd != card.priceUsd ||
@@ -145,8 +204,14 @@ fun ConfirmScreen(
         if (changed) selected = priced
     }
     LaunchedEffect(candidates) {
-        if (selected == null || candidates.none { sameCard(it, selected) }) {
-            selected = candidates.firstOrNull()
+        val locked = viewModel.autoMatchCardKey
+        val preferred = candidates.firstOrNull { locked != null && it.identityKey() == locked }
+            ?: candidates.firstOrNull()
+        val lockedMismatch = locked != null &&
+            selected?.identityKey() != locked &&
+            preferred?.identityKey() == locked
+        if (selected == null || candidates.none { sameCard(it, selected) } || lockedMismatch) {
+            selected = preferred
         }
     }
     LaunchedEffect(collections, viewModel.preferredCollectionId) {
@@ -158,39 +223,48 @@ fun ConfirmScreen(
             else -> collections.firstOrNull()?.id
         }
     }
-    LaunchedEffect(autoSaveArmed, selected, collectionId, defaults.autoSaveWaitSeconds) {
-        if (!autoSaveArmed || selected == null || collectionId == null) return@LaunchedEffect
+    LaunchedEffect(autoSaveArmed, selected?.identityKey(), collectionId, defaults.autoSaveWaitSeconds) {
+        if (!autoSaveArmed || selectedState.value == null || collectionIdState.value == null) return@LaunchedEffect
         val wait = defaults.autoSaveWaitSeconds
         if (wait <= 0) return@LaunchedEffect
+        ScanDebug.d("autosave: scheduled")
         for (left in wait downTo 1) {
-            secondsLeft = left
+            if (autoSaveCancelledState.value) return@LaunchedEffect
+            secondsLeftState.intValue = left
             delay(1_000)
         }
-        secondsLeft = 0
-        // Still armed → no user interaction cancelled us (LaunchedEffect would have been cancelled).
-        val card = selected
-        val target = collectionId
+        if (autoSaveCancelledState.value) return@LaunchedEffect
+        secondsLeftState.intValue = 0
+        val card = selectedState.value
+        val target = collectionIdState.value
         if (card != null && target != null && !viewModel.saving.value) {
-            viewModel.save(card, target, quantity, language, condition, foil, onSaved)
+            ScanDebug.d("autosave: saved")
+            viewModel.save(
+                card,
+                target,
+                quantityState.intValue,
+                languageState.value,
+                conditionState.value,
+                foilState.value,
+                onSaved,
+            )
         }
     }
 
+    val pokemonCard = selected?.game == com.scantrader.app.data.model.Game.POKEMON
     val priceLine = selected?.let { card ->
         ListingAverage.display(
             eur = card.priceEur,
-            eurFoil = card.priceEurFoil,
+            eurFoil = if (pokemonCard) null else card.priceEurFoil,
             source = card.priceSource,
-            foil = foil,
+            foil = foil && !pokemonCard,
         )
     }
     val canSave = selected != null && collectionId != null && !saving
-    val saveLabel = when {
-        saving -> "Salvataggio…"
-        autoSaveArmed && secondsLeft > 0 -> "Salva tra ${secondsLeft}s…"
-        else -> "OK · Salva in collezione"
-    }
+    val saveLabel = saveLabels.saveButtonLabel
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
@@ -209,7 +283,7 @@ fun ConfirmScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = {
-                        cancelAutoSave()
+                        cancelAutoSave(AutoSaveControl.Gesture.TAP)
                         onBack()
                     }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Indietro")
@@ -218,47 +292,36 @@ fun ConfirmScreen(
             )
         },
         bottomBar = {
-            if (selected != null) {
-                Surface(tonalElevation = 3.dp, shadowElevation = 6.dp) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                    ) {
-                        if (collectionId == null) {
-                            Text(
-                                "Nessuna collezione disponibile. Creane una dalla home.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(bottom = 8.dp),
-                            )
-                        }
-                        Button(
-                            onClick = { doSave() },
-                            enabled = canSave,
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp),
-                        ) {
-                            Icon(Icons.Filled.Check, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(saveLabel)
-                        }
-                    }
-                }
-            }
+            ConfirmSaveBar(
+                label = saveLabel,
+                enabled = canSave,
+                missingCollection = selected != null && collectionId == null,
+                statusText = saveLabels.statusLabel,
+                onSave = { doSave() },
+            )
         },
     ) { padding ->
+        val cancelOnScroll = remember(autoSaveCancelledState, autoSaveOfferedState, secondsLeftState) {
+            object : NestedScrollConnection {
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    if (source == NestedScrollSource.UserInput && (available.x != 0f || available.y != 0f)) {
+                        cancelAutoSaveRef.block(AutoSaveControl.Gesture.SCROLL)
+                    }
+                    return Offset.Zero
+                }
+            }
+        }
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .nestedScroll(cancelOnScroll)
+                .pointerInput(autoSaveCancelledState, autoSaveOfferedState, secondsLeftState) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        cancelAutoSaveRef.block(AutoSaveControl.Gesture.TAP)
+                    }
+                },
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -304,8 +367,12 @@ fun ConfirmScreen(
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium,
+                            modifier = Modifier.clickable { cancelAutoSave(AutoSaveControl.Gesture.PRICE) },
                         )
-                        if (!foil && !current.priceEurFoil.isNullOrBlank()) {
+                        if (current.game != com.scantrader.app.data.model.Game.POKEMON &&
+                            !foil &&
+                            !current.priceEurFoil.isNullOrBlank()
+                        ) {
                             Text(
                                 "Foil: €${current.priceEurFoil}",
                                 style = MaterialTheme.typography.bodySmall,
@@ -322,7 +389,7 @@ fun ConfirmScreen(
                             options = collections,
                             selected = collections.firstOrNull { it.id == collectionId } ?: collections.first(),
                             onSelect = {
-                                cancelAutoSave()
+                                cancelAutoSave(AutoSaveControl.Gesture.FIELD)
                                 collectionId = it.id
                             },
                             labelOf = { it.name },
@@ -335,7 +402,7 @@ fun ConfirmScreen(
                         options = CardLanguage.entries.toList(),
                         selected = language,
                         onSelect = {
-                            cancelAutoSave()
+                            cancelAutoSave(AutoSaveControl.Gesture.LANGUAGE)
                             languageTouched = true
                             language = it
                             viewModel.setLanguage(it)
@@ -349,42 +416,42 @@ fun ConfirmScreen(
                         options = CardCondition.entries.toList(),
                         selected = condition,
                         onSelect = {
-                            cancelAutoSave()
+                            cancelAutoSave(AutoSaveControl.Gesture.CONDITION)
                             condition = it
                             viewModel.setCondition(it)
                         },
                         labelOf = { it.label },
                     )
                 }
-                item {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Foil / holo")
-                        Switch(
-                            checked = foil,
-                            onCheckedChange = {
-                                cancelAutoSave()
-                                foil = it
-                            },
-                        )
+                if (current.game != com.scantrader.app.data.model.Game.POKEMON) {
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Foil / holo")
+                            Switch(
+                                checked = foil,
+                                onCheckedChange = {
+                                    cancelAutoSave(AutoSaveControl.Gesture.FOIL)
+                                    foil = it
+                                },
+                            )
+                        }
                     }
                 }
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = {
-                            if (quantity > 1) {
-                                cancelAutoSave()
-                                quantity -= 1
-                            }
+                            cancelAutoSave(AutoSaveControl.Gesture.QUANTITY)
+                            if (quantity > 1) quantity -= 1
                         }) {
                             Icon(Icons.Default.Remove, contentDescription = "Meno")
                         }
                         Text("Quantità $quantity", modifier = Modifier.padding(horizontal = 8.dp))
                         IconButton(onClick = {
-                            cancelAutoSave()
+                            cancelAutoSave(AutoSaveControl.Gesture.QUANTITY)
                             quantity += 1
                         }) {
                             Icon(Icons.Default.Add, contentDescription = "Più")
@@ -405,7 +472,7 @@ fun ConfirmScreen(
                 OutlinedTextField(
                     value = query,
                     onValueChange = {
-                        cancelAutoSave()
+                        cancelAutoSave(AutoSaveControl.Gesture.FIELD)
                         query = it
                     },
                     label = { Text("Cerca per nome") },
@@ -421,7 +488,7 @@ fun ConfirmScreen(
             item {
                 Button(
                     onClick = {
-                        cancelAutoSave()
+                        cancelAutoSave(AutoSaveControl.Gesture.FIELD)
                         viewModel.search(query)
                     },
                     enabled = query.isNotBlank() && !searching,
@@ -445,7 +512,7 @@ fun ConfirmScreen(
                             },
                         )
                         .clickable {
-                            cancelAutoSave()
+                            cancelAutoSave(AutoSaveControl.Gesture.CANDIDATE)
                             selected = card
                         },
                 ) {
@@ -481,6 +548,60 @@ fun ConfirmScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ConfirmSaveBar(
+    label: String,
+    enabled: Boolean,
+    missingCollection: Boolean,
+    onSave: () -> Unit,
+    modifier: Modifier = Modifier,
+    statusText: String? = null,
+) {
+    Surface(tonalElevation = 3.dp, shadowElevation = 8.dp, modifier = modifier) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            if (!statusText.isNullOrBlank()) {
+                Text(
+                    statusText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
+            if (missingCollection) {
+                Text(
+                    "Nessuna collezione disponibile. Creane una dalla home.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
+            Button(
+                onClick = onSave,
+                enabled = enabled,
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .semantics { contentDescription = "Salva in collezione" },
+            ) {
+                Icon(Icons.Filled.Check, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(label)
             }
         }
     }

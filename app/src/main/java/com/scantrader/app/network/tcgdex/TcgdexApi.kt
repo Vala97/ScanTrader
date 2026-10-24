@@ -6,7 +6,7 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 /**
- * Pokémon catalog for en, it, ja, zh-cn and zh-tw.
+ * Pokémon catalog for en, it, fr, de, es, pt, ja, ko, zh-cn and zh-tw.
  * The same card id is shared by English and Italian. Japanese and Chinese are separate sets.
  */
 interface TcgdexApi {

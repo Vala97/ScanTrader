@@ -1,6 +1,7 @@
 package com.scantrader.app
 
 import com.scantrader.app.data.catalog.CatalogQueryDebounce
+import com.scantrader.app.data.catalog.CatalogQueryDebounce.Frame
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -96,4 +97,105 @@ class CatalogQueryDebounceTest {
         t = 5_600L
         assertTrue(debounce.shouldQuery("bolla protettiva|80|"))
     }
+
+    @Test
+    fun kilowattrelLogSequenceQueriesWithinThreeFrames() {
+        // Device log: name and set flicker, cn=72 and count=217 do not.
+        // The old name|cn|set key reset every frame, so the 2s fallback never fired.
+        var t = 0L
+        val debounce = CatalogQueryDebounce(
+            stableFramesNeeded = 2,
+            requeryAfterMs = 2_000L,
+            now = { t },
+        )
+        val frames = listOf(
+            frame("Kilowattrel", "72", "dasc", 217),
+            frame("Kilowattrel Kissara", null, null, 217),
+            frame("Kilowattrel ai Kissara", "72", "asc", 217),
+            frame("Kilowattrel Kissara", "72", "oasc", 217),
+            frame("Kilowattrel Kissara", "72", "dasc", 217),
+            frame("Kilowattrel ai Kissara", "72", null, 217),
+            frame("Kilowattrel Kissara", "72", "oasc", 217),
+            frame("FASEl", "72", "asch", 217),
+            frame("Kilowattrel Kissaral", "72", "asc", 217),
+            frame("CASEl", "72", "asca", 217),
+            frame("Wattrel di Kissara", "72", "dasc", 217),
+            frame("Kilowattrel di Kisara", null, null, 217),
+            frame("Kilowattrel Kisara", "72", "asc", 217),
+            frame("Kilowattrel ai Kisara", "72", "asc", 217),
+            frame("Kilowattrel Kissara", "72", "asch", 217),
+        )
+        var firedAt = -1
+        var voted: Frame? = null
+        frames.forEachIndexed { index, read ->
+            t += 10
+            if (debounce.shouldQuery(read) && firedAt < 0) {
+                firedAt = index
+                voted = debounce.votedFrame()
+            }
+        }
+        assertTrue("lookup fired at frame $firedAt", firedAt in 1..2)
+        assertEquals("72", voted?.collectorNumber)
+        assertEquals(217, voted?.setCardCount)
+        assertEquals("asc", voted?.setCode)
+        assertEquals("Kilowattrel di Kissara", voted?.name)
+    }
+
+    @Test
+    fun alternatingOcrDoesNotResetTheTwoSecondFallback() {
+        var t = 0L
+        val debounce = CatalogQueryDebounce(
+            stableFramesNeeded = 8,
+            requeryAfterMs = 2_000L,
+            now = { t },
+        )
+        assertTrue(!debounce.shouldQuery(frame("Kilowattrel", "72", "dasc", 217)))
+        t = 1_999L
+        assertTrue(!debounce.shouldQuery(frame("Kilowattrel Kissara", "72", "oasc", 217)))
+        t = 2_000L
+        assertTrue(debounce.shouldQuery(frame("Kilowattrel ai Kissara", "72", "asch", 217)))
+        val voted = debounce.votedFrame()
+        assertEquals("72", voted?.collectorNumber)
+        assertEquals(217, voted?.setCardCount)
+        assertEquals("asc", voted?.setCode)
+        assertTrue(voted?.name.orEmpty().contains("Kilowattrel"))
+    }
+
+    @Test
+    fun threeFramesOfTheSameCardQueryEvenWhenTheNameNeverRepeats() {
+        var t = 0L
+        val debounce = CatalogQueryDebounce(
+            stableFramesNeeded = 8,
+            requeryAfterMs = 2_000L,
+            now = { t },
+        )
+        assertTrue(!debounce.shouldQuery(frame("Kilowattrel di Kissara", "72", "dasc", 217)))
+        t = 20L
+        assertTrue(!debounce.shouldQuery(frame("FASEl", "72", "asch", 217)))
+        t = 40L
+        assertTrue(debounce.shouldQuery(frame("Kilowattrel Kissara", "72", "oasc", 217)))
+        assertEquals("asc", debounce.votedFrame()?.setCode)
+        assertTrue(debounce.votedFrame()?.name.orEmpty().contains("Kilowattrel"))
+    }
+
+    @Test
+    fun trainerTitleIsStableWithoutACollectorNumber() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2)
+        val short = frame("Maxus", null, null, null)
+        val category = frame("AIUtO", null, null, null)
+        val full = frame("Maxus del Team Rocket", null, null, null)
+        assertTrue(!debounce.shouldQuery(short))
+        assertTrue(!debounce.shouldQuery(category))
+        assertTrue(!debounce.shouldQuery(full))
+        assertTrue(debounce.shouldQuery(full))
+        assertEquals("Maxus del Team Rocket", debounce.votedFrame()?.name)
+    }
+
+    private fun frame(name: String?, cn: String?, set: String?, count: Int?) = Frame(
+        name = name,
+        collectorNumber = cn,
+        setCode = set,
+        setCardCount = count,
+        pokemon = true,
+    )
 }

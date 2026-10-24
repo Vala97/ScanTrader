@@ -586,6 +586,46 @@ class OcrParserTest {
     }
 
     @Test
+    fun italianKilowattrelSurvivesStageNoiseAndMangledSet() {
+        val top = """
+            A!
+            FASEJ
+            Kilowattrel ai Kissara
+            Sievolve da Wattrel di Kissara
+        """.trimIndent()
+        val bottom = "O ASCH | 072/217 *"
+        val parsed = OcrParser.parse(
+            rawText = top,
+            game = Game.POKEMON,
+            bottomPriorityText = bottom,
+            namePriorityText = top,
+        )
+        assertEquals("Kilowattrel di Kissara", parsed.nameGuess)
+        assertEquals("72", parsed.collectorNumber)
+        assertEquals("asc", parsed.setCode)
+        assertEquals(217, parsed.setCardCount)
+    }
+
+    @Test
+    fun stageLineIsNotTheTitleAndDascIsAsc() {
+        val top = """
+            FASEl
+            Kilowattrel di Kissara2
+            Sievoheda Wattrel di Kissara
+        """.trimIndent()
+        val bottom = "DASC 072/217"
+        val parsed = OcrParser.parse(top, Game.POKEMON, bottom, top)
+        assertEquals("Kilowattrel di Kissara", parsed.nameGuess)
+        assertEquals("72", parsed.collectorNumber)
+        assertEquals("asc", parsed.setCode)
+        assertEquals(217, parsed.setCardCount)
+        assertTrue(OcrParser.setCodeCandidates("asch").contains("asc"))
+        assertTrue(OcrParser.setCodeCandidates("dasc").contains("asc"))
+        assertTrue(OcrParser.setCodeCandidates("oasc").contains("asc"))
+        assertTrue(OcrParser.setCodeCandidates("asca").contains("asc"))
+    }
+
+    @Test
     fun ignoresPokemonHpOnTheTopRight() {
         val ps = OcrParser.parse("Pikachu PS 120", Game.POKEMON, "025/165")
         assertEquals("Pikachu", ps.nameGuess)
@@ -593,5 +633,37 @@ class OcrParserTest {
         assertEquals("Charmander", hp.nameGuess)
         val above = OcrParser.parse("PS 70\nNoibat", Game.POKEMON, "106/217")
         assertEquals("Noibat", above.nameGuess)
+    }
+
+    @Test
+    fun italianSupporterMaxusIgnoresAiutoAndReadsTheBottomNumber() {
+        // scan_log8: category word AIUtO was parsed as the title, so auto-scan scored confLow.
+        val top = "AIUtO\nMaxus del Team Rocket"
+        val bottom = "deb\nM. GOSSAN\nODRI 176/182\nc2025 Po"
+        val parsed = OcrParser.parse(
+            rawText = top,
+            game = Game.POKEMON,
+            bottomPriorityText = bottom,
+            namePriorityText = top,
+        )
+        assertEquals("Maxus del Team Rocket", parsed.nameGuess)
+        assertEquals("176", parsed.collectorNumber)
+        assertEquals("dri", parsed.setCode)
+        assertEquals(182, parsed.setCardCount)
+        assertTrue(OcrParser.looksLikeTrainerLayout(top))
+        assertTrue(!OcrParser.identityReadyForFastPath(parsed, top))
+        assertEquals("maxus del team rocket", OcrParser.trainerStabilityName(parsed.nameGuess))
+        assertEquals(null, OcrParser.trainerStabilityName("AIUtO"))
+        assertEquals(null, OcrParser.trainerStabilityName("Maxus"))
+    }
+
+    @Test
+    fun titleOnlyTrainerKeepsTheFullDelTeamRocketName() {
+        val top = "Maxus del Team Rocket"
+        val bottom = "deb\nIM. GOSSAN\nO DRIn 176/182\n2025 Pe"
+        val parsed = OcrParser.parse(top, Game.POKEMON, bottom, top)
+        assertEquals("Maxus del Team Rocket", parsed.nameGuess)
+        assertEquals("176", parsed.collectorNumber)
+        assertEquals(182, parsed.setCardCount)
     }
 }

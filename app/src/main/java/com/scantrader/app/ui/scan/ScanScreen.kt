@@ -93,6 +93,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -111,6 +112,10 @@ import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.CardFrameGeometry
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
+import com.scantrader.app.scan.ScanDebug
+import com.scantrader.app.scan.ZoomFraming
+import com.scantrader.app.scan.ZoomRestoreController
+import com.scantrader.app.scan.ZoomRestoreStep
 import com.scantrader.app.ui.ScanViewModel
 import com.scantrader.app.vision.NeuralPackState
 import com.scantrader.app.ui.components.GameLogo
@@ -134,6 +139,7 @@ fun ScanScreen(
     onBack: () -> Unit,
     onCaptured: () -> Unit,
     onManualSearch: () -> Unit,
+    confirmVisible: Boolean = false,
 ) {
     // Before the camera effects: keep the session lens and zoom, and ignore the
     // default ratio CameraX reports until that framing is applied again.
@@ -152,6 +158,8 @@ fun ScanScreen(
     val cameraId by viewModel.cameraId.collectAsStateWithLifecycle()
     val lensKey by viewModel.lensKey.collectAsStateWithLifecycle()
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
+    val guideViewWidth by viewModel.guideViewWidth.collectAsStateWithLifecycle()
+    val guideViewHeight by viewModel.guideViewHeight.collectAsStateWithLifecycle()
 
     var granted by remember {
         mutableStateOf(
@@ -186,13 +194,22 @@ fun ScanScreen(
                 LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
             )
             imageAnalysisBackpressureStrategy = ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
-            imageAnalysisResolutionSelector = analysisResolutionSelector()
+            // One selector instance for preview and analysis so a rebind cannot
+            // negotiate a different aspect than the card guide.
+            val resolution = analysisResolutionSelector()
+            imageAnalysisResolutionSelector = resolution
+            previewResolutionSelector = resolution
             isPinchToZoomEnabled = true
             isTapToFocusEnabled = true
             cameraSelector = CameraDevices.selectorFor(cameraId)
         }
     }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    val zoomGate = remember { ZoomRestoreController() }
+    // bindToLifecycle starts a new session at 1×. Keep the existing binding
+    // when the same lens is still attached (confirm → scan).
+    var cameraBound by remember { mutableStateOf(false) }
+    var boundCameraId by remember { mutableStateOf<String?>(null) }
     // One PreviewView for the lifetime of this screen. Reassigning controller
     // on recomposition calls bindToLifecycle again and freezes the preview.
     val previewView = remember {
@@ -209,9 +226,50 @@ fun ScanScreen(
         }
     }
 
+    fun logZoom(requested: Float, applied: Float?) {
+        ScanDebug.d(
+            ZoomFraming.zoomLogLine(
+                requested = requested,
+                applied = applied,
+                lens = viewModel.lensKey.value,
+                previewWidth = previewView.width,
+                previewHeight = previewView.height,
+            ),
+        )
+    }
+
+    fun handleZoomStep(step: ZoomRestoreStep) {
+        when (step) {
+            is ZoomRestoreStep.Apply -> {
+                val control = controller.cameraControl ?: return
+                logZoom(step.requested, step.applied)
+                control.setZoomRatio(step.applied)
+            }
+            is ZoomRestoreStep.Confirmed -> {
+                logZoom(step.requested, step.applied)
+                viewModel.onZoomRestoreSettled()
+            }
+            ZoomRestoreStep.Wait, ZoomRestoreStep.Passthrough -> Unit
+        }
+    }
+
+    /** Feed one zoomState sample. No-ops until CameraControl exists. */
+    fun onZoomSample(reported: Float, minZoom: Float, maxZoom: Float) {
+        viewModel.updateZoomRange(minZoom, maxZoom)
+        val step = zoomGate.onZoomSample(
+            reported = reported,
+            requested = viewModel.zoomRatio.value,
+            minZoom = minZoom,
+            maxZoom = maxZoom,
+            cameraControlReady = controller.cameraControl != null,
+        )
+        handleZoomStep(step)
+    }
+
     fun goToConfirm() {
         if (navigated.compareAndSet(false, true)) {
             persistZoom(controller, viewModel)
+            viewModel.holdFraming()
             onCaptured()
         }
     }
@@ -220,7 +278,13 @@ fun ScanScreen(
         controller.cameraInfo?.zoomState?.value?.let { state ->
             viewModel.updateZoomRange(state.minZoomRatio, state.maxZoomRatio)
         }
-        applySavedZoom(controller, viewModel, viewModel.zoomRatio.value, force = forceZoom)
+        applySavedZoom(
+            controller,
+            previewView,
+            viewModel,
+            viewModel.zoomRatio.value,
+            force = forceZoom,
+        )
         refreshTorchCapabilities(controller) { supported, max ->
             torchStrengthSupported = supported
             maxTorchStrength = max
@@ -229,22 +293,47 @@ fun ScanScreen(
     }
 
     fun scheduleZoomApply(attemptsLeft: Int = 8) {
-        val applied = applySavedZoom(controller, viewModel, viewModel.zoomRatio.value, force = true)
-        if (!applied && attemptsLeft > 0) {
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
-                { scheduleZoomApply(attemptsLeft - 1) },
-                80L,
-            )
+        val state = controller.cameraInfo?.zoomState?.value
+        val controlReady = controller.cameraControl != null
+        if (!controlReady || state == null) {
+            logZoom(viewModel.zoomRatio.value, null)
+            if (attemptsLeft > 0) {
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                    { scheduleZoomApply(attemptsLeft - 1) },
+                    80L,
+                )
+            }
+            return
         }
+        onZoomSample(state.zoomRatio, state.minZoomRatio, state.maxZoomRatio)
     }
 
     LaunchedEffect(cameraId, granted, gamePicked) {
         if (!granted || !gamePicked) return@LaunchedEffect
+        previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
+        previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        val rebind = ZoomFraming.shouldRebindCamera(
+            alreadyBound = cameraBound,
+            boundCameraId = boundCameraId,
+            requestedCameraId = cameraId,
+        )
+        if (!rebind) return@LaunchedEffect
+        zoomGate.resetForBind()
+        viewModel.armZoomRestore()
         controller.cameraSelector = CameraDevices.selectorFor(cameraId)
         controller.bindToLifecycle(lifecycleOwner)
+        cameraBound = true
+        boundCameraId = cameraId
         controller.initializationFuture.addListener({
-            syncCameraOptics(forceZoom = true)
-            scheduleZoomApply()
+            // Control is up. Apply only if zoomState was already observed;
+            // otherwise the zoom observer applies on the first real sample.
+            val state = controller.cameraInfo?.zoomState?.value
+            val step = zoomGate.onCameraControlReady(
+                requested = viewModel.zoomRatio.value,
+                minZoom = state?.minZoomRatio ?: Float.NaN,
+                maxZoom = state?.maxZoomRatio ?: Float.NaN,
+            )
+            handleZoomStep(step)
         }, mainExecutor)
     }
 
@@ -253,25 +342,53 @@ fun ScanScreen(
         if (!granted || !gamePicked) return@LaunchedEffect
         val option = viewModel.currentLensOption()
         if (option?.kind != LensKind.ZOOM) return@LaunchedEffect
+        if (viewModel.isFramingHeld()) return@LaunchedEffect
         syncCameraOptics(forceZoom = true)
         scheduleZoomApply()
         // Switching ratio can drop the torch on the way between lenses.
         kotlinx.coroutines.delay(250)
-        syncCameraOptics(forceZoom = true)
+        if (!viewModel.isFramingHeld()) syncCameraOptics(forceZoom = true)
     }
 
-    DisposableEffect(lifecycleOwner, granted, gamePicked) {
+    DisposableEffect(lifecycleOwner, granted, gamePicked, autoScan, confirmVisible) {
         if (!granted || !gamePicked) {
             return@DisposableEffect onDispose { }
         }
         val lifecycleObserver = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> {
+                    if (confirmVisible) {
+                        viewModel.holdFraming()
+                        controller.clearImageAnalysisAnalyzer()
+                        return@LifecycleEventObserver
+                    }
                     navigated.set(false)
                     viewModel.resumeScanning()
-                    syncCameraOptics(forceZoom = false)
+                    viewModel.armZoomRestore()
+                    zoomGate.arm()
+                    attachAutoAnalyzer(
+                        controller = controller,
+                        executor = cameraExecutor,
+                        mainExecutor = mainExecutor,
+                        enabled = autoScan,
+                        viewModel = viewModel,
+                        onFrame = { bitmap -> viewModel.processAutoFrame(bitmap) { goToConfirm() } },
+                    )
+                    val state = controller.cameraInfo?.zoomState?.value
+                    if (controller.cameraControl != null && state != null) {
+                        onZoomSample(state.zoomRatio, state.minZoomRatio, state.maxZoomRatio)
+                    } else {
+                        logZoom(viewModel.zoomRatio.value, null)
+                        scheduleZoomApply()
+                    }
                 }
-                Lifecycle.Event.ON_PAUSE -> persistZoom(controller, viewModel)
+                Lifecycle.Event.ON_PAUSE -> {
+                    persistZoom(controller, viewModel)
+                    viewModel.holdFraming()
+                    // Drop frames while confirm is up. Clearing the analyzer does
+                    // not rebind when its target resolution is unchanged.
+                    controller.clearImageAnalysisAnalyzer()
+                }
                 else -> Unit
             }
         }
@@ -289,11 +406,12 @@ fun ScanScreen(
         }
         var attached: androidx.lifecycle.LiveData<androidx.camera.core.ZoomState>? = null
         val observer = Observer<androidx.camera.core.ZoomState> { state ->
-            viewModel.updateZoomRange(state.minZoomRatio, state.maxZoomRatio)
-            if (viewModel.isZoomRestoreArmed()) {
-                applySavedZoom(controller, viewModel, viewModel.zoomRatio.value, force = true)
+            if (viewModel.isFramingHeld()) {
+                onZoomSample(state.zoomRatio, state.minZoomRatio, state.maxZoomRatio)
+            } else {
+                viewModel.updateZoomRange(state.minZoomRatio, state.maxZoomRatio)
+                viewModel.onObservedZoom(state.zoomRatio)
             }
-            viewModel.onObservedZoom(state.zoomRatio)
         }
         fun attachZoomObserver() {
             val live = controller.cameraInfo?.zoomState ?: return
@@ -324,41 +442,43 @@ fun ScanScreen(
         }
     }
 
-    // Activity is already RESUMED when confirm pops, so ON_RESUME does not fire.
-    // Re-arm here before the analyzer is attached again.
+    // Game pick does not resume the activity, so arm scanning once the camera is shown.
     LaunchedEffect(gamePicked) {
         if (!gamePicked) return@LaunchedEffect
         navigated.set(false)
         viewModel.resumeScanning()
     }
 
+    // Confirm covers the scanner in this same composition, so the camera stays
+    // bound. Stop analysis until the overlay closes; do not rebind.
+    var confirmWasShown by remember { mutableStateOf(false) }
+    LaunchedEffect(confirmVisible) {
+        if (confirmVisible) {
+            confirmWasShown = true
+            persistZoom(controller, viewModel)
+            viewModel.holdFraming()
+            controller.clearImageAnalysisAnalyzer()
+        } else if (confirmWasShown) {
+            confirmWasShown = false
+            navigated.set(false)
+            viewModel.onZoomRestoreSettled()
+            viewModel.resumeScanning()
+        }
+    }
+
     // Keys are camera/scan state only. Opening the settings panel must not
     // replace the analyzer or the resolution selector (both rebind the camera).
-    LaunchedEffect(autoScan, granted, gamePicked, cameraId) {
-        if (!granted || !gamePicked) return@LaunchedEffect
+    LaunchedEffect(autoScan, granted, gamePicked, cameraId, confirmVisible) {
+        if (!granted || !gamePicked || confirmVisible) return@LaunchedEffect
         navigated.set(false)
-        if (autoScan) {
-            controller.setImageAnalysisAnalyzer(cameraExecutor) { proxy ->
-                try {
-                    if (!viewModel.canAcceptAutoFrame()) return@setImageAnalysisAnalyzer
-                    val upright = com.scantrader.app.scan.CameraBitmaps.fromImageProxy(proxy)
-                    com.scantrader.app.scan.ScanDebug.d(
-                        "autoFrame rot=${upright.rotationDegrees} " +
-                            "src=${upright.sourceSize.width}x${upright.sourceSize.height} " +
-                            "bmp=${upright.bitmap.width}x${upright.bitmap.height} " +
-                            "cropApplied=${upright.cropApplied}",
-                    )
-                    mainExecutor.execute {
-                        viewModel.processAutoFrame(upright.bitmap) { goToConfirm() }
-                    }
-                } catch (_: Throwable) {
-                } finally {
-                    proxy.close()
-                }
-            }
-        } else {
-            controller.clearImageAnalysisAnalyzer()
-        }
+        attachAutoAnalyzer(
+            controller = controller,
+            executor = cameraExecutor,
+            mainExecutor = mainExecutor,
+            enabled = autoScan,
+            viewModel = viewModel,
+            onFrame = { bitmap -> viewModel.processAutoFrame(bitmap) { goToConfirm() } },
+        )
     }
 
     DisposableEffect(Unit) {
@@ -389,10 +509,17 @@ fun ScanScreen(
                 AndroidView(
                     factory = { _ -> previewView },
                     modifier = Modifier.fillMaxSize(),
-                    update = { _ -> },
+                    update = { view ->
+                        view.scaleType = PreviewView.ScaleType.FILL_CENTER
+                        view.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        if (view.controller !== controller) view.controller = controller
+                    },
                 )
                 CardFrameOverlay(
                     showBothBottomCorners = game == Game.POKEMON,
+                    lockedWidth = guideViewWidth,
+                    lockedHeight = guideViewHeight,
+                    onLockViewport = viewModel::lockGuideViewport,
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
@@ -402,7 +529,7 @@ fun ScanScreen(
             }
         }
 
-        Column(
+        if (!confirmVisible) Column(
             Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
@@ -475,7 +602,7 @@ fun ScanScreen(
             }
         }
 
-        Column(
+        if (!confirmVisible) Column(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
@@ -842,10 +969,22 @@ private fun ModeToggleCard(
 @Composable
 private fun CardFrameOverlay(
     showBothBottomCorners: Boolean = false,
+    lockedWidth: Float,
+    lockedHeight: Float,
+    onLockViewport: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Canvas(modifier) {
-        val rect = CardFrameGeometry.frameIn(size.width, size.height)
+    Canvas(
+        modifier.onSizeChanged { size ->
+            onLockViewport(size.width.toFloat(), size.height.toFloat())
+        },
+    ) {
+        val rect = CardFrameGeometry.frameStable(
+            viewWidth = size.width,
+            viewHeight = size.height,
+            lockedWidth = lockedWidth,
+            lockedHeight = lockedHeight,
+        )
         val left = rect.left
         val top = rect.top
         val right = rect.right
@@ -951,22 +1090,67 @@ private fun applyTorch(
     }
 }
 
-/** @return true if zoomState was available and applied (or already aligned). */
+/**
+ * @return the ratio sent to CameraControl, or null when bind is not finished.
+ * Zoom is never written before both CameraControl and zoomState exist.
+ */
 private fun applySavedZoom(
     controller: LifecycleCameraController,
+    previewView: PreviewView,
     viewModel: ScanViewModel,
     ratio: Float,
     force: Boolean = true,
-): Boolean {
+): Float? {
     return runCatching {
-        val state = controller.cameraInfo?.zoomState?.value ?: return false
+        val control = controller.cameraControl ?: return null
+        val state = controller.cameraInfo?.zoomState?.value ?: return null
         viewModel.updateZoomRange(state.minZoomRatio, state.maxZoomRatio)
-        val clamped = ratio.coerceIn(state.minZoomRatio, state.maxZoomRatio)
+        val clamped = ZoomFraming.clamp(ratio, state.minZoomRatio, state.maxZoomRatio) ?: return null
         viewModel.noteZoomClamped(ratio, clamped)
-        if (!force && abs(state.zoomRatio - clamped) < 0.02f) return true
-        controller.cameraControl?.setZoomRatio(clamped)
-        true
-    }.getOrDefault(false)
+        ScanDebug.d(
+            ZoomFraming.zoomLogLine(
+                requested = ratio,
+                applied = clamped,
+                lens = viewModel.lensKey.value,
+                previewWidth = previewView.width,
+                previewHeight = previewView.height,
+            ),
+        )
+        if (!force && abs(state.zoomRatio - clamped) < 0.02f) return clamped
+        control.setZoomRatio(clamped)
+        clamped
+    }.getOrNull()
+}
+
+private fun attachAutoAnalyzer(
+    controller: LifecycleCameraController,
+    executor: java.util.concurrent.ExecutorService,
+    mainExecutor: java.util.concurrent.Executor,
+    enabled: Boolean,
+    viewModel: ScanViewModel,
+    onFrame: (android.graphics.Bitmap) -> Unit,
+) {
+    if (!enabled) {
+        controller.clearImageAnalysisAnalyzer()
+        return
+    }
+    controller.setImageAnalysisAnalyzer(executor) { proxy ->
+        try {
+            if (!viewModel.canAcceptAutoFrame()) return@setImageAnalysisAnalyzer
+            val upright = com.scantrader.app.scan.CameraBitmaps.fromImageProxy(proxy)
+            ScanDebug.d(
+                "autoFrame rot=${upright.rotationDegrees} " +
+                    "src=${upright.sourceSize.width}x${upright.sourceSize.height} " +
+                    "bmp=${upright.bitmap.width}x${upright.bitmap.height} " +
+                    "cropApplied=${upright.cropApplied}",
+            )
+            val bitmap = upright.bitmap
+            mainExecutor.execute { onFrame(bitmap) }
+        } catch (_: Throwable) {
+        } finally {
+            proxy.close()
+        }
+    }
 }
 
 private fun persistZoom(controller: LifecycleCameraController, viewModel: ScanViewModel) {
@@ -1080,12 +1264,12 @@ private fun ScanLensDropdown(
     }
 }
 
-/** Analysis stream at 1280×960 (ImageCapture stays full-res). */
+/** Analysis and preview stay at 1280×960 so a rebind cannot change the aspect. */
 private fun analysisResolutionSelector(): ResolutionSelector =
     ResolutionSelector.Builder()
         .setResolutionStrategy(
             ResolutionStrategy(
-                android.util.Size(1280, 960),
+                android.util.Size(ZoomFraming.ANALYSIS_WIDTH, ZoomFraming.ANALYSIS_HEIGHT),
                 ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
             ),
         )
