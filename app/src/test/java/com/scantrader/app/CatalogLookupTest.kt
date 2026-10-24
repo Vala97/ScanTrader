@@ -230,6 +230,86 @@ class CatalogLookupTest {
         assertTrue(hits.none { it.name == "Buizel" || it.name == "Delibird" || it.name == "Cherrim" })
     }
 
+    @Test
+    fun raveningWargRejectsHob36AndUsesTheSetNameSearch() = runBlocking {
+        val idCalls = mutableListOf<String>()
+        val queries = mutableListOf<String>()
+        val elrond = ScryfallCard(
+            id = "elrond",
+            name = "Elrond, Moon-Reader",
+            set = "hob",
+            setName = "The Hobbit",
+            collectorNumber = "36",
+        )
+        val warg = ScryfallCard(
+            id = "warg",
+            name = "Ravening Warg",
+            set = "hob",
+            setName = "The Hobbit",
+            collectorNumber = "80",
+        )
+        val api = object : ScryfallApi {
+            override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard {
+                idCalls += "$set/$number"
+                if (set == "hob" && number == "36") return elrond
+                throw notFound()
+            }
+
+            override suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard =
+                error("unused")
+
+            override suspend fun cardById(id: String): ScryfallCard = error("unused")
+
+            override suspend fun search(query: String, unique: String): ScryfallSearchResponse {
+                queries += query
+                if (query.contains("set:hob") && query.contains("Ravening Warg")) {
+                    return ScryfallSearchResponse(listOf(warg))
+                }
+                throw notFound()
+            }
+
+            override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = throw notFound()
+        }
+        val lookup = CatalogLookup(
+            ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L })),
+            emptyTcgdex(),
+        )
+        val misread = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Ravening Warg", collectorNumber = "36", setCode = "hob"),
+        )
+        assertEquals("Ravening Warg", misread.first().name)
+        assertEquals("hob", misread.first().setCode)
+        assertEquals("80", misread.first().collectorNumber)
+        assertTrue(misread.none { it.name.contains("Elrond") })
+        assertTrue(idCalls.contains("hob/36"))
+        assertTrue(queries.any { it.contains("set:hob") && it.contains("!\"Ravening Warg\"") })
+
+        idCalls.clear()
+        val implausible = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Ravening Warg", collectorNumber = "2036", setCode = "hob"),
+        )
+        assertEquals("Ravening Warg", implausible.first().name)
+        assertEquals("80", implausible.first().collectorNumber)
+        assertTrue(idCalls.none { it.endsWith("/2036") || it.endsWith("/2026") })
+
+        val missingNumber = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Ravening Warg", collectorNumber = null, setCode = "hob"),
+        )
+        assertEquals("Ravening Warg", missingNumber.first().name)
+        assertEquals("hob", missingNumber.first().setCode)
+        assertEquals("80", missingNumber.first().collectorNumber)
+    }
+
+    private fun emptyTcgdex(): TcgdexApi = object : TcgdexApi {
+        override suspend fun search(lang: String, name: String?, localId: String?): List<TcgdexCardBrief> =
+            emptyList()
+
+        override suspend fun card(lang: String, id: String): TcgdexCard = error("unused")
+    }
+
     private fun unusedScryfall(): ScryfallApi = object : ScryfallApi {
         override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard = error("unused")
         override suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard =

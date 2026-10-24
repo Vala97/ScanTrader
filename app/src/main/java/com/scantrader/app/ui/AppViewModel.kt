@@ -1172,8 +1172,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             } else {
                 matched
             }
-            val gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(top, gateParsed)
-            val autoOk = gate.accepted
+            // Score a dropped id hit so a name mismatch is nameConflict, not noTop.
+            val gateSubject = top ?: fused.firstOrNull()
+            val gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(gateSubject, gateParsed)
+            val autoOk = gate.accepted && top != null
             val topKey = top?.let { autoCardKey(it) }
             val blockedSameCard = requireMatch &&
                 autoOk &&

@@ -255,18 +255,47 @@ object OcrParser {
         """(?:19|20)\d{2}\s*[-–—]\s*[0-9OolI]{4}""",
     )
 
+    /**
+     * Copyright / illustrator line. `©2026 Wizards of the Coast`, OCR
+     * `wat 036 Waarda of the Coast`, `&2026 Waards`. Not a collector.
+     * A line that also has `74/165` or `N3/150` is an old frame and is kept.
+     */
+    private val copyrightCue = Regex(
+        """(?i)wizards|wa+r?da?s|coast|coas[et]|©|(?:wat|wiz)\s+\d{2,4}\b|(?:^|[\s&])(?:19|20)\d{2}\b""",
+    )
+
+    /**
+     * Rarity plus a zero-padded collector: `C0080`, OCR `CO08O` / `COO8O`.
+     * The digit run must be four characters and start with 0/O so `2026` is not a collector.
+     */
+    private val mtgPaddedCollector = Regex(
+        """(?i)(?<![A-Za-z0-9])[CURM]?([0OolI][0-9OolI]{3})(?![A-Za-z0-9])""",
+    )
+
     /** Fraction tokens only — digit fixes must not rewrite set words. */
     private val ocrFractionToken = Regex(
         """(?<![\d+])([0-9OolINn|]{1,4})\s*/\s*([0-9OolINn|]{2,4})""",
     )
 
     fun prepareMtgBottom(text: String): String {
-        val normalized = normalizeMtgBottomOcr(text)
+        val normalized = normalizeMtgBottomOcr(stripMtgCopyright(text))
         val withoutYears = copyrightYearRange.replace(normalized, " ")
         return ocrFractionToken.replace(withoutYears) { match ->
             "${fixOcrDigits(match.groupValues[1])}/${fixOcrDigits(match.groupValues[2])}"
         }
     }
+
+    /**
+     * Drop copyright and illustrator lines (`Wizards of the Coast`, `©2026`).
+     * An old-frame `74/165` or OCR `N3/150` on that same line stays.
+     */
+    fun stripMtgCopyright(text: String): String =
+        text.lines().filterNot { line ->
+            copyrightCue.containsMatchIn(line) && !hasCollectorFraction(line)
+        }.joinToString("\n")
+
+    private fun hasCollectorFraction(line: String): Boolean =
+        Regex("""(?<![+\d])[0-9OolINn|]{1,4}\s*/\s*[0-9OolINn|]{2,4}""").containsMatchIn(line)
 
     /** O/o→0, l/I/|→1, N/n→8. Used inside `NN/NNN` tokens (`N3/150` → `83/150`). */
     fun fixOcrDigits(token: String): String = buildString(token.length) {
@@ -321,6 +350,17 @@ object OcrParser {
             if (total < 40 || cn !in 1 until total || cn >= 1900) return@forEach
             val bonus = if (total in 50..450) 15 else 0
             hits += MtgBottomHit(normalizeCollector(cnRaw), null, 80 + bonus)
+        }
+        val paddedSet = mtgSetNearLang.findAll(prepared)
+            .mapNotNull { it.groupValues.getOrNull(1)?.takeIf { set -> isPlausibleMtgSet(set) } }
+            .firstOrNull()
+            ?.let { normalizeSet(it) }
+        mtgPaddedCollector.findAll(prepared).forEach { match ->
+            val fixed = fixOcrDigits(match.groupValues[1])
+            if (fixed.length != 4 || fixed[0] != '0' || !fixed.all { it.isDigit() }) return@forEach
+            val cn = normalizeCollector(fixed)
+            if (!isPlausibleCollector(cn)) return@forEach
+            hits += MtgBottomHit(cn, paddedSet, if (paddedSet != null) 115 else 75)
         }
         return hits.maxByOrNull { it.score }
     }
@@ -454,16 +494,24 @@ object OcrParser {
                     .mapNotNull { match ->
                         val n = match.groupValues[1].ifBlank { match.groupValues[4] }
                         val set = match.groupValues[2].ifBlank { match.groupValues[3] }
-                        n.takeIf { it.length >= 2 && isPlausibleMtgSet(set) }
+                        n.takeIf { it.length >= 2 && isPlausibleCollector(it) && isPlausibleMtgSet(set) }
                     }
                     .maxByOrNull { it.length }
                     ?.let { return normalizeCollector(it) }
-                // Bare padded collector after normalize (`0028` on its own line).
-                Regex("""(?m)(?<![\d/+])0+(\d{2,3})\b""").findAll(source)
-                    .map { it.groupValues[1] }
-                    .filter { it.length >= 2 }
-                    .maxByOrNull { it.length }
-                    ?.let { return normalizeCollector(it) }
+                mtgPaddedCollector.findAll(source)
+                    .mapNotNull { match ->
+                        val fixed = fixOcrDigits(match.groupValues[1])
+                        fixed.takeIf { it.length == 4 && it[0] == '0' && it.all { ch -> ch.isDigit() } }
+                    }
+                    .map { normalizeCollector(it) }
+                    .firstOrNull { isPlausibleCollector(it) }
+                    ?.let { return it }
+                // Bare 4-digit padded collector (`0028`, `0080`). A 3-digit `036` on the
+                // copyright line is not a collector.
+                Regex("""(?m)(?<![\d/+])(0\d{3})\b""").findAll(source)
+                    .map { normalizeCollector(it.groupValues[1]) }
+                    .firstOrNull { isPlausibleCollector(it) }
+                    ?.let { return it }
             }
         }
         // Last resort: structured bottom lines (modern set code, or old cn/size on copyright line).

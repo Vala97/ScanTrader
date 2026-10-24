@@ -712,4 +712,67 @@ class OcrParserTest {
         assertEquals(128, illustrator.setCardCount)
         assertNull(illustrator.setCode)
     }
+
+    @Test
+    fun hobbitRaveningWargReadsPaddedCollectorAndIgnoresCopyright() {
+        val padded = OcrParser.parse(
+            rawText = "Ravening Warg",
+            game = Game.MTG,
+            bottomPriorityText = """
+                CO08O
+                all sides.
+                HOBEN ADRIAN R DRIGLIZ PEREZ
+                CMEE
+                ng,
+                2/2
+                &2026 Waards of tht Coast
+            """.trimIndent(),
+            namePriorityText = "Ravening Warg",
+        )
+        assertEquals("Ravening Warg", padded.nameGuess)
+        assertEquals("80", padded.collectorNumber)
+        assertEquals("hob", padded.setCode)
+
+        val glued = OcrParser.parse(
+            rawText = "Ravening Warg",
+            game = Game.MTG,
+            bottomPriorityText = """
+                COO8O
+                HOBEN ADRIAN RODRIGUEZ PEREZ
+                2/2
+                wat 036 Waarda of the Coast
+            """.trimIndent(),
+            namePriorityText = "Ravening Warg",
+        )
+        assertEquals("80", glued.collectorNumber)
+        assertEquals("hob", glued.setCode)
+
+        val copyrightOnly = OcrParser.parse(
+            rawText = "Ravening Warg",
+            game = Game.MTG,
+            bottomPriorityText = """
+                HOBEN ADlAN RopaiGUIZ PEREZ
+                TMg,
+                2/2
+                CMEE
+                wat 036 Waarda of the Coast
+            """.trimIndent(),
+            namePriorityText = "Ravening Warg",
+        )
+        assertEquals("Ravening Warg", copyrightOnly.nameGuess)
+        assertEquals("hob", copyrightOnly.setCode)
+        assertNull(copyrightOnly.collectorNumber)
+
+        val year = OcrParser.parse(
+            rawText = "Ravening Warg",
+            game = Game.MTG,
+            bottomPriorityText = """
+                HOBEN ADRIAN RODRIGUEZ PEREZ
+                waC 2036 Taarda of he Coast
+            """.trimIndent(),
+            namePriorityText = "Ravening Warg",
+        )
+        assertEquals("hob", year.setCode)
+        assertNull(year.collectorNumber)
+    }
 }

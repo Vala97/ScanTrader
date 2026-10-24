@@ -9,6 +9,7 @@ import com.scantrader.app.network.scryfall.ScryfallClient
 import com.scantrader.app.network.tcgdex.TcgdexApi
 import com.scantrader.app.network.tcgdex.TcgdexCard
 import com.scantrader.app.network.tcgdex.TcgdexCardBrief
+import com.scantrader.app.scan.FrameNameGate
 import com.scantrader.app.scan.OcrParser
 import java.util.Locale
 import kotlinx.coroutines.async
@@ -34,22 +35,27 @@ class CatalogLookup(
         val setCandidates = OcrParser.setCodeCandidates(parsed.setCode)
             .filter { code -> code.any { it.isLetter() } && code.count { it.isDigit() } < 3 }
             .take(2)
-        val number = OcrParser.collectorCandidates(parsed.collectorNumber).firstOrNull()
+        val number = plausibleMtgCollector(parsed.collectorNumber)
         val nameAttempts = OcrParser.mtgNameAttempts(name)
         if (nameAttempts.isEmpty() && number.isNullOrBlank()) return emptyList()
 
-        // Set + collector number wins over a noisy title (mana pips glued to the name).
+        // Set + collector only when the returned title agrees with OCR.
+        // hob/36 is Elrond when the card reads Ravening Warg — do not keep it.
+        var preferNumber = number
         for (set in setCandidates) {
             if (number.isNullOrBlank()) break
             val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.orRethrowBusy()
-            if (card != null) return listOf(card.toIdentified(ocrScore = 0.98f))
+                ?: continue
+            if (mtgIdAgrees(card, name)) return listOf(card.toIdentified(ocrScore = 0.98f))
+            preferNumber = null
         }
 
         for (searchName in nameAttempts) {
             val found = lookupMtgByName(
                 searchName = searchName,
-                number = number,
-                nameAndNumber = number != null && setCandidates.isEmpty(),
+                number = preferNumber,
+                sets = setCandidates,
+                nameAndNumber = preferNumber != null && setCandidates.isEmpty(),
             )
             if (found.isNotEmpty()) return found
         }
@@ -57,27 +63,81 @@ class CatalogLookup(
     }
 
     /**
-     * One name: collector+name when there is no set code, then fuzzy, then the Italian exact title.
-     * [lookupMtg] calls this again with the trailing mana token removed when the first try misses.
+     * One name: the known set first (`set:hob !"Ravening Warg"`), then collector+name
+     * when there is no set, then fuzzy, then the Italian exact title.
      */
     private suspend fun lookupMtgByName(
         searchName: String,
         number: String?,
+        sets: List<String> = emptyList(),
         nameAndNumber: Boolean,
     ): List<IdentifiedCard> {
         val safeName = searchName.replace("\"", "").trim()
         if (safeName.isBlank()) return emptyList()
+        val inSet = searchMtgInSets(safeName, sets, number)
+        if (inSet.isNotEmpty()) return inSet
         // English `name:` field. An Italian printed title misses here.
         if (nameAndNumber && !number.isNullOrBlank()) {
             val byNumber = searchOnce("cn:$number (lang:it name:\"$safeName\" OR name:\"$safeName\")")
             if (byNumber.isNotEmpty()) return byNumber
         }
         val fuzzy = runCatching { scryfall.namedFuzzy(safeName) }.orRethrowBusy()
+        if (fuzzy != null && sets.isNotEmpty() && mtgIdAgrees(fuzzy, safeName)) {
+            val printing = searchMtgInSets(fuzzy.name, sets, number)
+            if (printing.isNotEmpty()) return printing
+        }
         val cnOk = number.isNullOrBlank() || collectorEquals(fuzzy?.collectorNumber, number)
-        if (fuzzy != null && cnOk) {
+        if (fuzzy != null && cnOk && (sets.isEmpty() || mtgIdAgrees(fuzzy, safeName))) {
             return listOf(fuzzy.toIdentified(ocrScore = 0.72f))
         }
         return lookupItalianPrintedName(safeName, number)
+    }
+
+    /**
+     * Exact name in the set, then a name query in that set.
+     * Prefer the collector when it is present; otherwise the set printing.
+     */
+    private suspend fun searchMtgInSets(
+        safeName: String,
+        sets: List<String>,
+        number: String?,
+    ): List<IdentifiedCard> {
+        if (sets.isEmpty() || safeName.isBlank()) return emptyList()
+        for (set in sets) {
+            val exact = pickMtgPrinting(searchCards("set:$set !\"$safeName\""), set, number)
+            if (exact != null && mtgIdAgrees(exact, safeName)) {
+                return listOf(exact.toIdentified(ocrScore = 0.96f))
+            }
+        }
+        for (set in sets) {
+            val named = pickMtgPrinting(searchCards("set:$set name:\"$safeName\""), set, number)
+            if (named != null && mtgIdAgrees(named, safeName)) {
+                return listOf(named.toIdentified(ocrScore = 0.9f))
+            }
+        }
+        return emptyList()
+    }
+
+    private fun pickMtgPrinting(cards: List<ScryfallCard>, set: String, number: String?): ScryfallCard? {
+        val inSet = cards.filter { it.set.equals(set, ignoreCase = true) }.ifEmpty { cards }
+        if (!number.isNullOrBlank()) {
+            inSet.firstOrNull { collectorEquals(it.collectorNumber, number) }?.let { return it }
+        }
+        return inSet.firstOrNull()
+    }
+
+    /** A year or a collector past any real set (`2036`) is not an id lookup. */
+    private fun plausibleMtgCollector(raw: String?): String? {
+        val first = OcrParser.collectorCandidates(raw).firstOrNull() ?: return null
+        val n = first.filter { it.isDigit() }.trimStart('0').toIntOrNull() ?: return null
+        if (n !in 1..999) return null
+        return first
+    }
+
+    private fun mtgIdAgrees(card: ScryfallCard, ocrName: String?): Boolean {
+        val title = OcrParser.cleanMtgNameGuess(ocrName) ?: return true
+        if (FrameNameGate.confidentTitle(title) == null) return true
+        return FrameNameGate.agreesName(Game.MTG, card.name, card.printedName, title)
     }
 
     /**
@@ -181,10 +241,8 @@ class CatalogLookup(
         // Drop obvious junk when OCR name is a real title (avoid Malamar from "mal di testa").
         // Skip this filter when name is ability noise — id match is enough.
         val filtered = if (!noisyName && !searchName.isNullOrBlank() && searchName.length >= 4) {
-            // A confident title must agree. Unrelated #6s (Buizel, Delibird, …) stay out.
-            scored.filter {
-                PokemonCatalog.nameMatches(it.name, searchName) || (it.ocrScore ?: 0f) >= 0.35f
-            }
+            // A confident title must agree. An id hit for another species stays out.
+            scored.filter { PokemonCatalog.nameMatches(it.name, searchName) }
         } else {
             scored
         }

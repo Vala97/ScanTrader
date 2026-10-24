@@ -71,6 +71,42 @@ class MatchFusionTest {
         )
         assertTrue(agreed.accepted)
         assertTrue(agreed.strict)
+        assertTrue(agreed.nameOk)
+    }
+
+    @Test
+    fun strictMtgIdHitIsRejectedWhenTheNameDisagrees() {
+        val parsed = ParsedCardText(
+            nameGuess = "Ravening Warg",
+            collectorNumber = "36",
+            setCode = "hob",
+        )
+        val elrond = IdentifiedCard(
+            game = Game.MTG,
+            name = "Elrond, Moon-Reader",
+            setCode = "hob",
+            setName = "The Hobbit",
+            collectorNumber = "36",
+            scryfallId = "elrond",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(elrond, parsed)
+        assertFalse(decision.accepted)
+        assertFalse(decision.strict)
+        assertFalse(decision.nameOk)
+        assertTrue(decision.nameConflict)
+        assertEquals("nameConflict name=Ravening Warg top=Elrond, Moon-Reader", decision.reason)
+        assertFalse(MatchFusion.allowsAutoSave(decision))
+
+        val warg = elrond.copy(name = "Ravening Warg", collectorNumber = "80", scryfallId = "warg")
+        val agreed = MatchFusion.evaluateAutoMatch(warg, parsed.copy(collectorNumber = "80"))
+        assertTrue(agreed.accepted)
+        assertTrue(agreed.strict)
+        assertTrue(agreed.nameOk)
+        assertFalse(agreed.nameConflict)
+        assertTrue(MatchFusion.allowsAutoSave(agreed))
     }
 
     @Test

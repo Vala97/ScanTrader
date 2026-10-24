@@ -32,8 +32,16 @@ object FrameNameGate {
 
     fun agrees(card: IdentifiedCard, frame: ParsedCardText): Boolean {
         val frameName = confidentTitle(frame.nameGuess) ?: return true
-        if (card.game != Game.POKEMON) return true
-        return PokemonCatalog.nameMatches(card.name, frameName) ||
-            PokemonCatalog.nameMatches(card.printedName, frameName)
+        return agreesName(card.game, card.name, card.printedName, frameName)
+    }
+
+    /** Fuzzy title check. An id hit whose name disagrees is not a match. */
+    fun agreesName(game: Game, cardName: String?, printedName: String?, ocrName: String): Boolean {
+        if (game == Game.POKEMON) {
+            return PokemonCatalog.nameMatches(cardName, ocrName) ||
+                PokemonCatalog.nameMatches(printedName, ocrName)
+        }
+        return CardIdentity.namesSimilar(cardName, ocrName) ||
+            CardIdentity.namesSimilar(printedName, ocrName)
     }
 }

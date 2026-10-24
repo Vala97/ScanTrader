@@ -215,9 +215,18 @@ object MatchFusion {
             else -> false
         }
         if (strictOk) {
-            if (top.game == Game.POKEMON && parsed != null) {
-                val conflict = pokemonNameConflict(top, parsed, confidence)
-                if (conflict != null) return conflict
+            if (parsed != null &&
+                FrameNameGate.confidentTitle(parsed.nameGuess) != null &&
+                !FrameNameGate.agrees(top, parsed)
+            ) {
+                val name = parsed.nameGuess?.trim().orEmpty()
+                return AutoMatchDecision(
+                    accepted = false,
+                    reason = "nameConflict name=$name top=${top.name}",
+                    nameOk = false,
+                    nameConflict = true,
+                    confidence = confidence,
+                )
             }
             return AutoMatchDecision(
                 accepted = true,
@@ -238,26 +247,6 @@ object MatchFusion {
             Game.POKEMON -> evaluatePokemonSoft(top, parsed, confidence, visual, ocr)
             Game.MTG -> evaluateMtgSoft(top, parsed, confidence, visual, ocr)
         }
-    }
-
-    /**
-     * Strict confidence does not override a real OCR title.
-     * Abra at conf 1.0 must not be accepted on a frame that reads Machop.
-     */
-    private fun pokemonNameConflict(
-        top: IdentifiedCard,
-        parsed: ParsedCardText,
-        confidence: Float,
-    ): AutoMatchDecision? {
-        if (FrameNameGate.agrees(top, parsed)) return null
-        val name = parsed.nameGuess?.trim().orEmpty()
-        return AutoMatchDecision(
-            accepted = false,
-            reason = "nameConflict name=$name top=${top.name}",
-            nameOk = false,
-            nameConflict = true,
-            confidence = confidence,
-        )
     }
 
     private fun evaluatePokemonSoft(
