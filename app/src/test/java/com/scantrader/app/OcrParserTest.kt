@@ -551,6 +551,19 @@ class OcrParserTest {
             "Pioppo Tagliaerbacce",
             OcrParser.parse("Pioppo Tagliaerbacce 2G", Game.MTG).nameGuess,
         )
+        // Italian Morningtide card: mana cost {1}{B} read as 1W / 1 / 1B on the title.
+        assertEquals(
+            "Stendardiere del Lancio della Rana",
+            OcrParser.cleanMtgNameGuess("Stendardiere del Lancio della Rana 1W"),
+        )
+        assertEquals(
+            "Stendardiere del Lancio della Rana",
+            OcrParser.cleanMtgNameGuess("Stendardiere del Lancio della Rana 1"),
+        )
+        assertEquals(
+            "Stendardiere del Lancio della Rana",
+            OcrParser.parse("Stendardiere del Lancio della Rana 1B", Game.MTG).nameGuess,
+        )
         assertEquals(listOf("Shivan Dragon"), OcrParser.mtgNameAttempts("Shivan Dragon 4RR"))
         assertEquals(listOf("Counterspell"), OcrParser.mtgNameAttempts("Counterspell UU"))
     }

@@ -67,6 +67,7 @@ class CatalogLookup(
     ): List<IdentifiedCard> {
         val safeName = searchName.replace("\"", "").trim()
         if (safeName.isBlank()) return emptyList()
+        // English `name:` field. An Italian printed title misses here.
         if (nameAndNumber && !number.isNullOrBlank()) {
             val byNumber = searchOnce("cn:$number (lang:it name:\"$safeName\" OR name:\"$safeName\")")
             if (byNumber.isNotEmpty()) return byNumber
@@ -76,17 +77,46 @@ class CatalogLookup(
         if (fuzzy != null && cnOk) {
             return listOf(fuzzy.toIdentified(ocrScore = 0.72f))
         }
-        return searchOnce("lang:it !\"$safeName\"")
+        return lookupItalianPrintedName(safeName, number)
     }
 
-    private suspend fun searchOnce(query: String): List<IdentifiedCard> {
+    /**
+     * `lang:it !"…"` matches [ScryfallCard.printedName] (there is no `printed_name:` keyword).
+     * The Italian scan is often a different printing than the one OCR numbered: Morningtide
+     * prints Frogtosser Banneret as 64/150, while the Italian object on Scryfall is another set.
+     * Resolve the English name, then pick the print with the collector number.
+     */
+    private suspend fun lookupItalianPrintedName(safeName: String, number: String?): List<IdentifiedCard> {
+        val printed = searchCards("lang:it !\"$safeName\"")
+        val italian = printed.firstOrNull() ?: return emptyList()
+        if (number.isNullOrBlank() || collectorEquals(italian.collectorNumber, number)) {
+            return listOf(italian.toIdentified(ocrScore = 0.88f))
+        }
+        val english = italian.name.replace("\"", "").trim()
+        if (english.isNotBlank() && !english.equals(safeName, ignoreCase = true)) {
+            val sameNumber = searchCards("cn:$number !\"$english\"")
+            val print = sameNumber.firstOrNull()
+            if (print != null) {
+                val title = italian.printedName?.takeIf { it.isNotBlank() } ?: safeName
+                return listOf(print.toIdentified(ocrScore = 0.9f).copy(name = title))
+            }
+        }
+        return listOf(italian.toIdentified(ocrScore = 0.88f))
+    }
+
+    private suspend fun searchCards(query: String): List<ScryfallCard> {
         val response = runCatching { scryfall.search(query) }
             .onFailure { if (it !is HttpException && it !is com.scantrader.app.network.scryfall.ScryfallMissException) throw it }
             .getOrNull()
             ?: return emptyList()
-        if (response.data.isEmpty()) return emptyList()
+        return response.data
+    }
+
+    private suspend fun searchOnce(query: String): List<IdentifiedCard> {
+        val cards = searchCards(query)
+        if (cards.isEmpty()) return emptyList()
         val exact = query.contains("!\"")
-        return response.data.take(4).map { it.toIdentified(ocrScore = if (exact) 0.88f else 0.7f) }
+        return cards.take(4).map { it.toIdentified(ocrScore = if (exact) 0.88f else 0.7f) }
     }
 
     private fun <T> Result<T>.orRethrowBusy(): T? {
