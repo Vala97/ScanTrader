@@ -2,7 +2,8 @@ package com.scantrader.app.ui.confirm
 
 /**
  * Timed auto-save on the confirm overlay.
- * Any interaction with the card options pauses it for this card.
+ * Only a real gesture on the card options pauses it.
+ * Language detection, price refresh, and image load leave the countdown running.
  * A new confirm session starts uncancelled, so the next scan can auto-save again.
  */
 object AutoSaveControl {
@@ -21,7 +22,15 @@ object AutoSaveControl {
         TAP,
     }
 
+    /** Updates applied by the app, not by a finger on the options. */
+    enum class Program {
+        DETECTED_LANGUAGE,
+        PRICE,
+        IMAGE,
+    }
+
     data class Labels(
+        /** Eligible to run the countdown. True before the first tick, so the timer can start. */
         val armed: Boolean,
         val countdownVisible: Boolean,
         val statusLabel: String?,
@@ -42,6 +51,14 @@ object AutoSaveControl {
         -> offered
     }
 
+    /** Programmatic updates never cancel. Returns the previous cancelled flag unchanged. */
+    fun onProgrammaticUpdate(cancelled: Boolean, update: Program): Boolean = when (update) {
+        Program.DETECTED_LANGUAGE,
+        Program.PRICE,
+        Program.IMAGE,
+        -> cancelled
+    }
+
     fun present(
         offered: Boolean,
         cancelled: Boolean,
@@ -49,7 +66,8 @@ object AutoSaveControl {
         secondsLeft: Int,
         saving: Boolean,
     ): Labels {
-        val counting = offered && !cancelled && selectedMatchesGate && secondsLeft > 0
+        val eligible = offered && !cancelled && selectedMatchesGate
+        val counting = eligible && secondsLeft > 0
         val paused = offered && cancelled
         val button = when {
             saving -> "Salvataggio…"
@@ -58,7 +76,7 @@ object AutoSaveControl {
             else -> "OK · Salva in collezione"
         }
         return Labels(
-            armed = counting,
+            armed = eligible,
             countdownVisible = counting,
             statusLabel = if (paused) CANCELLED_LABEL else null,
             saveButtonLabel = button,

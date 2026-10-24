@@ -64,6 +64,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.scantrader.app.data.catalog.CardLanguageDetector
+import com.scantrader.app.scan.ScanDebug
 import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
@@ -88,17 +89,23 @@ fun ConfirmScreen(
     val searching by viewModel.searching.collectAsStateWithLifecycle()
     val saving by viewModel.saving.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf(viewModel.parsed?.nameGuess.orEmpty()) }
-    var selected by remember { mutableStateOf<IdentifiedCard?>(null) }
-    var quantity by remember { mutableIntStateOf(1) }
+    val selectedState = remember { mutableStateOf<IdentifiedCard?>(null) }
+    var selected by selectedState
+    val quantityState = remember { mutableIntStateOf(1) }
+    var quantity by quantityState
     var languageTouched by remember { mutableStateOf(false) }
-    var language by remember {
+    val languageState = remember {
         mutableStateOf(viewModel.sessionLanguage ?: defaults.language)
     }
-    var condition by remember {
+    var language by languageState
+    val conditionState = remember {
         mutableStateOf(viewModel.sessionCondition ?: defaults.condition)
     }
-    var foil by remember { mutableStateOf(false) }
-    var collectionId by remember { mutableStateOf(viewModel.preferredCollectionId) }
+    var condition by conditionState
+    val foilState = remember { mutableStateOf(false) }
+    var foil by foilState
+    val collectionIdState = remember { mutableStateOf(viewModel.preferredCollectionId) }
+    var collectionId by collectionIdState
     val scanIdentity = listOf(
         viewModel.autoMatchCardKey,
         viewModel.parsed?.nameGuess,
@@ -138,9 +145,19 @@ fun ConfirmScreen(
 
     fun cancelAutoSave(gesture: AutoSaveControl.Gesture) {
         if (!AutoSaveControl.onUserInteraction(autoSaveOfferedState.value, gesture)) return
+        if (!autoSaveCancelledState.value) {
+            ScanDebug.d("autosave: cancelled(${gesture.name.lowercase()})")
+        }
         autoSaveCancelledState.value = true
         secondsLeft = 0
     }
+
+    val cancelAutoSaveRef = remember {
+        object {
+            var block: (AutoSaveControl.Gesture) -> Unit = {}
+        }
+    }
+    cancelAutoSaveRef.block = { gesture -> cancelAutoSave(gesture) }
 
     fun doSave() {
         val card = selected ?: return
@@ -160,6 +177,10 @@ fun ConfirmScreen(
         if (languageTouched || !defaults.detectCardLanguage) return@LaunchedEffect
         val card = selected ?: return@LaunchedEffect
         val detected = viewModel.detectCardLanguage(card)
+        autoSaveCancelledState.value = AutoSaveControl.onProgrammaticUpdate(
+            autoSaveCancelledState.value,
+            AutoSaveControl.Program.DETECTED_LANGUAGE,
+        )
         language = CardLanguageDetector.choose(
             detectEnabled = true,
             detected = detected,
@@ -169,6 +190,10 @@ fun ConfirmScreen(
     LaunchedEffect(selected?.identityKey(), language, condition, foil) {
         val card = selected ?: return@LaunchedEffect
         val priced = viewModel.proposePrice(card, language, condition, foil)
+        autoSaveCancelledState.value = AutoSaveControl.onProgrammaticUpdate(
+            autoSaveCancelledState.value,
+            AutoSaveControl.Program.PRICE,
+        )
         val changed = priced.priceEur != card.priceEur ||
             priced.priceEurFoil != card.priceEurFoil ||
             priced.priceUsd != card.priceUsd ||
@@ -190,20 +215,31 @@ fun ConfirmScreen(
             else -> collections.firstOrNull()?.id
         }
     }
-    LaunchedEffect(autoSaveArmed, selected, collectionId, defaults.autoSaveWaitSeconds) {
-        if (!autoSaveArmed || selected == null || collectionId == null) return@LaunchedEffect
+    LaunchedEffect(autoSaveArmed, selected?.identityKey(), collectionId, defaults.autoSaveWaitSeconds) {
+        if (!autoSaveArmed || selectedState.value == null || collectionIdState.value == null) return@LaunchedEffect
         val wait = defaults.autoSaveWaitSeconds
         if (wait <= 0) return@LaunchedEffect
+        ScanDebug.d("autosave: scheduled")
         for (left in wait downTo 1) {
-            secondsLeft = left
+            if (autoSaveCancelledState.value) return@LaunchedEffect
+            secondsLeftState.intValue = left
             delay(1_000)
         }
-        secondsLeft = 0
-        // Still armed → no user interaction cancelled us (LaunchedEffect would have been cancelled).
-        val card = selected
-        val target = collectionId
+        if (autoSaveCancelledState.value) return@LaunchedEffect
+        secondsLeftState.intValue = 0
+        val card = selectedState.value
+        val target = collectionIdState.value
         if (card != null && target != null && !viewModel.saving.value) {
-            viewModel.save(card, target, quantity, language, condition, foil, onSaved)
+            ScanDebug.d("autosave: saved")
+            viewModel.save(
+                card,
+                target,
+                quantityState.intValue,
+                languageState.value,
+                conditionState.value,
+                foilState.value,
+                onSaved,
+            )
         }
     }
 
@@ -260,10 +296,7 @@ fun ConfirmScreen(
             object : NestedScrollConnection {
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                     if (source == NestedScrollSource.UserInput && (available.x != 0f || available.y != 0f)) {
-                        if (AutoSaveControl.onUserInteraction(autoSaveOfferedState.value, AutoSaveControl.Gesture.SCROLL)) {
-                            autoSaveCancelledState.value = true
-                            secondsLeftState.intValue = 0
-                        }
+                        cancelAutoSaveRef.block(AutoSaveControl.Gesture.SCROLL)
                     }
                     return Offset.Zero
                 }
@@ -277,10 +310,7 @@ fun ConfirmScreen(
                 .pointerInput(autoSaveCancelledState, autoSaveOfferedState, secondsLeftState) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        if (AutoSaveControl.onUserInteraction(autoSaveOfferedState.value, AutoSaveControl.Gesture.TAP)) {
-                            autoSaveCancelledState.value = true
-                            secondsLeftState.intValue = 0
-                        }
+                        cancelAutoSaveRef.block(AutoSaveControl.Gesture.TAP)
                     }
                 },
             contentPadding = PaddingValues(16.dp),

@@ -58,6 +58,35 @@ class AutoSaveControlTest {
     }
 
     @Test
+    fun detectedLanguageDoesNotCancelAutoSave() {
+        var cancelled = false
+        cancelled = AutoSaveControl.onProgrammaticUpdate(cancelled, AutoSaveControl.Program.DETECTED_LANGUAGE)
+        cancelled = AutoSaveControl.onProgrammaticUpdate(cancelled, AutoSaveControl.Program.PRICE)
+        cancelled = AutoSaveControl.onProgrammaticUpdate(cancelled, AutoSaveControl.Program.IMAGE)
+        assertFalse(cancelled)
+        val beforeTick = AutoSaveControl.present(
+            offered = true,
+            cancelled = cancelled,
+            selectedMatchesGate = true,
+            secondsLeft = 0,
+            saving = false,
+        )
+        assertTrue(beforeTick.armed)
+        assertFalse(beforeTick.countdownVisible)
+        assertNull(beforeTick.statusLabel)
+        val ticking = AutoSaveControl.present(
+            offered = true,
+            cancelled = cancelled,
+            selectedMatchesGate = true,
+            secondsLeft = 5,
+            saving = false,
+        )
+        assertTrue(ticking.armed)
+        assertTrue(ticking.countdownVisible)
+        assertEquals("Salva tra 5s…", ticking.saveButtonLabel)
+    }
+
+    @Test
     fun nextScanRearmsAutoSave() {
         assertFalse(AutoSaveControl.rearmedCancelled())
         val ui = AutoSaveControl.present(
