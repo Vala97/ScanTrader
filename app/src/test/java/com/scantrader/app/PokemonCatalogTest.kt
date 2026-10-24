@@ -145,5 +145,13 @@ class PokemonCatalogTest {
         assertTrue(wrongName < 20)
         assertTrue(PokemonCatalog.nameMatches("Kilowattrel di Kissara", "Kilowattrel"))
         assertFalse(PokemonCatalog.nameMatches("Swoobat", "Kilowattrel di Kissara"))
+        assertTrue(PokemonCatalog.nameMatches("Kilowattrel di Kissara", "Kilowattrel Kisara"))
+        assertTrue(PokemonCatalog.nameMatches("Kissara's Kilowattrel", "Kilowattrel di Kissara"))
+        assertTrue(PokemonCatalog.nameQueries("Kilowattrel di Kissara").contains("Kissara's Kilowattrel"))
+        assertEquals(listOf("en", "it"), PokemonCatalog.languages("Kilowattrel di Kissara", "asc"))
+        assertEquals("asc", PokemonSets.canonicalizePrinted("asch"))
+        assertEquals("asc", PokemonSets.canonicalizePrinted("DASC"))
+        assertEquals("asc", PokemonSets.canonicalizePrinted("oasc"))
+        assertEquals("dri", PokemonSets.canonicalizePrinted("dri"))
     }
 }

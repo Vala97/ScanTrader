@@ -739,7 +739,6 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
 
             val idReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(parsed)
-            val catalogIdentity = catalogIdentity(parsed)
             val cooling = autoMode && app.scryfall.coolingDown()
             if (cooling) {
                 catalogDebounce.invalidateLastQuery()
@@ -748,14 +747,26 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val queryCatalog = when {
                 !autoMode -> true
                 cooling -> false
-                else -> catalogDebounce.shouldQuery(catalogIdentity)
+                else -> catalogDebounce.shouldQuery(
+                    com.scantrader.app.data.catalog.CatalogQueryDebounce.Frame(
+                        name = parsed.nameGuess,
+                        collectorNumber = parsed.collectorNumber,
+                        setCode = parsed.setCode,
+                        setCardCount = parsed.setCardCount,
+                        pokemon = isPokemon,
+                    ),
+                )
             }
+            // Majority name/cn/set over the recent frames. One FASE / asch read must not
+            // be what we send to TCGdex, and it must not reset the stability clock.
+            val matched = if (autoMode && !cooling) catalogDebounce.voted(parsed) else parsed
+            val catalogIdentity = catalogIdentity(matched)
             val neuralOn = app.neuralPack.isInstalled(game.value)
             // No catalog yet and no neural pack: wait for a second identical id.
             // With a pack installed, the gallery still runs so a visual hit can autosave.
             if (autoMode && !queryCatalog && !neuralOn) {
                 autoHold = if (cooling) AutoHold.BUSY else AutoHold.UNSTABLE
-                app.scanSession.parsed = parsed
+                app.scanSession.parsed = matched
                 com.scantrader.app.scan.ScanDebug.d(
                     "catalog skipped (OCR not stable yet) id=$catalogIdentity",
                 )
@@ -786,7 +797,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         return@async emptyList()
                     }
                     try {
-                        app.catalog.identify(game.value, parsed)
+                        app.catalog.identify(game.value, matched)
                     } catch (busy: ScryfallBusyException) {
                         throw busy
                     } catch (t: Throwable) {
@@ -811,7 +822,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                 runCatching {
                                     app.galleryMatcher.matchMtg(
                                         cropped,
-                                        parsed,
+                                        matched,
                                         printedLang = printedLang,
                                     )
                                 }
@@ -826,7 +837,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                 com.scantrader.app.scan.ScanDebug.d("gallery skipped (Pokémon pack not installed)")
                                 emptyList()
                             } else {
-                                runCatching { app.galleryMatcher.matchPokemon(cropped, parsed) }
+                                runCatching { app.galleryMatcher.matchPokemon(cropped, matched) }
                                     .onFailure {
                                         com.scantrader.app.scan.ScanDebug.e("gallery.matchPokemon failed", it)
                                     }
@@ -841,7 +852,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 if (!autoMode) throw busy
                 catalogDebounce.invalidateLastQuery()
                 autoHold = AutoHold.BUSY
-                app.scanSession.parsed = parsed
+                app.scanSession.parsed = matched
                 com.scantrader.app.scan.ScanDebug.d("catalog stopped (Scryfall 429)")
                 return@withContext false
             }
@@ -856,9 +867,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             // Gallery hit with a conflicting title: do not wait out the stability loop.
             if (autoMode && catalogHits.isEmpty() && galleryHits.isNotEmpty()) {
                 val preview = com.scantrader.app.vision.MatchFusion
-                    .fuse(galleryHits, parsed)
+                    .fuse(galleryHits, matched)
                     .firstOrNull()
-                val previewGate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(preview, parsed)
+                val previewGate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(preview, matched)
                 if (!previewGate.accepted && previewGate.nameConflict &&
                     catalogDebounce.forceQuery(catalogIdentity)
                 ) {
@@ -866,11 +877,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         "catalog now (nameConflict) id=$catalogIdentity",
                     )
                     catalogHits = try {
-                        app.catalog.identify(game.value, parsed)
+                        app.catalog.identify(game.value, matched)
                     } catch (busy: ScryfallBusyException) {
                         catalogDebounce.invalidateLastQuery()
                         autoHold = AutoHold.BUSY
-                        app.scanSession.parsed = parsed
+                        app.scanSession.parsed = matched
                         com.scantrader.app.scan.ScanDebug.d("catalog stopped (Scryfall 429)")
                         return@withContext false
                     } catch (t: Throwable) {
@@ -893,7 +904,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 catalogHits
             }
             val merged = com.scantrader.app.vision.mergeHybridCandidates(fingerprintRanked, galleryHits)
-            val candidates = com.scantrader.app.vision.MatchFusion.fuse(merged, parsed)
+            val candidates = com.scantrader.app.vision.MatchFusion.fuse(merged, matched)
                 .distinctBy {
                     it.scryfallId
                         ?: it.tcgdexId
@@ -901,7 +912,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 }
                 .take(12)
             val top = candidates.firstOrNull()
-            val gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(top, parsed)
+            val gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(top, matched)
             val autoOk = gate.accepted
             val topKey = top?.let { autoCardKey(it) }
             val blockedSameCard = requireMatch &&
@@ -958,7 +969,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     append(bottomText)
                 }
             }
-            app.scanSession.parsed = parsed
+            app.scanSession.parsed = matched
             app.scanSession.queryFingerprint = fingerprint
             app.scanSession.candidates = candidates
             app.scanSession.autoMatch = gate

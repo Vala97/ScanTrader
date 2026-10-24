@@ -1,72 +1,296 @@
 package com.scantrader.app.data.catalog
 
 /**
- * Autoscan should not hit Scryfall on every frame.
- * A lookup runs after the same normalized id (name + collector + set) has been
- * seen [stableFramesNeeded] times in a row, or once that id has stayed for
- * [requeryAfterMs]. The same id is queried again after [requeryAfterMs] so a
- * missed frame cannot block the catalog forever.
+ * Autoscan should not hit the network on every frame.
+ *
+ * A lookup runs when either:
+ * - the same primary key has been seen [stableFramesNeeded] times
+ *   (Pokémon: collector + printed total; MTG: collector + set), or
+ * - the same card region has been analyzed for [requeryAfterMs]
+ *   or [fallbackFrames] frames without a lookup.
+ *
+ * OCR name/set jitter must not reset that clock. The query uses the majority
+ * name, collector, and set from the recent frames so one bad read cannot win.
+ * The same key is not queried again until [requeryAfterMs] has passed.
  */
 class CatalogQueryDebounce(
     private val stableFramesNeeded: Int = 2,
     private val requeryAfterMs: Long = 2_000L,
+    private val fallbackFrames: Int = 3,
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
-    private var lastSeen: String? = null
+    data class Frame(
+        val name: String? = null,
+        val collectorNumber: String? = null,
+        val setCode: String? = null,
+        val setCardCount: Int? = null,
+        val pokemon: Boolean = false,
+    )
+
+    private val recent = ArrayDeque<Frame>()
+    private var lastFrame: Frame? = null
+    private var regionStartedAtMs: Long = 0L
+    private var regionFrames: Int = 0
+
+    private var lastSeenRaw: String? = null
     private var seenCount: Int = 0
-    private var firstSeenAtMs: Long = 0L
-    private var lastQueried: String? = null
+    private var lastQueriedKey: String? = null
     private var lastQueryAtMs: Long = 0L
 
     fun normalize(identity: String): String =
         identity.trim().lowercase().replace(Regex("""\s+"""), " ")
 
     /**
-     * True when the previous frames already settled on this id.
+     * True when the previous frames already settled on this exact id.
      * Does not count the current frame. Used to skip extra OCR passes.
      */
     fun seenThisBefore(identity: String): Boolean {
         val key = normalize(identity)
-        return key.isNotBlank() && key == lastSeen && seenCount >= 1
+        return key.isNotBlank() && key == lastSeenRaw && seenCount >= 1
     }
 
     fun shouldQuery(identity: String): Boolean {
         val key = normalize(identity)
-        val t = now()
-        if (key == lastSeen) {
-            seenCount++
-        } else {
-            lastSeen = key
-            seenCount = 1
-            firstSeenAtMs = t
+        noteExact(key)
+        val frame = parseIdentity(key)
+        if (!hasSignal(frame)) {
+            clearRegion()
+            return false
         }
-        val stable = seenCount >= stableFramesNeeded
-        val waited = t - firstSeenAtMs >= requeryAfterMs
-        if (!stable && !waited) return false
-        if (key == lastQueried && t - lastQueryAtMs < requeryAfterMs) return false
-        lastQueried = key
-        lastQueryAtMs = t
-        return true
+        return observe(frame, key)
+    }
+
+    fun shouldQuery(frame: Frame): Boolean {
+        val key = exactKey(frame)
+        noteExact(key)
+        if (!hasSignal(frame)) {
+            clearRegion()
+            return false
+        }
+        return observe(frame, key)
     }
 
     /**
      * Lookup now, without waiting for [stableFramesNeeded].
-     * Used when a gallery hit disagrees with the OCR title: the catalog has to
-     * run on that first frame. The same id still waits [requeryAfterMs].
+     * Used when a gallery hit disagrees with the OCR title.
+     * The same id still waits [requeryAfterMs].
      */
     fun forceQuery(identity: String): Boolean {
         val key = normalize(identity)
         if (key.isBlank()) return false
         val t = now()
-        if (key == lastQueried && t - lastQueryAtMs < requeryAfterMs) return false
-        lastQueried = key
+        if (key == lastQueriedKey && t - lastQueryAtMs < requeryAfterMs) return false
+        lastQueriedKey = key
         lastQueryAtMs = t
         return true
     }
 
     /** The last identity failed (429 / cooldown). The next stable frame may query again. */
     fun invalidateLastQuery() {
-        lastQueried = null
+        lastQueriedKey = null
         lastQueryAtMs = 0L
+    }
+
+    /** Majority-vote read of the current card region, including the latest frame. */
+    fun votedFrame(): Frame? {
+        if (recent.isEmpty()) return null
+        return majority(recent)
+    }
+
+    /**
+     * Fill [current] with the majority name / collector / set / count.
+     * A one-frame stage crumb ("FASE") loses to the name cluster seen most often.
+     */
+    fun voted(current: com.scantrader.app.data.model.ParsedCardText): com.scantrader.app.data.model.ParsedCardText {
+        val vote = votedFrame() ?: return current
+        val pokemon = recent.any { it.pokemon }
+        val name = preferredName(current.nameGuess, vote.name)
+        val setRaw = vote.setCode?.takeIf { it.isNotBlank() } ?: current.setCode
+        val set = if (pokemon) {
+            setRaw?.let { PokemonSets.canonicalizePrinted(it) ?: it.trim().lowercase() }
+        } else {
+            setRaw
+        }
+        return current.copy(
+            nameGuess = name,
+            collectorNumber = vote.collectorNumber?.takeIf { it.isNotBlank() } ?: current.collectorNumber,
+            setCode = set,
+            setCardCount = vote.setCardCount ?: current.setCardCount,
+        )
+    }
+
+    private fun observe(frame: Frame, exactKey: String): Boolean {
+        val t = now()
+        val previous = lastFrame
+        val same = previous != null && sameCardRegion(previous, frame)
+        if (!same) {
+            regionStartedAtMs = t
+            regionFrames = 0
+            recent.clear()
+        }
+        regionFrames++
+        recent.addLast(frame)
+        while (recent.size > RECENT_LIMIT) recent.removeFirst()
+        lastFrame = frame
+
+        val primary = primaryKey(frame)
+        val primaryHits = if (primary == null) 0 else recent.count { primaryKey(it) == primary }
+        val ready = seenCount >= stableFramesNeeded ||
+            primaryHits >= stableFramesNeeded ||
+            regionFrames >= fallbackFrames ||
+            t - regionStartedAtMs >= requeryAfterMs
+        if (!ready) return false
+        val vote = majority(recent)
+        val voteKey = primaryKey(vote) ?: exactKey
+        if (voteKey == lastQueriedKey && t - lastQueryAtMs < requeryAfterMs) return false
+        lastQueriedKey = voteKey
+        lastQueryAtMs = t
+        return true
+    }
+
+    private fun clearRegion() {
+        lastFrame = null
+        recent.clear()
+        regionFrames = 0
+    }
+
+    private fun noteExact(key: String) {
+        if (key == lastSeenRaw) {
+            seenCount++
+        } else {
+            lastSeenRaw = key
+            seenCount = 1
+        }
+    }
+
+    private fun exactKey(frame: Frame): String =
+        normalize(
+            listOf(frame.name, frame.collectorNumber, frame.setCode)
+                .joinToString("|") { it.orEmpty() },
+        )
+
+    private fun parseIdentity(key: String): Frame {
+        val parts = key.split("|")
+        val count = parts.getOrNull(3)?.toIntOrNull()
+        return Frame(
+            name = parts.getOrNull(0)?.takeIf { it.isNotBlank() },
+            collectorNumber = parts.getOrNull(1)?.takeIf { it.isNotBlank() },
+            setCode = parts.getOrNull(2)?.takeIf { it.isNotBlank() },
+            setCardCount = count,
+            pokemon = count != null || parts.size >= 4,
+        )
+    }
+
+    private fun hasSignal(frame: Frame): Boolean =
+        !frame.name.isNullOrBlank() ||
+            !frame.collectorNumber.isNullOrBlank() ||
+            !frame.setCode.isNullOrBlank() ||
+            frame.setCardCount != null
+
+    private fun sameCardRegion(previous: Frame, current: Frame): Boolean {
+        val cnPrev = CardIdentity.normCollector(previous.collectorNumber)
+        val cnCur = CardIdentity.normCollector(current.collectorNumber)
+        val countPrev = previous.setCardCount
+        val countCur = current.setCardCount
+        if (cnPrev != null && cnCur != null && cnPrev != cnCur) return false
+        if (countPrev != null && countCur != null && countPrev != countCur) return false
+
+        if (previous.pokemon || current.pokemon) {
+            if (countPrev != null && countPrev == countCur) return true
+            if (cnPrev != null && cnPrev == cnCur) return true
+            return CardIdentity.namesSimilar(previous.name, current.name)
+        }
+
+        val setPrev = plainSet(previous.setCode)
+        val setCur = plainSet(current.setCode)
+        if (cnPrev != null && cnCur != null && setPrev != null && setCur != null) {
+            return cnPrev == cnCur && setPrev == setCur
+        }
+        if (cnPrev != cnCur || setPrev != setCur) return false
+        return CardIdentity.namesSimilar(previous.name, current.name) ||
+            previous.name.isNullOrBlank() ||
+            current.name.isNullOrBlank()
+    }
+
+    private fun primaryKey(frame: Frame): String? {
+        val cn = CardIdentity.normCollector(frame.collectorNumber) ?: return null
+        if (frame.pokemon) {
+            val count = frame.setCardCount ?: return null
+            return "p:$cn/$count"
+        }
+        val set = plainSet(frame.setCode) ?: return null
+        return "m:$cn/$set"
+    }
+
+    private fun plainSet(raw: String?): String? =
+        raw?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+
+    private fun majority(frames: Iterable<Frame>): Frame {
+        val list = frames.toList()
+        val pokemon = list.any { it.pokemon }
+        val cn = mode(list.mapNotNull { CardIdentity.normCollector(it.collectorNumber) })
+        val count = mode(list.mapNotNull { it.setCardCount })
+        val set = mode(list.mapNotNull { frameSet(it) })
+        val name = voteName(list.mapNotNull { it.name?.trim()?.takeIf { n -> n.isNotBlank() } })
+        return Frame(
+            name = name,
+            collectorNumber = cn,
+            setCode = set,
+            setCardCount = count,
+            pokemon = pokemon,
+        )
+    }
+
+    private fun frameSet(frame: Frame): String? {
+        val raw = frame.setCode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+        if (!frame.pokemon) return raw
+        return PokemonSets.canonicalizePrinted(raw) ?: raw
+    }
+
+    private fun voteName(names: List<String>): String? {
+        if (names.isEmpty()) return null
+        val usable = names.filterNot { CardIdentity.isStageNoise(it) }.ifEmpty { names }
+        val clusters = mutableListOf<MutableList<String>>()
+        for (name in usable) {
+            val cluster = clusters.firstOrNull { members ->
+                members.any { CardIdentity.namesSimilar(it, name) }
+            }
+            if (cluster == null) clusters.add(mutableListOf(name)) else cluster.add(name)
+        }
+        val best = clusters.maxBy { it.size }
+        val byNorm = best.groupBy { CardIdentity.normalizeName(it) }
+        val topNorm = byNorm.maxWith(
+            compareBy<Map.Entry<String, List<String>>>({ it.value.size }, { it.key.length }),
+        ).key
+        val winner = byNorm.getValue(topNorm).maxWith(
+            compareBy<String>(
+                { if (it.contains(" di ", ignoreCase = true)) 1 else 0 },
+                { it.length },
+            ),
+        )
+        return CardIdentity.repairOwnerName(winner)
+    }
+
+    private fun preferredName(current: String?, voted: String?): String? {
+        val raw = current?.trim()?.takeIf { it.isNotBlank() }
+        val vote = voted?.trim()?.takeIf { it.isNotBlank() }
+        if (raw == null) return vote
+        if (vote == null) return raw
+        if (CardIdentity.isStageNoise(raw) && !CardIdentity.isStageNoise(vote)) return vote
+        if (!CardIdentity.namesSimilar(raw, vote)) return vote
+        val voteDi = vote.contains(" di ", ignoreCase = true)
+        val rawDi = raw.contains(" di ", ignoreCase = true)
+        if (voteDi && !rawDi) return vote
+        if (rawDi && !voteDi) return raw
+        return if (vote.length >= raw.length) vote else raw
+    }
+
+    private fun <T> mode(values: List<T>): T? {
+        if (values.isEmpty()) return null
+        return values.groupingBy { it }.eachCount().maxBy { it.value }.key
+    }
+
+    private companion object {
+        const val RECENT_LIMIT = 8
     }
 }

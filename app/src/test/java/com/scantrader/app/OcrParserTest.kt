@@ -586,6 +586,46 @@ class OcrParserTest {
     }
 
     @Test
+    fun italianKilowattrelSurvivesStageNoiseAndMangledSet() {
+        val top = """
+            A!
+            FASEJ
+            Kilowattrel ai Kissara
+            Sievolve da Wattrel di Kissara
+        """.trimIndent()
+        val bottom = "O ASCH | 072/217 *"
+        val parsed = OcrParser.parse(
+            rawText = top,
+            game = Game.POKEMON,
+            bottomPriorityText = bottom,
+            namePriorityText = top,
+        )
+        assertEquals("Kilowattrel di Kissara", parsed.nameGuess)
+        assertEquals("72", parsed.collectorNumber)
+        assertEquals("asc", parsed.setCode)
+        assertEquals(217, parsed.setCardCount)
+    }
+
+    @Test
+    fun stageLineIsNotTheTitleAndDascIsAsc() {
+        val top = """
+            FASEl
+            Kilowattrel di Kissara2
+            Sievoheda Wattrel di Kissara
+        """.trimIndent()
+        val bottom = "DASC 072/217"
+        val parsed = OcrParser.parse(top, Game.POKEMON, bottom, top)
+        assertEquals("Kilowattrel di Kissara", parsed.nameGuess)
+        assertEquals("72", parsed.collectorNumber)
+        assertEquals("asc", parsed.setCode)
+        assertEquals(217, parsed.setCardCount)
+        assertTrue(OcrParser.setCodeCandidates("asch").contains("asc"))
+        assertTrue(OcrParser.setCodeCandidates("dasc").contains("asc"))
+        assertTrue(OcrParser.setCodeCandidates("oasc").contains("asc"))
+        assertTrue(OcrParser.setCodeCandidates("asca").contains("asc"))
+    }
+
+    @Test
     fun ignoresPokemonHpOnTheTopRight() {
         val ps = OcrParser.parse("Pikachu PS 120", Game.POKEMON, "025/165")
         assertEquals("Pikachu", ps.nameGuess)

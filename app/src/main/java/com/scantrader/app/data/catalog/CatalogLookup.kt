@@ -139,8 +139,9 @@ class CatalogLookup(
 
     private suspend fun lookupPokemon(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
         val number = OcrParser.collectorCandidates(parsed.collectorNumber).firstOrNull()
-        val noisyName = OcrParser.looksLikeAbilityOrAttackName(name)
-        // When OCR grabbed an ability/attack, ignore name for search — identity is set+number.
+        val noisyName = OcrParser.looksLikeAbilityOrAttackName(name) ||
+            (name != null && com.scantrader.app.data.catalog.CardIdentity.isStageNoise(name))
+        // When OCR grabbed an ability/attack or a stage crumb, ignore name — identity is set+number.
         val searchName = name.takeUnless { noisyName }
         val hasSolidId = !number.isNullOrBlank() &&
             (!parsed.setCode.isNullOrBlank() || parsed.setCardCount != null)

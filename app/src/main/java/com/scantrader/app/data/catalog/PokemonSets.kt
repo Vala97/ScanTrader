@@ -146,6 +146,31 @@ object PokemonSets {
         return byOfficialCount[officialCount].orEmpty()
     }
 
+    /**
+     * Map an OCR set token onto a known printed code.
+     * Trailing/leading junk (`asch`, `dasc`, `oasc`, `asca`) collapses to `asc`.
+     * Already-known printed codes and TCGdex ids are returned unchanged.
+     */
+    fun canonicalizePrinted(raw: String?): String? {
+        val trimmed = raw?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+        if (trimmed in internationalPrinted || toTcgdex.containsKey(trimmed)) return trimmed
+        val compact = trimmed.filter { it.isLetterOrDigit() }
+        if (compact in internationalPrinted || toTcgdex.containsKey(compact)) return compact
+        if (!compact.all { it.isLetter() } || compact.length !in 4..6) return null
+        var best: String? = null
+        var bestExtra = Int.MAX_VALUE
+        for (code in internationalPrinted) {
+            if (!compact.contains(code)) continue
+            val extra = compact.length - code.length
+            if (extra !in 1..2) continue
+            if (extra < bestExtra || (extra == bestExtra && code.length > (best?.length ?: 0))) {
+                best = code
+                bestExtra = extra
+            }
+        }
+        return best
+    }
+
     private fun normalize(value: String?): String? =
         value?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
 }
