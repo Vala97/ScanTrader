@@ -5,6 +5,10 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+## [1.0] - 2026-10-24
+
+Prima versione: scan Magic e Pokémon, collezioni locali, conferma con salvataggio automatico solo sui match forti, prezzi in euro e export CSV per CardTrader.
+
 ### Aggiunto
 - Durante la schermata di scan lo schermo resta acceso (`FLAG_KEEP_SCREEN_ON`), così il telefono non va in blocco da solo. Il flag si toglie uscendo dallo scan.
 - Scelta della **lente** nel pannello Impostazioni scan (e in Impostazioni): Automatica, Principale, Ultra-grandangolo, Teleobiettivo. Si elencano le fotocamere posteriori, comprese le lenti fisiche della multi-camera logica (nome in base alla focale). Se una lente fisica non si può aprire, si usano gli zoom 0,5× / 1× / 2× / 5× dentro l’intervallo dello zoom. Con una sola scelta il selettore resta nascosto. La preferenza è salvata; torcia e auto-scan restano attivi.
@@ -14,6 +18,8 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Selezione della fotocamera posteriore da usare per la scansione (`CameraDevices`).
 - Conversione dei frame CameraX in bitmap dritte con gestione rotazione/EXIF (`CameraBitmaps`), così il ritaglio colpisce titolo e numero di collezione.
 - Auto-Scan con salvataggio automatico in collezione dopo un'attesa configurabile.
+- In **Impostazioni generali**, «Rileva lingua dalla carta» (attivo di default). In conferma la lingua è quella del titolo letto, confrontato con il nome stampato (Scryfall `it`/`de`/`fr`/`es`/`pt`/`ja`/… o il nome TCGdex). Se il confronto non è chiaro, resta l’ultima lingua scelta. Con l’interruttore spento si usa solo l’ultima lingua.
+- Prezzo medio Magic da Scryfall in euro (`prices.eur` / `prices.eur_foil`), senza token. CardTrader è opzionale: solo se in Impostazioni c’è un token API (cifrato nel Keystore del telefono, non nel progetto) si cerca l’espansione, il blueprint con lo stesso `scryfall_id` e la media delle inserzioni (lingua, condizione e foil se ce ne sono, altrimenti tutte). Senza token non parte nessuna richiesta a CardTrader. L’etichetta dice la fonte (`Scryfall`, `Scryfall (circa)`, `CardTrader`, `Cardmarket`).
 - Nuovi test: `CameraBitmapsTest`, `EmbeddingCatalogStcatTest`, `GalleryMergeTest` e casi aggiuntivi per OCR, fusione dei match e catalogo Pokémon.
 
 ### Modificato
@@ -22,10 +28,6 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Interfaccia ridisegnata in stile Material 3 con palette blu, in chiaro e in scuro: sfondi blu navy, primario blu acceso, accenti ciano. Tipografia, angoli, spaziatura, card e controlli sono allineati su tutte le schermate (home, scan e pannello impostazioni, conferma, collezione, informazioni, dialoghi e banner).
 - Scelta del gioco prima dello scan: card grandi con i loghi Pokémon e Magic. Gli stessi loghi, in piccolo, compaiono nel selettore del gioco sulla schermata di scan.
 - Versione dell’app impostata a `versionName` `1.0` (`versionCode` 1). Il salvataggio automatico in conferma parte solo se il match supera la soglia forte (74%); i match deboli restano da confermare a mano.
-
-### Aggiunto
-- In **Impostazioni generali**, «Rileva lingua dalla carta» (attivo di default). In conferma la lingua è quella del titolo letto, confrontato con il nome stampato (Scryfall `it`/`de`/`fr`/`es`/`pt`/`ja`/… o il nome TCGdex). Se il confronto non è chiaro, resta l’ultima lingua scelta. Con l’interruttore spento si usa solo l’ultima lingua.
-- Prezzo medio Magic da Scryfall in euro (`prices.eur` / `prices.eur_foil`), senza token. CardTrader è opzionale: solo se in Impostazioni c’è un token API (cifrato nel Keystore del telefono, non nel progetto) si cerca l’espansione, il blueprint con lo stesso `scryfall_id` e la media delle inserzioni (lingua, condizione e foil se ce ne sono, altrimenti tutte). Senza token non parte nessuna richiesta a CardTrader. L’etichetta dice la fonte (`Scryfall`, `Scryfall (circa)`, `CardTrader`, `Cardmarket`).
 
 ### Corretto
 - Il prezzo Magic non resta più su «n/d» quando la stampa letta (spesso non inglese) non ha `prices.eur`. Si mostra l’euro della stampa esatta; se manca, quello della stampa inglese con lo stesso set e numero di collezione; se manca ancora, il più basso tra le ristampe con un prezzo in euro e, a parità, la più recente. Quei due fallback sono segnati `Scryfall (circa)`. Il prezzo in dollari non viene mostrato.
