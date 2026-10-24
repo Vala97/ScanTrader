@@ -189,6 +189,57 @@ class MatchFusionTest {
     }
 
     @Test
+    fun mtgSoftAcceptsNeuralWhenItalianTitleSharesCollector() {
+        // Device log: OCR "Bolla Protettiva" cn=80, gallery "Protective Bubble" v=0.639 conf=0.629.
+        val parsed = ParsedCardText(
+            nameGuess = "Bolla Protettiva",
+            collectorNumber = "80",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Protective Bubble",
+            setCode = "lrw",
+            setName = "Lorwyn",
+            collectorNumber = "80",
+            ocrScore = 0.61538464f,
+            visualScore = 0.6394928f,
+            matchConfidence = 0.62936735f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertTrue(decision.accepted)
+        assertEquals("cn+neural", decision.reason)
+        assertTrue(decision.cnOk)
+        assertFalse(decision.setOk)
+        assertEquals(
+            "il numero coincide e il riconoscimento visivo conferma la carta",
+            MatchFusion.signalPhrase(decision.reason),
+        )
+    }
+
+    @Test
+    fun mtgSoftRejectsNeuralBelowVisualFloor() {
+        val parsed = ParsedCardText(
+            nameGuess = "Bolla Protettiva",
+            collectorNumber = "80",
+            setCode = null,
+        )
+        val weak = IdentifiedCard(
+            game = Game.MTG,
+            name = "Protective Bubble",
+            setCode = "lrw",
+            setName = "Lorwyn",
+            collectorNumber = "80",
+            ocrScore = 0.615f,
+            visualScore = 0.59f,
+            matchConfidence = 0.62f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(weak, parsed)
+        assertFalse(decision.accepted)
+        assertTrue(decision.nameConflict)
+    }
+
+    @Test
     fun mtgSoftRejectsCnSetWhenNameConflicts() {
         // +1/+1 misread as cn=1 → Emrakul, while OCR title is Divinatrice.
         val parsed = ParsedCardText(

@@ -166,6 +166,7 @@ object MatchFusion {
             "cn+ocr" -> "il numero collezionista coincide, con OCR debole"
             "conf+visual" -> "immagine e confidenza sono solo medie"
             "scryfallName" -> "la ricerca per nome ha trovato la carta e il titolo OCR è in un'altra lingua"
+            "cn+neural" -> "il numero coincide e il riconoscimento visivo conferma la carta"
             "cn+set+visualStrong" -> "set, numero e immagine coincidono"
             "cn+set" -> "set e numero collezionista coincidono"
             "name+cn+set" -> "nome, numero e set coincidono"
@@ -360,13 +361,17 @@ object MatchFusion {
             // Only trust the name-search band so IT title → EN Scryfall name is accepted,
             // while Divinatrice→Emrakul (cn mistook +1/+1) stays rejected.
             val fromNameSearch = ocr >= 0.85f && ocr < 0.95f
+            val neuralAgrees = cnOk && (visual ?: 0f) >= 0.60f && confidence >= 0.58f
             val softReason = when {
                 fromNameSearch && confidence >= 0.58f -> "scryfallName"
+                neuralAgrees -> "cn+neural"
                 cnOk && setOk && ocr >= 0.95f && (visual ?: 0f) >= 0.70f ->
                     "cn+set+visualStrong"
                 else -> "nameConflict name=$nameGuess top=${top.name}"
             }
-            val accepted = softReason == "scryfallName" || softReason == "cn+set+visualStrong"
+            val accepted = softReason == "scryfallName" ||
+                softReason == "cn+neural" ||
+                softReason == "cn+set+visualStrong"
             return AutoMatchDecision(
                 accepted = accepted,
                 reason = softReason,

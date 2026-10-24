@@ -603,11 +603,18 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         )
                     }
                     val identityReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(quick)
+                    val quickId = catalogIdentity(quick)
+                    val nameAndCnStable = autoMode &&
+                        !quick.nameGuess.isNullOrBlank() &&
+                        !quick.collectorNumber.isNullOrBlank() &&
+                        catalogDebounce.seenThisBefore(quickId)
                     if (autoMode && top.isBlank() && bl.isBlank()) {
                         com.scantrader.app.scan.ScanDebug.d("OCR early-abort empty strips")
                         HexOcrBundle(top, bl, "", "", "", "")
-                    } else if (identityReady) {
-                        com.scantrader.app.scan.ScanDebug.d("OCR fast-path identity ready")
+                    } else if (identityReady || nameAndCnStable) {
+                        com.scantrader.app.scan.ScanDebug.d(
+                            if (identityReady) "OCR fast-path identity ready" else "OCR skip extra passes (name+cn stable)",
+                        )
                         HexOcrBundle(top, bl, top, bl, "", "")
                     } else {
                         val fullJob = async {
@@ -716,23 +723,36 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
 
             val idReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(parsed)
-            if (autoMode && app.scryfall.coolingDown()) {
+            val catalogIdentity = catalogIdentity(parsed)
+            val cooling = autoMode && app.scryfall.coolingDown()
+            if (cooling) {
                 catalogDebounce.invalidateLastQuery()
-                autoHold = AutoHold.BUSY
+                com.scantrader.app.scan.ScanDebug.d("Scryfall cooldown")
+            }
+            val queryCatalog = when {
+                !autoMode -> true
+                cooling -> false
+                else -> catalogDebounce.shouldQuery(catalogIdentity)
+            }
+            val neuralOn = app.neuralPack.isInstalled(game.value)
+            // No catalog yet and no neural pack: wait for a second identical id.
+            // With a pack installed, the gallery still runs so a visual hit can autosave.
+            if (autoMode && !queryCatalog && !neuralOn) {
+                autoHold = if (cooling) AutoHold.BUSY else AutoHold.UNSTABLE
                 app.scanSession.parsed = parsed
-                com.scantrader.app.scan.ScanDebug.d("catalog skipped (Scryfall cooldown)")
+                com.scantrader.app.scan.ScanDebug.d(
+                    "catalog skipped (OCR not stable yet) id=$catalogIdentity",
+                )
                 return@withContext false
             }
-            val catalogIdentity = catalogIdentity(parsed)
-            if (autoMode && !catalogDebounce.shouldQuery(catalogIdentity)) {
-                autoHold = AutoHold.UNSTABLE
-                app.scanSession.parsed = parsed
-                com.scantrader.app.scan.ScanDebug.d("catalog skipped (OCR not stable yet) id=$catalogIdentity")
-                return@withContext false
+            if (autoMode && !queryCatalog) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "catalog held id=$catalogIdentity neural=true",
+                )
             }
             // Auto + cn+set: catalog only (skip gallery + fingerprint).
             val skipHeavyVision = autoMode && idReady
-            val fingerprint = if (skipHeavyVision) {
+            val fingerprint = if (skipHeavyVision || !queryCatalog) {
                 com.scantrader.app.scan.ScanDebug.d("fingerprint skipped (auto id-ready)")
                 null
             } else {
@@ -746,6 +766,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val (catalogHits, galleryHits) = try {
                 coroutineScope {
                 val ocrJob = async {
+                    if (!queryCatalog) {
+                        return@async emptyList()
+                    }
                     try {
                         app.catalog.identify(game.value, parsed)
                     } catch (busy: ScryfallBusyException) {
