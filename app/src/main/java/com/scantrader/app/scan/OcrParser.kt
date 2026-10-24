@@ -152,20 +152,14 @@ object OcrParser {
         bottomPriorityText: String? = null,
         namePriorityText: String? = null,
     ): ParsedCardText {
+        if (game == Game.MTG) {
+            return parseMtg(rawText, bottomPriorityText, namePriorityText)
+        }
         // Pokémon: bottom first, full card as weak fallback.
-        // MTG: when a bottom strip was captured, use ONLY that (rules text invents fake cn).
-        // If no bottom strip (unit tests / single blob), fall back to raw.
-        val bottomNormalized = when (game) {
-            Game.MTG -> bottomPriorityText?.let { normalizeMtgBottomOcr(it) }
-            Game.POKEMON -> bottomPriorityText
-        }
-        val identityMerged = when (game) {
-            Game.MTG -> bottomNormalized?.takeIf { it.isNotBlank() }
-                ?: normalizeMtgBottomOcr(rawText)
-            Game.POKEMON -> listOfNotNull(bottomPriorityText, rawText)
-                .filter { it.isNotBlank() }
-                .joinToString("\n")
-        }
+        val bottomNormalized = bottomPriorityText
+        val identityMerged = listOfNotNull(bottomPriorityText, rawText)
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
         return ParsedCardText(
             nameGuess = extractName(
                 primaryText = namePriorityText?.takeIf { it.isNotBlank() } ?: rawText,
@@ -178,6 +172,174 @@ object OcrParser {
             setCode = extractSet(identityMerged, bottomNormalized, game),
             setCardCount = extractPokemonSetCount(identityMerged, bottomPriorityText, game),
         )
+    }
+
+    /**
+     * MTG identity comes from the bottom band only.
+     * Copyright year ranges are removed before any set/number guess, and a scored
+     * hit (modern line or `NN/NNN`) is used as-is — a null set does not fall through.
+     */
+    private fun parseMtg(
+        rawText: String,
+        bottomPriorityText: String?,
+        namePriorityText: String?,
+    ): ParsedCardText {
+        val source = bottomPriorityText?.takeIf { it.isNotBlank() } ?: rawText
+        val prepared = prepareMtgBottom(source)
+        val name = correctMtgName(
+            extractName(
+                primaryText = namePriorityText?.takeIf { it.isNotBlank() } ?: rawText,
+                fallbackText = rawText.takeIf {
+                    !namePriorityText.isNullOrBlank() && namePriorityText != rawText
+                },
+                game = Game.MTG,
+            ),
+            rawText,
+        )
+        val hit = bestMtgBottom(prepared)
+        if (hit != null) {
+            return ParsedCardText(
+                nameGuess = name,
+                collectorNumber = hit.collector,
+                setCode = hit.setCode,
+            )
+        }
+        return ParsedCardText(
+            nameGuess = name,
+            collectorNumber = extractCollector(prepared, prepared, Game.MTG),
+            setCode = extractSet(prepared, prepared, Game.MTG),
+        )
+    }
+
+    /** `1993-2008` / `1993-20O8`, including when OCR glues a digit in front (`01993-20O8`). */
+    private val copyrightYearRange = Regex(
+        """(?:19|20)\d{2}\s*[-–—]\s*[0-9OolI]{4}""",
+    )
+
+    /** Fraction tokens only — digit fixes must not rewrite set words. */
+    private val ocrFractionToken = Regex(
+        """(?<![\d+])([0-9OolINn|]{1,4})\s*/\s*([0-9OolINn|]{2,4})""",
+    )
+
+    fun prepareMtgBottom(text: String): String {
+        val normalized = normalizeMtgBottomOcr(text)
+        val withoutYears = copyrightYearRange.replace(normalized, " ")
+        return ocrFractionToken.replace(withoutYears) { match ->
+            "${fixOcrDigits(match.groupValues[1])}/${fixOcrDigits(match.groupValues[2])}"
+        }
+    }
+
+    /** O/o→0, l/I/|→1, N/n→8. Used inside `NN/NNN` tokens (`N3/150` → `83/150`). */
+    fun fixOcrDigits(token: String): String = buildString(token.length) {
+        token.forEach { ch ->
+            append(
+                when (ch) {
+                    'O', 'o' -> '0'
+                    'l', 'I', '|' -> '1'
+                    'N', 'n' -> '8'
+                    else -> ch
+                },
+            )
+        }
+    }
+
+    private data class MtgBottomHit(
+        val collector: String,
+        val setCode: String?,
+        val score: Int,
+    )
+
+    /**
+     * Every collector pattern in the bottom band, best score wins.
+     * Modern `0181 • DFT • IT` outranks an old `83/150` when both are present.
+     */
+    private fun bestMtgBottom(prepared: String): MtgBottomHit? {
+        if (prepared.isBlank()) return null
+        val hits = mutableListOf<MtgBottomHit>()
+        mtgBottomLine.findAll(prepared).forEach { match ->
+            val cn = normalizeCollector(match.groupValues[1])
+            val setRaw = match.groupValues[2]
+            if (!isPlausibleCollector(cn) || !isPlausibleMtgSet(setRaw)) return@forEach
+            val lang = match.groupValues[3]
+            hits += MtgBottomHit(cn, normalizeSet(setRaw), if (lang.isNotBlank()) 120 else 100)
+        }
+        mtgSpaced.findAll(prepared).forEach { match ->
+            val cn = normalizeCollector(match.groupValues[1])
+            val setRaw = match.groupValues[2]
+            if (!isPlausibleCollector(cn) || !isPlausibleMtgSet(setRaw)) return@forEach
+            hits += MtgBottomHit(cn, normalizeSet(setRaw), 110)
+        }
+        mtgNumberNearSet.findAll(prepared).forEach { match ->
+            val cn = normalizeCollector(match.groupValues[1].ifBlank { match.groupValues[4] })
+            val setRaw = match.groupValues[2].ifBlank { match.groupValues[3] }
+            if (cn.length < 2 || !isPlausibleCollector(cn) || !isPlausibleMtgSet(setRaw)) return@forEach
+            hits += MtgBottomHit(cn, normalizeSet(setRaw), 90)
+        }
+        mtgOldCollectorFraction.findAll(prepared).forEach { match ->
+            val cnRaw = match.groupValues[1]
+            val cn = cnRaw.toIntOrNull() ?: return@forEach
+            val total = match.groupValues[2].toIntOrNull() ?: return@forEach
+            if (total < 40 || cn !in 1 until total || cn >= 1900) return@forEach
+            val bonus = if (total in 50..450) 15 else 0
+            hits += MtgBottomHit(normalizeCollector(cnRaw), null, 80 + bonus)
+        }
+        return hits.maxByOrNull { it.score }
+    }
+
+    /**
+     * Top-line OCR often misses one letter (`Tagliaerhacce`) while the rules text
+     * has the real title. Prefer that window when the edit distance is small.
+     * Distance 0 keeps the top line (fast path, where the full text is the title).
+     */
+    fun correctMtgName(name: String?, fullText: String): String? {
+        val base = cleanMtgNameGuess(name) ?: return null
+        if (fullText.isBlank()) return base
+        val limit = when {
+            base.length >= 16 -> 3
+            base.length >= 8 -> 2
+            else -> 1
+        }
+        val words = base.split(Regex("""\s+""")).filter { it.isNotBlank() }
+        if (words.isEmpty()) return base
+        val tokens = Regex("""[A-Za-zÀ-ÖØ-öø-ÿ']{3,}""")
+            .findAll(fullText)
+            .map { it.value }
+            .toList()
+        if (tokens.size < words.size) return base
+        var best: String? = null
+        var bestDist = limit + 1
+        val baseKey = base.lowercase()
+        for (i in 0..tokens.size - words.size) {
+            val window = tokens.subList(i, i + words.size).joinToString(" ")
+            val dist = editDistance(baseKey, window.lowercase())
+            if (dist !in 1..limit || dist >= bestDist) continue
+            val cleaned = cleanMtgNameGuess(window) ?: continue
+            if (cleaned.lowercase() in skipName) continue
+            best = cleaned
+            bestDist = dist
+        }
+        return best ?: base
+    }
+
+    internal fun editDistance(a: String, b: String): Int {
+        if (a == b) return 0
+        if (kotlin.math.abs(a.length - b.length) > 4) return 5
+        var prev = IntArray(b.length + 1) { it }
+        var curr = IntArray(b.length + 1)
+        for (i in 1..a.length) {
+            curr[0] = i
+            var rowMin = curr[0]
+            for (j in 1..b.length) {
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                curr[j] = minOf(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+                if (curr[j] < rowMin) rowMin = curr[j]
+            }
+            if (rowMin > 4) return rowMin
+            val swap = prev
+            prev = curr
+            curr = swap
+        }
+        return prev[b.length]
     }
 
     /** Fix common MTG bottom OCR: `RO162`→`0162`, `FRAIT`→`FRA IT`, `FRA*EN`→`FRA • EN`. */
@@ -549,7 +711,23 @@ object OcrParser {
         if (!key.any { it.isLetter() }) return false
         // Printed set codes are ALL-CAPS on the card (FRA, DFT) — reject Title/lower crumbs.
         if (trimmed != trimmed.uppercase()) return false
+        // `20O8` is a copyright year, not a set. 2X2 and 10E stay valid (two digits).
+        val digitLike = key.map { ch ->
+            when (ch) {
+                'o' -> '0'
+                'i', 'l' -> '1'
+                else -> ch
+            }
+        }.joinToString("")
+        if (digitLike.count { it.isDigit() } >= 3) return false
         return true
+    }
+
+    /** Collector 1..999. Years (`1993`) are not collector numbers. */
+    private fun isPlausibleCollector(raw: String): Boolean {
+        val digits = raw.trim().trimStart('0').takeWhile { it.isDigit() }
+        val n = digits.toIntOrNull() ?: return false
+        return n in 1..999
     }
 
     private fun isKnownPokemonSet(raw: String): Boolean {

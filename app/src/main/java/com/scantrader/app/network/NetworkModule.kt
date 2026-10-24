@@ -12,7 +12,7 @@ object NetworkModule {
         val userAgent = Interceptor { chain ->
             chain.proceed(
                 chain.request().newBuilder()
-                    .header("User-Agent", "ScanTrader/0.1 (https://github.com/Vala97/ScanTrader)")
+                    .header("User-Agent", "ScanTrader/1.0 (Android; +https://github.com/Vala97/ScanTrader)")
                     .header("Accept", "application/json")
                     .build(),
             )

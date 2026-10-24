@@ -4,8 +4,8 @@ import android.graphics.Bitmap
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
-import com.scantrader.app.network.scryfall.ScryfallApi
 import com.scantrader.app.network.scryfall.ScryfallCard
+import com.scantrader.app.network.scryfall.ScryfallClient
 import com.scantrader.app.network.tcgdex.TcgdexApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
  */
 class GalleryMatcher(
     private val pack: NeuralPackManager,
-    private val scryfall: ScryfallApi,
+    private val scryfall: ScryfallClient,
     private val tcgdex: TcgdexApi,
 ) {
     suspend fun matchMtg(

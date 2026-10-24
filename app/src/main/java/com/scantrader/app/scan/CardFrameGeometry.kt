@@ -68,6 +68,16 @@ object CardFrameGeometry {
     }
 
     /**
+     * Full-width bottom band (~15%). Older frames print `83/150` in the center
+     * or beside the copyright line; modern frames use the left corner.
+     */
+    fun bottomBandStrip(cardCrop: android.graphics.Bitmap): android.graphics.Bitmap {
+        val stripH = (cardCrop.height * 0.15f).toInt().coerceAtLeast(1).coerceAtMost(cardCrop.height)
+        val y = (cardCrop.height - stripH).coerceAtLeast(0)
+        return android.graphics.Bitmap.createBitmap(cardCrop, 0, y, cardCrop.width, stripH)
+    }
+
+    /**
      * Thin bottom edge (~12%) where WOTC prints `32/102 ★` inside the yellow border.
      * Avoids OCR latching onto flavor text higher up.
      */

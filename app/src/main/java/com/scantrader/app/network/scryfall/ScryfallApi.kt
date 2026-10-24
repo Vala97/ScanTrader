@@ -22,6 +22,12 @@ interface ScryfallApi {
         @Query("q") query: String,
         @Query("unique") unique: String = "prints",
     ): ScryfallSearchResponse
+
+    /** One closest English (or printed) card. 404 when nothing is close. */
+    @GET("cards/named")
+    suspend fun namedFuzzy(
+        @Query("fuzzy") fuzzy: String,
+    ): ScryfallCard
 }
 
 data class ScryfallSearchResponse(

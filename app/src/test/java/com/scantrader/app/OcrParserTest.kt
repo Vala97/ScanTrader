@@ -4,6 +4,7 @@ import com.scantrader.app.data.model.Game
 import com.scantrader.app.scan.OcrParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -472,6 +473,57 @@ class OcrParserTest {
         assertEquals("Trasformazione Raccapricciante", parsed.nameGuess)
         assertEquals("74", parsed.collectorNumber)
         assertTrue(parsed.setCode == null || parsed.setCode != "165")
+    }
+
+    @Test
+    fun oldFrameCopyrightIsNotASetAndMisreadCollectorIsFixed() {
+        // Device OCR: copyright year glued to a digit, N read instead of 8, real cn is 83/150.
+        val full = """
+            Pioppo Tagliaerhacce
+            Creatura — Albero
+            diversa dal Pioppo Tagliaerbacce prende
+        """.trimIndent()
+        val bottom = "14&01993-20O8 Wizards of the Cast, Inc N3/150"
+        val parsed = OcrParser.parse(
+            rawText = full,
+            game = Game.MTG,
+            bottomPriorityText = bottom,
+            namePriorityText = "Pioppo Tagliaerhacce",
+        )
+        assertEquals("Pioppo Tagliaerbacce", parsed.nameGuess)
+        assertEquals("83", parsed.collectorNumber)
+        assertNull(parsed.setCode)
+        assertTrue(!OcrParser.identityReadyForFastPath(parsed))
+    }
+
+    @Test
+    fun oldFrameCenterFractionIgnoresCopyrightYear() {
+        val bottom = "© 1993-2008 Wizards of the Coast 83/150"
+        val parsed = OcrParser.parse("Llanowar Elves", Game.MTG, bottom)
+        assertEquals("Llanowar Elves", parsed.nameGuess)
+        assertEquals("83", parsed.collectorNumber)
+        assertNull(parsed.setCode)
+    }
+
+    @Test
+    fun modernBottomLineOutranksOldFractionInTheSameBand() {
+        val bottom = """
+            83/150
+            0181 • DFT • IT
+        """.trimIndent()
+        val parsed = OcrParser.parse("Entrata Scortese", Game.MTG, bottom)
+        assertEquals("181", parsed.collectorNumber)
+        assertEquals("dft", parsed.setCode)
+    }
+
+    @Test
+    fun setCodesWithTwoDigitsStayValid() {
+        val parsed = OcrParser.parse("Some Name", Game.MTG, "10 • 10E • EN")
+        assertEquals("10", parsed.collectorNumber)
+        assertEquals("10e", parsed.setCode)
+        val double = OcrParser.parse("Some Name", Game.MTG, "2 • 2X2 • EN")
+        assertEquals("2", double.collectorNumber)
+        assertEquals("2x2", double.setCode)
     }
 
     @Test

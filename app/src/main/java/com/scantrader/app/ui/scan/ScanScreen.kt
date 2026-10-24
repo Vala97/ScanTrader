@@ -112,6 +112,7 @@ import com.scantrader.app.scan.CardFrameGeometry
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
 import com.scantrader.app.ui.ScanViewModel
+import com.scantrader.app.vision.NeuralPackState
 import com.scantrader.app.ui.components.GameLogo
 import com.scantrader.app.ui.components.SimpleDropdown
 import com.scantrader.app.ui.displayLabel
@@ -145,6 +146,7 @@ fun ScanScreen(
     val session by viewModel.sessionMode.collectAsStateWithLifecycle()
     val autoScan by viewModel.autoScan.collectAsStateWithLifecycle()
     val autoStatus by viewModel.autoStatus.collectAsStateWithLifecycle()
+    val mtgPack by viewModel.mtgPackState.collectAsStateWithLifecycle()
     val torchOn by viewModel.torchOn.collectAsStateWithLifecycle()
     val lightIntensity by viewModel.lightIntensity.collectAsStateWithLifecycle()
     val cameraId by viewModel.cameraId.collectAsStateWithLifecycle()
@@ -315,7 +317,11 @@ fun ScanScreen(
     }
 
     DisposableEffect(Unit) {
-        onDispose { activity?.setScanBrightness(null) }
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            activity?.setScanBrightness(null)
+        }
     }
 
     // Activity is already RESUMED when confirm pops, so ON_RESUME does not fire.
@@ -420,7 +426,7 @@ fun ScanScreen(
                             Game.POKEMON ->
                                 "Inquadra tutta la carta · n° in basso a SX (moderni) o a DX (Base/Rocket/EX–XY)"
                             else ->
-                                "Inquadra tutta la carta · basso a sinistra = set"
+                                "Inquadra tutta la carta · numero in basso"
                         },
                         color = FrameAccent.copy(alpha = 0.7f),
                         fontSize = 11.sp,
@@ -445,6 +451,14 @@ fun ScanScreen(
                 onSelect = viewModel::setGame,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             )
+            if (game == Game.MTG && mtgPack is NeuralPackState.NotInstalled) {
+                Text(
+                    "Pack Magic non installato · riconoscimento solo con OCR",
+                    color = FrameAccent.copy(alpha = 0.75f),
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
         }
 
         if (processing) {

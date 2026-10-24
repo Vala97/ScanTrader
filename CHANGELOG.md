@@ -6,6 +6,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 ## [Non rilasciato]
 
 ### Aggiunto
+- Durante la schermata di scan lo schermo resta acceso (`FLAG_KEEP_SCREEN_ON`), così il telefono non va in blocco da solo. Il flag si toglie uscendo dallo scan.
 - Scelta della **lente** nel pannello Impostazioni scan (e in Impostazioni): Automatica, Principale, Ultra-grandangolo, Teleobiettivo. Si elencano le fotocamere posteriori, comprese le lenti fisiche della multi-camera logica (nome in base alla focale). Se una lente fisica non si può aprire, si usano gli zoom 0,5× / 1× / 2× / 5× dentro l’intervallo dello zoom. Con una sola scelta il selettore resta nascosto. La preferenza è salvata; torcia e auto-scan restano attivi.
 - Schermata **Informazioni**: versione visibile letta da `BuildConfig` (`Versione V1.0 (build 1)`). Le build debug aggiungono il suffisso `· debug`.
 - Riconoscimento neurale **Pokémon**: import di un pack `.stcat` (gallery Milo su catalogo TCGdex EN) da **Impostazioni → Riconoscimento Pokémon → Importa .stcat**.
@@ -23,6 +24,9 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Versione dell’app impostata a `versionName` `1.0` (`versionCode` 1). Il salvataggio automatico in conferma parte solo se il match supera la soglia forte (74%); i match deboli restano da confermare a mano.
 
 ### Corretto
+- Scan Magic che non trovava la carta (es. «Pioppo Tagliaerbacce», 83/150) con Scryfall in 429. Le chiamate sono in coda, distanziate (~10 al secondo), con cache anche dei «non trovato» e pausa dopo un HTTP 429 (`Retry-After`). In auto-scan, durante la pausa, compare «Scryfall occupato, riprovo…» e non partono nuove query. Lo stesso testo OCR non viene chiesto di nuovo a ogni frame.
+- Il numero e il set si leggono su tutta la fascia bassa della carta (sinistra, centro e destra, circa il 15% in basso), non solo in basso a sinistra. Un intervallo di copyright (`1993-2008`, anche `01993-20O8`) e la riga Wizards non diventano più set o numero. `N3/150` torna `83/150`. Se il titolo in alto è quasi uguale a una frase del testo completo, si usa quella.
+- Se il pack Magic non è installato, lo scan lo segnala: il riconoscimento resta sull’OCR.
 - Dopo il salvataggio, tornando allo scan, lente e zoom restano quelli di prima (anche il pinch e il preset della lente). Il rapporto 1× che la fotocamera riporta al bind non sostituisce l’inquadratura.
 - Aprendo **Impostazioni scan** l’anteprima non si blocca più e il riquadro della carta resta della stessa misura. Il pannello è un overlay: non ridimensiona la preview e non rifà il bind della fotocamera.
 - Dopo il salvataggio, automatico o manuale, si torna subito allo scan dello stesso gioco, con la fotocamera pronta e l’auto-scan riarmato. Non si ripresenta la scelta Pokémon / Magic.

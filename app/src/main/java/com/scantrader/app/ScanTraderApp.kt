@@ -9,6 +9,7 @@ import com.scantrader.app.data.prefs.UserPreferences
 import com.scantrader.app.data.repo.CardRepository
 import com.scantrader.app.network.NetworkModule
 import com.scantrader.app.network.scryfall.ScryfallApi
+import com.scantrader.app.network.scryfall.ScryfallClient
 import com.scantrader.app.network.tcgdex.TcgdexApi
 import com.scantrader.app.scan.CardOcr
 import com.scantrader.app.scan.ScanSession
@@ -37,7 +38,7 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         private set
     lateinit var galleryMatcher: GalleryMatcher
         private set
-    lateinit var scryfall: ScryfallApi
+    lateinit var scryfall: ScryfallClient
         private set
     val scanSession = ScanSession()
 
@@ -48,8 +49,10 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         super.onCreate()
         database = AppDatabase.create(this)
         repository = CardRepository(database)
-        scryfall = NetworkModule.retrofit("https://api.scryfall.com/", http)
-            .create(ScryfallApi::class.java)
+        scryfall = ScryfallClient(
+            NetworkModule.retrofit("https://api.scryfall.com/", http)
+                .create(ScryfallApi::class.java),
+        )
         val tcgdex = NetworkModule.retrofit("https://api.tcgdex.net/", http)
             .create(TcgdexApi::class.java)
         catalog = CatalogLookup(scryfall, tcgdex)

@@ -10,8 +10,11 @@ import com.scantrader.app.data.db.CollectionWithCount
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
+import com.scantrader.app.data.catalog.CatalogQueryDebounce
 import com.scantrader.app.data.model.IdentifiedCard
+import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.data.prefs.ScanDefaults
+import com.scantrader.app.network.scryfall.ScryfallBusyException
 import com.scantrader.app.scan.BackCamera
 import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.LensCatalog
@@ -152,6 +155,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     val sessionMode = MutableStateFlow(app.scanSession.sessionMode)
     val autoScan = MutableStateFlow(app.scanSession.autoScan)
     val autoStatus = MutableStateFlow<String?>(null)
+    val mtgPackState = app.neuralPack.mtgState
     val torchOn = MutableStateFlow(app.scanSession.torchOn)
     val lightIntensity = MutableStateFlow(app.scanSession.lightIntensity)
     val zoomRatio = MutableStateFlow(app.scanSession.zoomRatio)
@@ -174,6 +178,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     private val autoBusy = AtomicBoolean(false)
     private val autoHitPending = AtomicBoolean(false)
+    private val catalogDebounce = CatalogQueryDebounce()
+    private var autoHold = AutoHold.NONE
 
     private var zoomPersistJob: kotlinx.coroutines.Job? = null
     private var zoomLockJob: kotlinx.coroutines.Job? = null
@@ -478,15 +484,24 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             processing.value = true
             autoStatus.value = "Analisi in corso…"
             try {
+                autoHold = AutoHold.NONE
                 val matched = analyze(bitmap, requireMatch = true)
                 if (matched) {
                     autoHitPending.set(true)
                     autoStatus.value = "Carta trovata"
                     onHit()
-                } else if (lastAcceptedCardKey != null) {
-                    autoStatus.value = "Metti un’altra carta…"
-                } else {
-                    autoStatus.value = "Inquadra meglio…"
+                } else when (autoHold) {
+                    AutoHold.BUSY -> autoStatus.value = "Scryfall occupato, riprovo…"
+                    AutoHold.UNSTABLE -> autoStatus.value = if (lastAcceptedCardKey != null) {
+                        "Metti un’altra carta…"
+                    } else {
+                        "Inquadra la carta…"
+                    }
+                    AutoHold.NONE -> autoStatus.value = if (lastAcceptedCardKey != null) {
+                        "Metti un’altra carta…"
+                    } else {
+                        "Inquadra meglio…"
+                    }
                 }
             } catch (_: Throwable) {
                 autoStatus.value = if (lastAcceptedCardKey != null) {
@@ -548,10 +563,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     }
                     val blJob = async {
                         runCatching {
-                            app.ocr.recognize(
-                                com.scantrader.app.scan.CardFrameGeometry.bottomLeftStrip(cropped, mtg = isMtg),
-                                enhance = enhanceFirst,
-                            )
+                            val strip = if (isMtg) {
+                                com.scantrader.app.scan.CardFrameGeometry.bottomBandStrip(cropped)
+                            } else {
+                                com.scantrader.app.scan.CardFrameGeometry.bottomLeftStrip(cropped)
+                            }
+                            app.ocr.recognize(strip, enhance = enhanceFirst)
                         }.getOrDefault("")
                     }
                     var top = topJob.await()
@@ -562,15 +579,21 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         bottomPriorityText = bl,
                         namePriorityText = top.takeIf { it.isNotBlank() },
                     )
-                    // Auto: if cn/set missing, enhance only the bottom-left strip once.
-                    if (autoMode &&
-                        (quick.collectorNumber.isNullOrBlank() || quick.setCode.isNullOrBlank())
-                    ) {
+                    // Auto: one enhanced pass when the collector is still missing.
+                    // Old MTG frames have a number and no set code — don't re-OCR those.
+                    val needsEnhance = if (isMtg) {
+                        quick.collectorNumber.isNullOrBlank()
+                    } else {
+                        quick.collectorNumber.isNullOrBlank() || quick.setCode.isNullOrBlank()
+                    }
+                    if (autoMode && needsEnhance) {
                         bl = runCatching {
-                            app.ocr.recognize(
-                                com.scantrader.app.scan.CardFrameGeometry.bottomLeftStrip(cropped, mtg = isMtg),
-                                enhance = true,
-                            )
+                            val strip = if (isMtg) {
+                                com.scantrader.app.scan.CardFrameGeometry.bottomBandStrip(cropped)
+                            } else {
+                                com.scantrader.app.scan.CardFrameGeometry.bottomLeftStrip(cropped)
+                            }
+                            app.ocr.recognize(strip, enhance = true)
                         }.getOrDefault(bl)
                         quick = com.scantrader.app.scan.OcrParser.parse(
                             rawText = top,
@@ -693,6 +716,20 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
 
             val idReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(parsed)
+            if (autoMode && app.scryfall.coolingDown()) {
+                catalogDebounce.invalidateLastQuery()
+                autoHold = AutoHold.BUSY
+                app.scanSession.parsed = parsed
+                com.scantrader.app.scan.ScanDebug.d("catalog skipped (Scryfall cooldown)")
+                return@withContext false
+            }
+            val catalogIdentity = catalogIdentity(parsed)
+            if (autoMode && !catalogDebounce.shouldQuery(catalogIdentity)) {
+                autoHold = AutoHold.UNSTABLE
+                app.scanSession.parsed = parsed
+                com.scantrader.app.scan.ScanDebug.d("catalog skipped (OCR not stable yet) id=$catalogIdentity")
+                return@withContext false
+            }
             // Auto + cn+set: catalog only (skip gallery + fingerprint).
             val skipHeavyVision = autoMode && idReady
             val fingerprint = if (skipHeavyVision) {
@@ -706,11 +743,17 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
 
             val tCat0 = System.currentTimeMillis()
-            val (catalogHits, galleryHits) = coroutineScope {
+            val (catalogHits, galleryHits) = try {
+                coroutineScope {
                 val ocrJob = async {
-                    runCatching { app.catalog.identify(game.value, parsed) }
-                        .onFailure { com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", it) }
-                        .getOrDefault(emptyList())
+                    try {
+                        app.catalog.identify(game.value, parsed)
+                    } catch (busy: ScryfallBusyException) {
+                        throw busy
+                    } catch (t: Throwable) {
+                        com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", t)
+                        emptyList()
+                    }
                 }
                 val galleryJob = async {
                     if (skipHeavyVision) {
@@ -745,6 +788,14 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     }
                 }
                 ocrJob.await() to galleryJob.await()
+                }
+            } catch (busy: ScryfallBusyException) {
+                if (!autoMode) throw busy
+                catalogDebounce.invalidateLastQuery()
+                autoHold = AutoHold.BUSY
+                app.scanSession.parsed = parsed
+                com.scantrader.app.scan.ScanDebug.d("catalog stopped (Scryfall 429)")
+                return@withContext false
             }
             val catalogMs = System.currentTimeMillis() - tCat0
             com.scantrader.app.scan.ScanDebug.d(
@@ -835,6 +886,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             if (requireMatch) acceptAuto else true
         }
     }
+
+    private fun catalogIdentity(parsed: ParsedCardText): String =
+        listOf(parsed.nameGuess, parsed.collectorNumber, parsed.setCode)
+            .joinToString("|") { it.orEmpty().trim().lowercase() }
+
+    private enum class AutoHold { NONE, BUSY, UNSTABLE }
 
     private fun clearSameCardLock() {
         lastAcceptedCardKey = null
