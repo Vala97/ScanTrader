@@ -229,6 +229,8 @@ class ScryfallEurTest {
 
         override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = error("unused")
 
+        override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = error("unused")
+
         private fun notFound(): HttpException {
             val body = "no".toResponseBody("text/plain".toMediaType())
             return HttpException(Response.error<String>(404, body))

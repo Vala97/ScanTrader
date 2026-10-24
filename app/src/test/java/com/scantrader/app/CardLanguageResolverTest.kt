@@ -90,6 +90,7 @@ class CardLanguageResolverTest {
             override suspend fun cardById(id: String): ScryfallCard = error("unused")
             override suspend fun search(query: String, unique: String): ScryfallSearchResponse = error("unused")
             override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = error("unused")
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = error("unused")
         })
         return CardLanguageResolver(scryfall, tcgdex)
     }

@@ -69,6 +69,8 @@ class CatalogLookupTest {
                 fuzzyCalls++
                 throw notFound()
             }
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = throw notFound()
         }
         val lookup = CatalogLookup(
             ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L })),
@@ -269,6 +271,8 @@ class CatalogLookupTest {
             }
 
             override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = throw notFound()
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = throw notFound()
         }
         val lookup = CatalogLookup(
             ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L })),
@@ -303,6 +307,101 @@ class CatalogLookupTest {
         assertEquals("80", missingNumber.first().collectorNumber)
     }
 
+    @Test
+    fun goblinTownUsesHob65AndDoesNotSearchNchar() = runBlocking {
+        val idCalls = mutableListOf<String>()
+        val fuzzyCalls = mutableListOf<String>()
+        val fuzzySetCalls = mutableListOf<String>()
+        val queries = mutableListOf<String>()
+        val goblinTown = ScryfallCard(
+            id = "goblin-town",
+            name = "Down, Down to Goblin-town",
+            set = "hob",
+            setName = "The Hobbit",
+            collectorNumber = "65",
+        )
+        val api = object : ScryfallApi {
+            override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard {
+                idCalls += "$set/$number"
+                if (set == "hob" && number == "65") return goblinTown
+                throw notFound()
+            }
+
+            override suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard =
+                error("unused")
+
+            override suspend fun cardById(id: String): ScryfallCard = error("unused")
+
+            override suspend fun search(query: String, unique: String): ScryfallSearchResponse {
+                queries += query
+                if (query.contains("set:hob") && query.contains("name:/gobli/")) {
+                    return ScryfallSearchResponse(listOf(goblinTown))
+                }
+                throw notFound()
+            }
+
+            override suspend fun namedFuzzy(fuzzy: String): ScryfallCard {
+                fuzzyCalls += fuzzy
+                throw notFound()
+            }
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard {
+                fuzzySetCalls += "$set:$fuzzy"
+                if (set == "hob" && (fuzzy == "Goblir" || fuzzy == "Goblin-town")) return goblinTown
+                throw notFound()
+            }
+        }
+        val lookup = CatalogLookup(
+            ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L })),
+            emptyTcgdex(),
+        )
+        val top = """
+            HOB*EN
+            O65
+            nchar
+            1 life.
+            Target
+            token
+            Goblir
+        """.trimIndent()
+        val parsed = com.scantrader.app.scan.OcrParser.parse(
+            rawText = """
+                HOB*EN
+                TH &O2026 Wizards of the
+                O65
+                nchantment - Saga
+                Goblin Army creature
+                Goblir
+            """.trimIndent(),
+            game = Game.MTG,
+            bottomPriorityText = "zards of the",
+            namePriorityText = top,
+        )
+        val hits = lookup.identify(Game.MTG, parsed)
+        assertEquals("Down, Down to Goblin-town", hits.first().name)
+        assertEquals("hob", hits.first().setCode)
+        assertEquals("65", hits.first().collectorNumber)
+        assertTrue(idCalls.contains("hob/65"))
+        assertTrue(fuzzyCalls.none { it.equals("nchar", ignoreCase = true) })
+
+        val partial = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Goblin-town", collectorNumber = null, setCode = "hob"),
+        )
+        assertEquals("Down, Down to Goblin-town", partial.first().name)
+        assertEquals("hob", partial.first().setCode)
+        assertTrue(fuzzySetCalls.any { it == "hob:Goblin-town" })
+
+        fuzzyCalls.clear()
+        val fragment = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "nchar", collectorNumber = "65", setCode = "hob"),
+        )
+        assertTrue(fragment.isEmpty())
+        assertTrue(fuzzyCalls.none { it.equals("nchar", ignoreCase = true) })
+        assertTrue(fuzzySetCalls.none { it.contains("nchar") })
+    }
+
     private fun emptyTcgdex(): TcgdexApi = object : TcgdexApi {
         override suspend fun search(lang: String, name: String?, localId: String?): List<TcgdexCardBrief> =
             emptyList()
@@ -317,6 +416,8 @@ class CatalogLookupTest {
         override suspend fun cardById(id: String): ScryfallCard = error("unused")
         override suspend fun search(query: String, unique: String): ScryfallSearchResponse = error("unused")
         override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = error("unused")
+
+        override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = error("unused")
     }
 
     private fun notFound(): HttpException {

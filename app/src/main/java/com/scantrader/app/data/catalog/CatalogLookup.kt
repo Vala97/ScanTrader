@@ -9,6 +9,7 @@ import com.scantrader.app.network.scryfall.ScryfallClient
 import com.scantrader.app.network.tcgdex.TcgdexApi
 import com.scantrader.app.network.tcgdex.TcgdexCard
 import com.scantrader.app.network.tcgdex.TcgdexCardBrief
+import com.scantrader.app.scan.CardOrientation
 import com.scantrader.app.scan.FrameNameGate
 import com.scantrader.app.scan.OcrParser
 import java.util.Locale
@@ -81,6 +82,16 @@ class CatalogLookup(
             val byNumber = searchOnce("cn:$number (lang:it name:\"$safeName\" OR name:\"$safeName\")")
             if (byNumber.isNotEmpty()) return byNumber
         }
+        if (sets.isNotEmpty()) {
+            for (set in sets) {
+                val inSet = runCatching { scryfall.namedFuzzy(safeName, set) }.orRethrowBusy()
+                if (inSet != null && mtgIdAgrees(inSet, safeName)) {
+                    return listOf(inSet.toIdentified(ocrScore = 0.84f))
+                }
+            }
+            val stemmed = searchMtgStem(safeName, sets, number)
+            if (stemmed.isNotEmpty()) return stemmed
+        }
         val fuzzy = runCatching { scryfall.namedFuzzy(safeName) }.orRethrowBusy()
         if (fuzzy != null && sets.isNotEmpty() && mtgIdAgrees(fuzzy, safeName)) {
             val printing = searchMtgInSets(fuzzy.name, sets, number)
@@ -118,6 +129,25 @@ class CatalogLookup(
         return emptyList()
     }
 
+    /**
+     * `Goblir` does not exact-match "Down, Down to Goblin-town".
+     * A 5-letter stem (`gobli`) inside the set does, then the collector picks the print.
+     */
+    private suspend fun searchMtgStem(
+        safeName: String,
+        sets: List<String>,
+        number: String?,
+    ): List<IdentifiedCard> {
+        val stem = safeName.lowercase().filter { it.isLetter() }.take(5)
+        if (stem.length < 4) return emptyList()
+        for (set in sets) {
+            val agreed = searchCards("set:$set name:/$stem/").filter { mtgIdAgrees(it, safeName) }
+            val picked = pickMtgPrinting(agreed, set, number) ?: continue
+            return listOf(picked.toIdentified(ocrScore = 0.8f))
+        }
+        return emptyList()
+    }
+
     private fun pickMtgPrinting(cards: List<ScryfallCard>, set: String, number: String?): ScryfallCard? {
         val inSet = cards.filter { it.set.equals(set, ignoreCase = true) }.ifEmpty { cards }
         if (!number.isNullOrBlank()) {
@@ -136,6 +166,8 @@ class CatalogLookup(
 
     private fun mtgIdAgrees(card: ScryfallCard, ocrName: String?): Boolean {
         val title = OcrParser.cleanMtgNameGuess(ocrName) ?: return true
+        // `nchar` is not evidence for or against the printing. A real title is.
+        if (CardOrientation.implausibleTitle(title)) return false
         if (FrameNameGate.confidentTitle(title) == null) return true
         return FrameNameGate.agreesName(Game.MTG, card.name, card.printedName, title)
     }

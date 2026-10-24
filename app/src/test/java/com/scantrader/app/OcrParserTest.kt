@@ -3,6 +3,7 @@ package com.scantrader.app
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.scan.OcrParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -774,5 +775,76 @@ class OcrParserTest {
         )
         assertEquals("hob", year.setCode)
         assertNull(year.collectorNumber)
+    }
+
+    @Test
+    fun goblinTownLogDoesNotParseNcharAndReadsO65() {
+        val top = """
+            3*EN
+            O65
+            nchar
+            1 life.
+            1 life
+            Target
+            token
+            Goblir
+        """.trimIndent()
+        val full = """
+            3*EN ROVINA CAL
+            TH &O2026 Wizards of the
+            O65
+            nchantment - Saga
+            1 life
+            Target opponent loses
+            Goblin Army creature
+            Goblir
+        """.trimIndent()
+        val parsed = OcrParser.parse(
+            rawText = full,
+            game = Game.MTG,
+            bottomPriorityText = "zards of the\n26 Wizards of the",
+            namePriorityText = top,
+        )
+        assertTrue(
+            "name was ${parsed.nameGuess}",
+            parsed.nameGuess == "Goblir" || parsed.nameGuess == "Goblin",
+        )
+        assertEquals("65", parsed.collectorNumber)
+        assertFalse(OcrParser.mtgNameAttempts("nchar").contains("nchar"))
+        assertTrue(com.scantrader.app.scan.CardOrientation.implausibleTitle("nchar"))
+        assertTrue(com.scantrader.app.scan.CardOrientation.implausibleTitle("Target"))
+        assertTrue(com.scantrader.app.scan.CardOrientation.implausibleTitle("1 life."))
+        assertFalse(com.scantrader.app.scan.CardOrientation.implausibleTitle("Goblir"))
+        assertFalse(com.scantrader.app.scan.CardOrientation.implausibleTitle("Ravening Warg"))
+        assertFalse(
+            com.scantrader.app.scan.CardOrientation.implausibleTitle("Down, Down to Goblin-town"),
+        )
+        assertTrue(com.scantrader.app.scan.CardOrientation.regionMappingOff(top, "nchar"))
+        assertTrue(com.scantrader.app.scan.CardOrientation.regionMappingOff(top, "Goblir"))
+        assertFalse(
+            com.scantrader.app.scan.CardOrientation.regionMappingOff("Ravening Warg", "Ravening Warg"),
+        )
+
+        val withSet = OcrParser.parse(
+            rawText = full.replace("3*EN", "HOB*EN"),
+            game = Game.MTG,
+            bottomPriorityText = "zards of the",
+            namePriorityText = top.replace("3*EN", "HOB*EN"),
+        )
+        assertTrue(
+            "name was ${withSet.nameGuess}",
+            withSet.nameGuess == "Goblir" || withSet.nameGuess == "Goblin",
+        )
+        assertEquals("65", withSet.collectorNumber)
+        assertEquals("hob", withSet.setCode)
+
+        val simple = OcrParser.parse(
+            rawText = "HOB*EN\nO65\nGoblir",
+            game = Game.MTG,
+            bottomPriorityText = "zards of the",
+            namePriorityText = "HOB*EN\nO65\nGoblir",
+        )
+        assertEquals("hob", simple.setCode)
+        assertEquals("65", simple.collectorNumber)
     }
 }

@@ -322,9 +322,11 @@ fun ScanScreen(
         viewModel.armZoomRestore()
         controller.cameraSelector = CameraDevices.selectorFor(cameraId)
         controller.bindToLifecycle(lifecycleOwner)
+        com.scantrader.app.scan.PortraitTargetRotation.lock(controller)
         cameraBound = true
         boundCameraId = cameraId
         controller.initializationFuture.addListener({
+            com.scantrader.app.scan.PortraitTargetRotation.lock(controller)
             // Control is up. Apply only if zoomState was already observed;
             // otherwise the zoom observer applies on the first real sample.
             val state = controller.cameraInfo?.zoomState?.value
@@ -1139,7 +1141,7 @@ private fun attachAutoAnalyzer(
             if (!viewModel.canAcceptAutoFrame()) return@setImageAnalysisAnalyzer
             val upright = com.scantrader.app.scan.CameraBitmaps.fromImageProxy(proxy)
             ScanDebug.d(
-                "autoFrame rot=${upright.rotationDegrees} " +
+                "autoFrame rot=${upright.reportedRotation} applied=${upright.rotationDegrees} " +
                     "src=${upright.sourceSize.width}x${upright.sourceSize.height} " +
                     "bmp=${upright.bitmap.width}x${upright.bitmap.height} " +
                     "cropApplied=${upright.cropApplied}",

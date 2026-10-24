@@ -39,14 +39,15 @@ object OcrParser {
 
     /** Set near language only: `DFT • IT`, `FRA *EN`, `FRAIT` */
     private val mtgSetNearLang = Regex(
-        """(?i)\b([A-Z0-9]{2,5})\s*[•·●\*\.\,/\|\-–—]?\s*(EN|IT|DE|FR|ES|JP|JA|PH|KO)\b""",
+        """(?i)\b([A-Z0-9]{2,5})\s*[•·●\*+\\.\,/\|\-–—]?\s*(EN|IT|DE|FR|ES|JP|JA|PH|KO)\b""",
     )
 
     /**
      * OCR often reads leading zero as O: `RO162`, `R O113`, `O162`.
      * Also glues lang: `FRAIT`, `FRA*EN`.
      */
-    private val mtgOcrZeroCollector = Regex("""(?i)\bR?\s*O(\d{2,4})\b""")
+    /** `RO162` / `R O65`. Horizontal space only — a newline must not glue `HOB*EN` to `O65`. */
+    private val mtgOcrZeroCollector = Regex("""(?i)\bR?[^\S\n]*O(\d{2,4})\b""")
     /** Number near set across lines (`0028` then `FRA IT`). */
     private val mtgNumberNearSet = Regex(
         """(?i)\b(\d{2,4})\b[\s\S]{0,48}?\b([A-Z]{3})\b|\b([A-Z]{3})\b[\s\S]{0,48}?\b(\d{2,4})\b""",
@@ -223,7 +224,14 @@ object OcrParser {
         bottomPriorityText: String?,
         namePriorityText: String?,
     ): ParsedCardText {
-        val source = bottomPriorityText?.takeIf { it.isNotBlank() } ?: rawText
+        val top = namePriorityText?.takeIf { it.isNotBlank() }
+        val bottom = bottomPriorityText?.takeIf { it.isNotBlank() }
+        // A landscape crop puts the collector line (`O65`, `HOB*EN`) in the title band.
+        val source = if (top != null && CardOrientation.collectorInTitleBand(top)) {
+            listOfNotNull(top, bottom, rawText.takeIf { it.isNotBlank() }).joinToString("\n")
+        } else {
+            bottom ?: rawText
+        }
         val prepared = prepareMtgBottom(source)
         val name = correctMtgName(
             extractName(
@@ -361,6 +369,13 @@ object OcrParser {
             val cn = normalizeCollector(fixed)
             if (!isPlausibleCollector(cn)) return@forEach
             hits += MtgBottomHit(cn, paddedSet, if (paddedSet != null) 115 else 75)
+        }
+        // `O65` is normalized to `065` before this runs. A 3-digit pad is still
+        // the collector; copyright `036` was already stripped.
+        Regex("""(?m)(?<![\d/+])(0\d{2})\b""").findAll(prepared).forEach { match ->
+            val cn = normalizeCollector(match.groupValues[1])
+            if (!isPlausibleCollector(cn)) return@forEach
+            hits += MtgBottomHit(cn, paddedSet, if (paddedSet != null) 85 else 70)
         }
         return hits.maxByOrNull { it.score }
     }
@@ -509,6 +524,10 @@ object OcrParser {
                 // Bare 4-digit padded collector (`0028`, `0080`). A 3-digit `036` on the
                 // copyright line is not a collector.
                 Regex("""(?m)(?<![\d/+])(0\d{3})\b""").findAll(source)
+                    .map { normalizeCollector(it.groupValues[1]) }
+                    .firstOrNull { isPlausibleCollector(it) }
+                    ?.let { return it }
+                Regex("""(?m)(?<![\d/+])(0\d{2})\b""").findAll(source)
                     .map { normalizeCollector(it.groupValues[1]) }
                     .firstOrNull { isPlausibleCollector(it) }
                     ?.let { return it }
@@ -872,6 +891,18 @@ object OcrParser {
             ?: candidates.firstOrNull()
     }
 
+    /** `HOB*EN` / `DFT • IT` is the collector line, not the card title. */
+    private fun isSetAndLangLine(line: String): Boolean {
+        val flat = line.trim().replace(Regex("""[•·●*+.,/|\\-–—]"""), " ")
+            .replace(Regex("""\s+"""), " ")
+        if (Regex("""(?i)^[A-Z0-9]{2,5}\s+(?:EN|IT|DE|FR|ES|JP|JA|PH|KO)$""").matches(flat)) {
+            return true
+        }
+        if (!mtgSetNearLang.containsMatchIn(line)) return false
+        val rest = mtgSetNearLang.replace(line, " ")
+        return !Regex("""[A-Za-z]{4,}""").containsMatchIn(rest)
+    }
+
     /** MTG title lines — reject rules-text crumbs like `er. If` / `Exile target`. */
     private fun extractMtgTitle(lines: List<String>): String? {
         val noise = Regex(
@@ -881,6 +912,7 @@ object OcrParser {
         )
         val candidates = lines.filter { line ->
             val lower = line.lowercase().trim()
+            val cleaned = cleanMtgNameGuess(line)
             line.length in 3..48 &&
                 line.any { it.isLetter() } &&
                 !noise.containsMatchIn(line) &&
@@ -889,7 +921,9 @@ object OcrParser {
                 skipName.none { lower == it || lower.startsWith("$it ") } &&
                 mtgBottomLine.find(line) == null &&
                 collectorFraction.find(line) == null &&
-                line.count { it.isLetter() } >= 3
+                line.count { it.isLetter() } >= 3 &&
+                !isSetAndLangLine(line) &&
+                !CardOrientation.implausibleTitle(cleaned)
         }
         return cleanMtgNameGuess(candidates.firstOrNull()?.trim())
     }
@@ -1176,6 +1210,7 @@ object OcrParser {
      */
     fun mtgNameAttempts(name: String?): List<String> {
         val cleaned = cleanMtgNameGuess(name) ?: return emptyList()
+        if (CardOrientation.implausibleTitle(cleaned)) return emptyList()
         val attempts = linkedSetOf(cleaned)
         val tokens = cleaned.split(Regex("""\s+"""))
         if (tokens.size >= 2 && isManaCostToken(tokens.last())) {

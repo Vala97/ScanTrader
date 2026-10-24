@@ -110,6 +110,48 @@ class MatchFusionTest {
     }
 
     @Test
+    fun goblinTownPartialAgreesAndNcharDoesNot() {
+        val goblinTown = IdentifiedCard(
+            game = Game.MTG,
+            name = "Down, Down to Goblin-town",
+            setCode = "hob",
+            setName = "The Hobbit",
+            collectorNumber = "65",
+            scryfallId = "goblin-town",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+        )
+        val partial = ParsedCardText(
+            nameGuess = "Goblir",
+            collectorNumber = "65",
+            setCode = "hob",
+        )
+        val agreed = MatchFusion.evaluateAutoMatch(goblinTown, partial)
+        assertTrue(agreed.accepted)
+        assertTrue(agreed.strict)
+        assertTrue(agreed.nameOk)
+        assertFalse(agreed.nameConflict)
+        assertTrue(MatchFusion.allowsAutoSave(agreed))
+
+        val town = MatchFusion.evaluateAutoMatch(
+            goblinTown,
+            partial.copy(nameGuess = "Goblin-town"),
+        )
+        assertTrue(town.nameOk)
+        assertTrue(town.strict)
+
+        val fragment = MatchFusion.evaluateAutoMatch(
+            goblinTown,
+            partial.copy(nameGuess = "nchar"),
+        )
+        assertFalse(fragment.accepted)
+        assertFalse(fragment.nameOk)
+        assertTrue(fragment.nameConflict)
+        assertFalse(MatchFusion.allowsAutoSave(fragment))
+    }
+
+    @Test
     fun pokemonAutoMatchWithAlignedCollectorAndCount() {
         val pokemonParsed = ParsedCardText(
             nameGuess = null,

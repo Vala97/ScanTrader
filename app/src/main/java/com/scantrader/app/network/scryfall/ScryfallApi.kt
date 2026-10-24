@@ -36,6 +36,13 @@ interface ScryfallApi {
     suspend fun namedFuzzy(
         @Query("fuzzy") fuzzy: String,
     ): ScryfallCard
+
+    /** Fuzzy name limited to one set (`Goblin-town` in `hob`). */
+    @GET("cards/named")
+    suspend fun namedFuzzyInSet(
+        @Query("fuzzy") fuzzy: String,
+        @Query("set") set: String,
+    ): ScryfallCard
 }
 
 data class ScryfallSearchResponse(

@@ -42,6 +42,35 @@ object FrameNameGate {
                 PokemonCatalog.nameMatches(printedName, ocrName)
         }
         return CardIdentity.namesSimilar(cardName, ocrName) ||
-            CardIdentity.namesSimilar(printedName, ocrName)
+            CardIdentity.namesSimilar(printedName, ocrName) ||
+            partialMtgTitle(cardName, ocrName) ||
+            partialMtgTitle(printedName, ocrName)
+    }
+
+    /**
+     * `Goblir` / `Goblin-town` against "Down, Down to Goblin-town".
+     * A short rules fragment (`nchar`) does not match.
+     */
+    fun partialMtgTitle(cardName: String?, ocrName: String?): Boolean {
+        val query = titleTokens(ocrName).filter { it.length >= 5 }
+        val card = titleTokens(cardName)
+        if (query.isEmpty() || card.isEmpty()) return false
+        return query.all { token -> card.any { other -> tokenClose(token, other) } }
+    }
+
+    private fun titleTokens(raw: String?): List<String> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return raw.lowercase()
+            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .split(" ")
+            .filter { it.length >= 3 }
+    }
+
+    private fun tokenClose(left: String, right: String): Boolean {
+        if (left == right) return true
+        val shorter = if (left.length <= right.length) left else right
+        val longer = if (left.length <= right.length) right else left
+        if (shorter.length >= 5 && longer.contains(shorter)) return true
+        return CardIdentity.similarity(left, right) >= 0.75
     }
 }

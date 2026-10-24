@@ -607,21 +607,43 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "neuralMtg=${app.neuralPack.isInstalled(Game.MTG)} " +
                     "neuralPkm=${app.neuralPack.isInstalled(Game.POKEMON)}",
             )
-            val croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropBitmap(bitmap)
+            val oriented = com.scantrader.app.scan.CameraBitmaps.ensurePortrait(bitmap)
+            if (oriented.width != bitmap.width || oriented.height != bitmap.height) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "portrait ${bitmap.width}x${bitmap.height} -> ${oriented.width}x${oriented.height}",
+                )
+            }
+            var croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropBitmap(oriented)
             if (autoMode && skipUnstableFrame(croppedFull, t0)) {
                 return@withContext false
             }
-            // Auto reads title and number strips at a lower cap. Manual stills stay higher-res.
-            val cropped = downscaleForOcr(
-                croppedFull,
-                maxSide = if (autoMode) AUTO_STRIP_MAX_SIDE else MANUAL_OCR_MAX_SIDE,
-            )
-            com.scantrader.app.scan.ScanDebug.d(
-                "crop ${cropped.width}x${cropped.height} from ${bitmap.width}x${bitmap.height}" +
-                    if (cropped !== croppedFull) " (downscaled)" else "",
-            )
             val isMtg = game.value == Game.MTG
             val isPokemon = game.value == Game.POKEMON
+            // Bottom strips stay at 480. The title strip keeps enough pixels for a long name.
+            fun scaled(full: android.graphics.Bitmap): Pair<android.graphics.Bitmap, android.graphics.Bitmap> {
+                val bottomCap = if (autoMode) AUTO_STRIP_MAX_SIDE else MANUAL_OCR_MAX_SIDE
+                val titleCap = if (!autoMode) {
+                    bottomCap
+                } else {
+                    com.scantrader.app.scan.CardOrientation.titleMaxSide(
+                        width = full.width,
+                        height = full.height,
+                        floor = AUTO_STRIP_MAX_SIDE,
+                        ceiling = AUTO_TITLE_MAX_SIDE,
+                        titleHeightFraction = if (isMtg) 0.14f else 0.22f,
+                        minTitlePx = 96,
+                    )
+                }
+                val bottom = downscaleForOcr(full, bottomCap)
+                val title = if (titleCap == bottomCap) bottom else downscaleForOcr(full, titleCap)
+                return bottom to title
+            }
+            var (cropped, titleCard) = scaled(croppedFull)
+            com.scantrader.app.scan.ScanDebug.d(
+                "crop ${cropped.width}x${cropped.height} title ${titleCard.width}x${titleCard.height} " +
+                    "from ${oriented.width}x${oriented.height}" +
+                    if (cropped !== croppedFull || titleCard !== croppedFull) " (downscaled)" else "",
+            )
             val tOcr0 = System.currentTimeMillis()
             // Parallel OCR: title + bottom corners. Full card only when the number is still missing.
             val (topNameText, bottomLeft, text, bottomFull, bottomRight, bottomEdge) =
@@ -631,7 +653,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     val topJob = async {
                         runCatching {
                             app.ocr.recognize(
-                                com.scantrader.app.scan.CardFrameGeometry.topNameStrip(cropped, mtg = isMtg),
+                                com.scantrader.app.scan.CardFrameGeometry.topNameStrip(titleCard, mtg = isMtg),
                                 enhance = enhanceFirst,
                             )
                         }.getOrDefault("")
@@ -719,19 +741,74 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             namePriorityText = top.takeIf { it.isNotBlank() },
                         )
                     }
+                    // Collector line in the title band: rotation put the card's bottom at the top.
+                    if (com.scantrader.app.scan.CardOrientation.regionMappingOff(top, quick.nameGuess)) {
+                        com.scantrader.app.scan.ScanDebug.d("OCR region map off, rotate 180 and reread")
+                        val flippedFull = com.scantrader.app.scan.CameraBitmaps.rotateDegrees(
+                            croppedFull,
+                            180,
+                            recycleSource = false,
+                        )
+                        val (flippedBottom, flippedTitle) = scaled(flippedFull)
+                        val newTop = runCatching {
+                            app.ocr.recognize(
+                                com.scantrader.app.scan.CardFrameGeometry.topNameStrip(
+                                    flippedTitle,
+                                    mtg = isMtg,
+                                ),
+                                enhance = enhanceFirst,
+                            )
+                        }.getOrDefault("")
+                        val newBl = runCatching {
+                            val strip = if (isMtg) {
+                                com.scantrader.app.scan.CardFrameGeometry.bottomBandStrip(flippedBottom)
+                            } else {
+                                com.scantrader.app.scan.CardFrameGeometry.bottomLeftStrip(flippedBottom)
+                            }
+                            app.ocr.recognize(strip, enhance = enhanceFirst)
+                        }.getOrDefault("")
+                        val retry = com.scantrader.app.scan.OcrParser.parse(
+                            rawText = newTop,
+                            game = game.value,
+                            bottomPriorityText = newBl,
+                            namePriorityText = newTop.takeIf { it.isNotBlank() },
+                        )
+                        if (com.scantrader.app.scan.CardOrientation.rotatedPassWins(
+                                quick.nameGuess,
+                                retry.nameGuess,
+                            )
+                        ) {
+                            croppedFull = flippedFull
+                            cropped = flippedBottom
+                            titleCard = flippedTitle
+                            if (newTop.isNotBlank()) top = newTop
+                            if (newBl.isNotBlank()) bl = newBl
+                            quick = retry
+                            com.scantrader.app.scan.ScanDebug.d(
+                                "OCR region map kept rot180 name=${retry.nameGuess}",
+                            )
+                        }
+                    }
                     val stripText = listOf(top, bl, br, edge).filter { it.isNotBlank() }.joinToString("\n")
                     val trainerLayout = isPokemon &&
                         com.scantrader.app.scan.OcrParser.looksLikeTrainerLayout(stripText)
-                    val identityReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(
-                        quick,
-                        stripText,
+                    val weakTitle = !quick.nameGuess.isNullOrBlank() &&
+                        com.scantrader.app.scan.CardOrientation.implausibleTitle(quick.nameGuess)
+                    val mappingOff = com.scantrader.app.scan.CardOrientation.regionMappingOff(
+                        top,
+                        quick.nameGuess,
                     )
+                    val identityReady = !weakTitle && !mappingOff &&
+                        com.scantrader.app.scan.OcrParser.identityReadyForFastPath(
+                            quick,
+                            stripText,
+                        )
                     val quickId = catalogIdentity(quick)
-                    val nameAndCnStable = autoMode &&
+                    val nameAndCnStable = autoMode && !weakTitle && !mappingOff &&
                         !quick.nameGuess.isNullOrBlank() &&
                         !quick.collectorNumber.isNullOrBlank() &&
                         catalogDebounce.seenThisBefore(quickId)
-                    val stripsEnough = autoMode &&
+                    val stripsEnough = autoMode && !weakTitle && !mappingOff &&
                         !quick.collectorNumber.isNullOrBlank() &&
                         (
                             !quick.nameGuess.isNullOrBlank() ||
@@ -1393,8 +1470,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     companion object {
         /** Gap after an auto attempt finishes before accepting another frame. */
         private const val AUTO_COOLDOWN_MS = 280L
-        /** Title and collector strips. A 657px crop actually shrinks at this cap. */
+        /** Collector strips. The title strip uses [AUTO_TITLE_MAX_SIDE] so long names survive. */
         private const val AUTO_STRIP_MAX_SIDE = 480
+        /** Title band. 480px on the whole card was dropping "Down, Down to Goblin-town". */
+        private const val AUTO_TITLE_MAX_SIDE = 960
         /** Full-card fallback and the deferred rules strip. */
         private const val AUTO_FULL_MAX_SIDE = 640
         private const val MANUAL_OCR_MAX_SIDE = 1400
