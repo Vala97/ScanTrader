@@ -53,6 +53,9 @@ class ScanSession {
 
     /** Last language/condition chosen on confirm — reused until settings override. */
     var language: CardLanguage? = null
+
+    /** Evidence for the last confident [language]. A failed lookup must not replace it. */
+    var languageEvidence: String? = null
     var condition: CardCondition? = null
 
     fun resetResults() {

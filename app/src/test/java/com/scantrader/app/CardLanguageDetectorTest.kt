@@ -169,6 +169,56 @@ class CardLanguageDetectorTest {
         )
     }
 
+    @Test
+    fun supporterAiutoIsItalianWhenTheTitleDoesNotMatch() {
+        val detection = CardLanguageDetector.explain(
+            ocrName = "AIUtO",
+            englishName = "Team Rocket's Petrel",
+            printed = mapOf(CardLanguage.ITALIAN to "Maxus del Team Rocket"),
+            ocrText = "AIUtO\nMaxus del Team Rocket",
+            pokemonSignals = true,
+        )
+        assertEquals(CardLanguage.ITALIAN, detection.language)
+        assertTrue(detection.evidence.contains("aiuto"))
+    }
+
+    @Test
+    fun maxusDelTeamRocketPrintedNameIsItalian() {
+        val detection = CardLanguageDetector.explain(
+            ocrName = "Maxus del Team Rocket",
+            englishName = "Team Rocket's Petrel",
+            printed = mapOf(CardLanguage.ITALIAN to "Maxus del Team Rocket"),
+            ocrText = "AIUtO\nMaxus del Team Rocket\nODRI 176/182",
+            pokemonSignals = true,
+        )
+        assertEquals(CardLanguage.ITALIAN, detection.language)
+        assertTrue(detection.evidence.contains("name=it"))
+    }
+
+    @Test
+    fun failedLookupDoesNotReplaceAConfidentLanguage() {
+        val error = CardLanguageDetector.retainConfident(
+            previous = CardLanguage.ITALIAN,
+            incoming = CardLanguageDetector.Detection(null, "error"),
+        )
+        assertEquals(CardLanguage.ITALIAN, error.language)
+        val shared = CardLanguageDetector.retainConfident(
+            previous = CardLanguage.ITALIAN,
+            incoming = CardLanguageDetector.Detection(null, "name=shared"),
+        )
+        assertEquals(CardLanguage.ITALIAN, shared.language)
+        val updated = CardLanguageDetector.retainConfident(
+            previous = CardLanguage.ITALIAN,
+            incoming = CardLanguageDetector.Detection(CardLanguage.FRENCH, "name=fr"),
+        )
+        assertEquals(CardLanguage.FRENCH, updated.language)
+        val none = CardLanguageDetector.retainConfident(
+            previous = null,
+            incoming = CardLanguageDetector.Detection(null, "error"),
+        )
+        assertNull(none.language)
+    }
+
     private fun pokemon(text: String): CardLanguage? = CardLanguageDetector.detect(
         ocrName = null,
         englishName = null,

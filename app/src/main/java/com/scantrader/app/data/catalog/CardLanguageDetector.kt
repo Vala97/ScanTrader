@@ -28,6 +28,15 @@ object CardLanguageDetector {
         lastChosen: CardLanguage,
     ): CardLanguage = if (detectEnabled && detected != null) detected else lastChosen
 
+    /**
+     * A failed, cancelled, or uncertain lookup must not replace a language already accepted.
+     * A new confident detection still wins.
+     */
+    fun retainConfident(previous: CardLanguage?, incoming: Detection): Detection {
+        if (incoming.language != null || previous == null) return incoming
+        return Detection(previous, "kept")
+    }
+
     fun detect(
         ocrName: String?,
         englishName: String?,
@@ -165,6 +174,14 @@ object CardLanguageDetector {
         Signal(CardLanguage.ITALIAN, Regex("""\bpokemon\s+base\b"""), 4, "pokemon base"),
         Signal(CardLanguage.ITALIAN, Regex("""\b\d{1,3}\s*pv\b"""), 3, "pv"),
         Signal(CardLanguage.ITALIAN, Regex("""\bfase\w{0,2}\b"""), 2, "fase"),
+        Signal(CardLanguage.ITALIAN, Regex("""\baiuto\b"""), 4, "aiuto"),
+        Signal(CardLanguage.ITALIAN, Regex("""\bstrumento\b"""), 4, "strumento"),
+        Signal(CardLanguage.ITALIAN, Regex("""\bstadio\b"""), 3, "stadio"),
+        Signal(CardLanguage.ENGLISH, Regex("""\bsupporter\b"""), 4, "supporter"),
+        Signal(CardLanguage.ENGLISH, Regex("""\bstadium\b"""), 4, "stadium"),
+        Signal(CardLanguage.GERMAN, Regex("""\bunterstutzer\b"""), 4, "unterstutzer"),
+        Signal(CardLanguage.SPANISH, Regex("""\bpartidario\b"""), 4, "partidario"),
+        Signal(CardLanguage.PORTUGUESE, Regex("""\bapoiador\b"""), 4, "apoiador"),
         Signal(CardLanguage.ENGLISH, Regex("""\bevolves?\s+from\b"""), 6, "evolves from"),
         Signal(CardLanguage.ENGLISH, Regex("""\bweakness\b"""), 4, "weakness"),
         Signal(CardLanguage.ENGLISH, Regex("""\bresistance\b"""), 3, "resistance"),

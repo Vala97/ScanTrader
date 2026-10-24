@@ -176,6 +176,8 @@ fun ConfirmScreen(
     LaunchedEffect(selected?.identityKey(), defaults.detectCardLanguage) {
         if (languageTouched || !defaults.detectCardLanguage) return@LaunchedEffect
         val card = selected ?: return@LaunchedEffect
+        val locked = viewModel.autoMatchCardKey
+        if (locked != null && card.identityKey() != locked) return@LaunchedEffect
         val detected = viewModel.detectCardLanguage(card)
         autoSaveCancelledState.value = AutoSaveControl.onProgrammaticUpdate(
             autoSaveCancelledState.value,
@@ -202,8 +204,14 @@ fun ConfirmScreen(
         if (changed) selected = priced
     }
     LaunchedEffect(candidates) {
-        if (selected == null || candidates.none { sameCard(it, selected) }) {
-            selected = candidates.firstOrNull()
+        val locked = viewModel.autoMatchCardKey
+        val preferred = candidates.firstOrNull { locked != null && it.identityKey() == locked }
+            ?: candidates.firstOrNull()
+        val lockedMismatch = locked != null &&
+            selected?.identityKey() != locked &&
+            preferred?.identityKey() == locked
+        if (selected == null || candidates.none { sameCard(it, selected) } || lockedMismatch) {
+            selected = preferred
         }
     }
     LaunchedEffect(collections, viewModel.preferredCollectionId) {

@@ -68,4 +68,14 @@ class CardFrameGeometryTest {
         val again = CardFrameGeometry.frameStable(1080f, 1800f, lockedW, lockedH)
         assertEquals(after, again)
     }
+
+    @Test
+    fun trainerStripsUseTheTitleRulesAndBottomCorner() {
+        assertTrue(CardFrameGeometry.TRAINER_TITLE_HEIGHT_FRACTION > 0.22f)
+        assertTrue(CardFrameGeometry.TRAINER_TITLE_WIDTH_FRACTION > CardFrameGeometry.POKEMON_TITLE_WIDTH_FRACTION)
+        assertTrue(CardFrameGeometry.TRAINER_RULES_TOP_FRACTION > CardFrameGeometry.TRAINER_TITLE_HEIGHT_FRACTION)
+        assertTrue(CardFrameGeometry.TRAINER_RULES_BOTTOM_FRACTION < 0.9f)
+        assertTrue(CardFrameGeometry.TRAINER_BOTTOM_HEIGHT_FRACTION < 0.24f)
+        assertTrue(CardFrameGeometry.TRAINER_BOTTOM_WIDTH_FRACTION > 0.42f)
+    }
 }

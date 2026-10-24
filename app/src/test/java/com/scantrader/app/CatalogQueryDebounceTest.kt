@@ -178,7 +178,20 @@ class CatalogQueryDebounceTest {
         assertTrue(debounce.votedFrame()?.name.orEmpty().contains("Kilowattrel"))
     }
 
-    private fun frame(name: String?, cn: String?, set: String?, count: Int) = Frame(
+    @Test
+    fun trainerTitleIsStableWithoutACollectorNumber() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2)
+        val short = frame("Maxus", null, null, null)
+        val category = frame("AIUtO", null, null, null)
+        val full = frame("Maxus del Team Rocket", null, null, null)
+        assertTrue(!debounce.shouldQuery(short))
+        assertTrue(!debounce.shouldQuery(category))
+        assertTrue(!debounce.shouldQuery(full))
+        assertTrue(debounce.shouldQuery(full))
+        assertEquals("Maxus del Team Rocket", debounce.votedFrame()?.name)
+    }
+
+    private fun frame(name: String?, cn: String?, set: String?, count: Int?) = Frame(
         name = name,
         collectorNumber = cn,
         setCode = set,

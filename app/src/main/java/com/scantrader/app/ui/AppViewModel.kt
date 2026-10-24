@@ -15,6 +15,7 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.data.prefs.ScanDefaults
 import com.scantrader.app.network.scryfall.ScryfallBusyException
+import com.scantrader.app.scan.AcceptedCandidateLock
 import com.scantrader.app.scan.BackCamera
 import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.LensCatalog
@@ -22,6 +23,7 @@ import com.scantrader.app.scan.LensKind
 import com.scantrader.app.scan.LensOption
 import com.scantrader.app.scan.ZoomFraming
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -186,13 +188,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     @Volatile
     private var lastAutoAttemptMs: Long = 0
 
-    /** Identity of the last auto-accepted card — block re-scan until a different card appears. */
-    @Volatile
-    private var lastAcceptedCardKey: String? = null
-
-    /** Consecutive frames where the locked card is no longer the top hit. */
-    @Volatile
-    private var sameCardClearFrames: Int = 0
+    /**
+     * Identity of the last auto-accepted card. Later frames must not replace it
+     * or start another lookup until a different card has been in frame.
+     */
+    private val acceptedLock = AcceptedCandidateLock(clearFramesNeeded = SAME_CARD_CLEAR_FRAMES)
+    private val lastAcceptedCardKey: String?
+        get() = acceptedLock.key
 
     private val autoBusy = AtomicBoolean(false)
     private val autoHitPending = AtomicBoolean(false)
@@ -570,7 +572,6 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         bitmap: android.graphics.Bitmap,
         requireMatch: Boolean,
     ): Boolean {
-        app.scanSession.resetResults()
         app.scanSession.game = game.value
         val autoMode = requireMatch
         return withContext(Dispatchers.IO) {
@@ -648,7 +649,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             namePriorityText = top.takeIf { it.isNotBlank() },
                         )
                     }
-                    val identityReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(quick)
+                    val trainerLayout = isPokemon &&
+                        com.scantrader.app.scan.OcrParser.looksLikeTrainerLayout("$top\n$bl")
+                    val identityReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(
+                        quick,
+                        "$top\n$bl",
+                    )
                     val quickId = catalogIdentity(quick)
                     val nameAndCnStable = autoMode &&
                         !quick.nameGuess.isNullOrBlank() &&
@@ -657,6 +663,42 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     if (autoMode && top.isBlank() && bl.isBlank()) {
                         com.scantrader.app.scan.ScanDebug.d("OCR early-abort empty strips")
                         HexOcrBundle(top, bl, "", "", "", "")
+                    } else if (trainerLayout) {
+                        val titleJob = async {
+                            runCatching {
+                                app.ocr.recognize(
+                                    com.scantrader.app.scan.CardFrameGeometry.trainerTitleStrip(cropped),
+                                    enhance = true,
+                                )
+                            }.getOrDefault(top)
+                        }
+                        val rulesJob = async {
+                            runCatching {
+                                app.ocr.recognize(
+                                    com.scantrader.app.scan.CardFrameGeometry.trainerRulesStrip(cropped),
+                                )
+                            }.getOrDefault("")
+                        }
+                        val bottomJob = async {
+                            runCatching {
+                                app.ocr.recognize(
+                                    com.scantrader.app.scan.CardFrameGeometry.trainerBottomLeftStrip(cropped),
+                                    enhance = true,
+                                )
+                            }.getOrDefault(bl)
+                        }
+                        val titleText = titleJob.await().ifBlank { top }
+                        val rulesText = rulesJob.await()
+                        val bottomText = bottomJob.await().ifBlank { bl }
+                        com.scantrader.app.scan.ScanDebug.d("OCR trainer layout title+rules+bottom")
+                        HexOcrBundle(
+                            top = titleText,
+                            bl = bottomText,
+                            text = listOf(titleText, rulesText).filter { it.isNotBlank() }.joinToString("\n"),
+                            bottomFull = bottomText,
+                            bottomRight = "",
+                            bottomEdge = "",
+                        )
                     } else if (identityReady || nameAndCnStable) {
                         com.scantrader.app.scan.ScanDebug.d(
                             if (identityReady) "OCR fast-path identity ready" else "OCR skip extra passes (name+cn stable)",
@@ -763,10 +805,23 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         "requireMatch=$requireMatch ocrMs=$ocrMs catalogMs=0 " +
                         "ms=${System.currentTimeMillis() - t0}",
                 )
+                if (acceptedLock.key != null) return@withContext false
+                app.scanSession.resetResults()
+                app.scanSession.game = game.value
                 app.scanSession.errorMessage =
                     "Nessun testo letto. Inquadra tutta la carta, soprattutto il basso a sinistra (numero + set)."
                 return@withContext false
             }
+
+            if (autoMode && acceptedLock.key != null && acceptedLock.shouldIgnore(parsed)) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "frame ignored (candidate locked key=${acceptedLock.key}) " +
+                        "name=${parsed.nameGuess} cn=${parsed.collectorNumber}",
+                )
+                return@withContext false
+            }
+            app.scanSession.resetResults()
+            app.scanSession.game = game.value
 
             val idReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(parsed)
             val cooling = autoMode && app.scryfall.coolingDown()
@@ -948,19 +1003,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val blockedSameCard = requireMatch &&
                 autoOk &&
                 topKey != null &&
-                topKey == lastAcceptedCardKey
-            // Unlock only after a few frames where the locked card is gone / different.
-            if (requireMatch && lastAcceptedCardKey != null) {
-                val stillSame = topKey != null && topKey == lastAcceptedCardKey
-                if (stillSame) {
-                    sameCardClearFrames = 0
-                } else {
-                    sameCardClearFrames += 1
-                    if (sameCardClearFrames >= SAME_CARD_CLEAR_FRAMES) {
-                        clearSameCardLock()
-                    }
-                }
-            }
+                topKey == acceptedLock.key
             val acceptAuto = autoOk && !blockedSameCard
             if (requireMatch && acceptAuto) {
                 top?.imageUrl?.takeIf { it.isNotBlank() }?.let { url ->
@@ -970,8 +1013,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 }
             }
             if (requireMatch && acceptAuto && topKey != null) {
-                lastAcceptedCardKey = topKey
-                sameCardClearFrames = 0
+                acceptedLock.lock(
+                    key = topKey,
+                    collectorNumber = top.collectorNumber,
+                    name = matched.nameGuess ?: top.printedName ?: top.name,
+                )
             }
             candidates.take(3).forEachIndexed { i, c ->
                 com.scantrader.app.scan.ScanDebug.d(
@@ -1028,8 +1074,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private enum class AutoHold { NONE, BUSY, UNSTABLE }
 
     private fun clearSameCardLock() {
-        lastAcceptedCardKey = null
-        sameCardClearFrames = 0
+        acceptedLock.clear()
     }
 
     private fun autoCardKey(card: IdentifiedCard): String = card.identityKey()
@@ -1217,7 +1262,7 @@ private suspend fun ScanTraderApp.rememberDetectedLanguage(card: IdentifiedCard?
     }
     val ocrName = scanSession.parsed?.nameGuess
     val ocrText = scanSession.ocrText
-    val detection = runCatching {
+    val detection = try {
         if (card != null) {
             languageResolver.explain(card, ocrName, ocrText)
         } else if (scanSession.game == Game.POKEMON) {
@@ -1231,12 +1276,26 @@ private suspend fun ScanTraderApp.rememberDetectedLanguage(card: IdentifiedCard?
         } else {
             com.scantrader.app.data.catalog.CardLanguageDetector.Detection(null, "none")
         }
-    }.getOrElse { error ->
+    } catch (cancel: CancellationException) {
+        throw cancel
+    } catch (error: Throwable) {
         com.scantrader.app.scan.ScanDebug.w("lang: failed", error)
         com.scantrader.app.data.catalog.CardLanguageDetector.Detection(null, "error")
     }
-    com.scantrader.app.scan.ScanDebug.d(detection.logLine())
-    detection.language?.let { scanSession.language = it }
+    val published = com.scantrader.app.data.catalog.CardLanguageDetector.retainConfident(
+        scanSession.language,
+        detection,
+    )
+    if (published.language != null && detection.language == null) {
+        val evidence = scanSession.languageEvidence?.takeIf { it.isNotBlank() } ?: "kept"
+        com.scantrader.app.scan.ScanDebug.d("lang: ${published.language.label} evidence=$evidence")
+        return published.language
+    }
+    com.scantrader.app.scan.ScanDebug.d(published.logLine())
+    if (detection.language != null) {
+        scanSession.language = detection.language
+        scanSession.languageEvidence = detection.evidence
+    }
     return detection.language
 }
 

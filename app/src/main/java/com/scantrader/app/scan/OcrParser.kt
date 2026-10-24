@@ -78,6 +78,23 @@ object OcrParser {
         """(?i)\b([A-Z][A-Za-z]{2,}'s)\s+([A-Z][A-Za-z]{2,})\b""",
     )
 
+    /**
+     * Multi-word trainer / Team Rocket titles: "Maxus del Team Rocket", "Muk della Squadra".
+     * The particle is del/della/dello/dei/delle — not the owner "di" used on creature cards.
+     */
+    private val italianGroupTitle = Regex(
+        """(?i)\b([A-ZÀ-ÖØ-öø-ÿ][\p{L}'’-]{2,})\s+(del|della|dello|dei|delle)\s+""" +
+            """((?:Team\s+|Squadra\s+)?[A-ZÀ-ÖØ-öø-ÿ][\p{L}'’-]{2,}(?:\s+[A-ZÀ-ÖØ-öø-ÿ][\p{L}'’-]{2,})?)\b""",
+    )
+
+    /** Printed category label on Trainer, Supporter, Item and Stadium cards. Not a title. */
+    private val trainerLayoutWords = setOf(
+        "aiuto", "strumento", "oggetto", "stadio", "allenatore",
+        "supporter", "trainer", "stadium", "item",
+        "unterstutzer", "stadion", "dresseur", "objet", "stade",
+        "partidario", "apoyo", "objeto", "estadio", "apoiador",
+    )
+
     /** Italian Base layout: `60 PV` … `Kadabra` … `FASE I`. */
     private val nameBetweenPvAndFase = Regex(
         """(?i)\b\d{1,3}\s*PV\b[\s\S]{0,80}?\b([A-ZÀ-Ö][A-Za-zÀ-ÖØ-öø-ÿ' \-]{2,28})\b[\s\S]{0,40}?FASE""",
@@ -137,6 +154,11 @@ object OcrParser {
         "evoluzione", "base", "stage", "ability", "abilità", "attacco", "weakness",
         "sievolve", "evolve", "evolves", "ripresa", "superpsico", "lunghezza", "peso",
         "costo", "illus", "wizards", "nintendo",
+        // Trainer / Supporter / Item / Stadium category labels, not the card title.
+        // Italian "Aiuto" is Supporter; OCR often reads it as AIUtO.
+        "aiuto", "strumento", "oggetto", "stadio", "allenatore",
+        "unterstutzer", "stadion", "dresseur", "objet", "stade",
+        "partidario", "apoyo", "objeto", "estadio", "apoiador",
         // Common Italian attack / rules OCR noise mistaken for titles.
         "calciobasso", "fuoco continuo", "fuococontinuo", "nirata", "htirata",
         "coniglio", "fregata", "pokermon", "cooigio", "aitezaa", "aiezza",
@@ -579,6 +601,11 @@ object OcrParser {
             .filter { isPlausibleOwnerTitle(it) }
             .maxByOrNull { it.length }
             ?.let { return cleanPokemonLatinName(it) }
+        italianGroupTitle.findAll(header)
+            .map { it.value }
+            .filter { isPlausibleGroupTitle(it) }
+            .maxByOrNull { it.length }
+            ?.let { return cleanPokemonLatinName(it) }
         // Single Title-case name near the top (Smoliv, Noibat) when no owner title.
         extractEarlyPokemonTitle(header)?.let { return it }
         // Vintage: title repeats in body ("Kadabra") after filtering bogus "mal di testa".
@@ -683,6 +710,18 @@ object OcrParser {
 
     private fun lowerTokensOk(tokens: List<String>, skip: Set<String>): Boolean =
         tokens.none { it.lowercase() in skip || isNoisePokemonName(it) }
+
+    private fun isPlausibleGroupTitle(candidate: String): Boolean {
+        val parts = candidate.split(Regex("""\s+(?:del|della|dello|dei|delle)\s+""", RegexOption.IGNORE_CASE))
+        if (parts.size != 2) return false
+        val first = parts[0].trim()
+        val second = parts[1].trim()
+        if (first.length < 3 || second.length < 3) return false
+        if (!first.first().isUpperCase() || !second.first().isUpperCase()) return false
+        if (isTrainerLayoutWord(first) || isTrainerLayoutWord(second)) return false
+        if (first.lowercase() in falseOwnerFirst) return false
+        return !isNoisePokemonName(candidate)
+    }
 
     private fun isPlausibleOwnerTitle(candidate: String): Boolean {
         val parts = candidate.split(Regex("""\s+di\s+""", RegexOption.IGNORE_CASE))
@@ -805,6 +844,7 @@ object OcrParser {
 
     private fun isNoisePokemonName(name: String): Boolean {
         val lower = name.trim().lowercase()
+        if (isTrainerLayoutWord(name)) return true
         if (lower in skipName) return true
         if (isStageNoiseLine(name)) return true
         if (isEvolveFromLine(name)) return true
@@ -956,16 +996,58 @@ object OcrParser {
     }
 
     /**
+     * True when [name] is only the category label (Aiuto, Supporter, Item, Stadium, …).
+     * OCR case such as `AIUtO` still counts.
+     */
+    fun isTrainerLayoutWord(name: String?): Boolean {
+        val folded = foldLetters(name) ?: return false
+        return folded in trainerLayoutWords
+    }
+
+    /**
+     * Trainer / Supporter / Item / Stadium cards print a category word in the title band.
+     * Their rules and collector line are not in the creature-card strips.
+     */
+    fun looksLikeTrainerLayout(text: String): Boolean {
+        if (text.isBlank()) return false
+        return text.split(Regex("""[^\p{L}]+""")).any { isTrainerLayoutWord(it) }
+    }
+
+    /**
+     * Stable autoscan key for a trainer title when the collector number was not read.
+     * "Maxus del Team Rocket" counts; a one-word crumb or "Aiuto" does not.
+     */
+    fun trainerStabilityName(name: String?): String? {
+        val raw = name?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        if (isTrainerLayoutWord(raw) || CardIdentity.isStageNoise(raw)) return null
+        if (!Regex("""(?i)\b(?:del|della|dello|dei|delle)\b""").containsMatchIn(raw)) return null
+        val tokens = CardIdentity.normalizeName(raw).split(" ").filter { it.length >= 3 }
+        if (tokens.size < 2) return null
+        return tokens.joinToString(" ")
+    }
+
+    /**
      * Enough identity from strips to skip full-card OCR (and heavy gallery) on auto-scan.
      * Both games: collector + set; name is optional.
      * MTG set must look like a real code (has a letter) — never `165` from `74/165`.
+     * Trainer layouts are not ready: the category word, rules, and bottom number still need a pass.
+     * [sourceText] is the strip OCR. A parsed title can already be the real name while the
+     * strip still contains "Aiuto".
      */
-    fun identityReadyForFastPath(parsed: ParsedCardText): Boolean {
+    fun identityReadyForFastPath(parsed: ParsedCardText, sourceText: String = ""): Boolean {
+        if (looksLikeTrainerLayout(sourceText) || isTrainerLayoutWord(parsed.nameGuess)) return false
         val cn = parsed.collectorNumber?.trim().orEmpty()
         val set = parsed.setCode?.trim().orEmpty()
         if (cn.isEmpty() || set.isEmpty()) return false
         if (!set.any { it.isLetter() }) return false
         return true
+    }
+
+    private fun foldLetters(raw: String?): String? {
+        val text = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val decomposed = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD)
+            .replace(Regex("""\p{Mn}+"""), "")
+        return decomposed.lowercase().replace(Regex("""[^a-z]"""), "").takeIf { it.isNotEmpty() }
     }
 
     /**

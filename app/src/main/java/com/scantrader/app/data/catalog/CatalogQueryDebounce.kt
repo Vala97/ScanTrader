@@ -1,11 +1,14 @@
 package com.scantrader.app.data.catalog
 
+import com.scantrader.app.scan.OcrParser
+
 /**
  * Autoscan should not hit the network on every frame.
  *
  * A lookup runs when either:
  * - the same primary key has been seen [stableFramesNeeded] times
- *   (Pokémon: collector + printed total; MTG: collector + set), or
+ *   (Pokémon: collector + printed total, or a multi-word trainer title when the
+ *   collector is missing; MTG: collector + set), or
  * - the same card region has been analyzed for [requeryAfterMs]
  *   or [fallbackFrames] frames without a lookup.
  *
@@ -213,11 +216,13 @@ class CatalogQueryDebounce(
     }
 
     private fun primaryKey(frame: Frame): String? {
-        val cn = CardIdentity.normCollector(frame.collectorNumber) ?: return null
+        val cn = CardIdentity.normCollector(frame.collectorNumber)
         if (frame.pokemon) {
-            val count = frame.setCardCount ?: return null
-            return "p:$cn/$count"
+            if (cn != null && frame.setCardCount != null) return "p:$cn/${frame.setCardCount}"
+            val trainer = OcrParser.trainerStabilityName(frame.name) ?: return null
+            return "t:$trainer"
         }
+        if (cn == null) return null
         val set = plainSet(frame.setCode) ?: return null
         return "m:$cn/$set"
     }
@@ -249,7 +254,9 @@ class CatalogQueryDebounce(
 
     private fun voteName(names: List<String>): String? {
         if (names.isEmpty()) return null
-        val usable = names.filterNot { CardIdentity.isStageNoise(it) }.ifEmpty { names }
+        val usable = names.filterNot {
+            CardIdentity.isStageNoise(it) || OcrParser.isTrainerLayoutWord(it)
+        }.ifEmpty { names }
         val clusters = mutableListOf<MutableList<String>>()
         for (name in usable) {
             val cluster = clusters.firstOrNull { members ->
@@ -262,13 +269,15 @@ class CatalogQueryDebounce(
         val topNorm = byNorm.maxWith(
             compareBy<Map.Entry<String, List<String>>>({ it.value.size }, { it.key.length }),
         ).key
-        val winner = byNorm.getValue(topNorm).maxWith(
-            compareBy<String>(
-                { if (it.contains(" di ", ignoreCase = true)) 1 else 0 },
-                { it.length },
-            ),
+        val frequent = byNorm.getValue(topNorm).maxWith(
+            compareBy<String>({ ownerTitle(it) }, { it.length }),
         )
-        return CardIdentity.repairOwnerName(winner)
+        val longerTitle = best.firstOrNull { candidate ->
+            candidate.length > frequent.length &&
+                ownerTitle(candidate) &&
+                CardIdentity.namesSimilar(candidate, frequent)
+        }
+        return CardIdentity.repairOwnerName(longerTitle ?: frequent)
     }
 
     private fun preferredName(current: String?, voted: String?): String? {
@@ -277,13 +286,17 @@ class CatalogQueryDebounce(
         if (raw == null) return vote
         if (vote == null) return raw
         if (CardIdentity.isStageNoise(raw) && !CardIdentity.isStageNoise(vote)) return vote
+        if (OcrParser.isTrainerLayoutWord(raw) && !OcrParser.isTrainerLayoutWord(vote)) return vote
         if (!CardIdentity.namesSimilar(raw, vote)) return vote
-        val voteDi = vote.contains(" di ", ignoreCase = true)
-        val rawDi = raw.contains(" di ", ignoreCase = true)
-        if (voteDi && !rawDi) return vote
-        if (rawDi && !voteDi) return raw
+        val voteOwner = ownerTitle(vote)
+        val rawOwner = ownerTitle(raw)
+        if (voteOwner && !rawOwner) return vote
+        if (rawOwner && !voteOwner) return raw
         return if (vote.length >= raw.length) vote else raw
     }
+
+    private fun ownerTitle(name: String): Boolean =
+        Regex("""(?i)\b(?:di|del|della|dello|dei|delle)\b""").containsMatchIn(name)
 
     private fun <T> mode(values: List<T>): T? {
         if (values.isEmpty()) return null

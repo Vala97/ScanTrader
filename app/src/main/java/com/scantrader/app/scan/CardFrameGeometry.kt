@@ -89,6 +89,20 @@ object CardFrameGeometry {
     const val POKEMON_TITLE_WIDTH_FRACTION = 0.80f
 
     /**
+     * Trainer / Supporter / Item / Stadium.
+     * The category word ("AIUTO") sits at the top and the title is lower than a Pokémon HP row,
+     * so the title band is taller and nearly full width (there is no HP box).
+     * Rules text is the lower-middle band. The set and collector are a thin bottom-left corner,
+     * under the rules box rather than in the creature-card bottom strip.
+     */
+    const val TRAINER_TITLE_HEIGHT_FRACTION = 0.32f
+    const val TRAINER_TITLE_WIDTH_FRACTION = 0.92f
+    const val TRAINER_RULES_TOP_FRACTION = 0.46f
+    const val TRAINER_RULES_BOTTOM_FRACTION = 0.82f
+    const val TRAINER_BOTTOM_HEIGHT_FRACTION = 0.18f
+    const val TRAINER_BOTTOM_WIDTH_FRACTION = 0.56f
+
+    /**
      * Top strip for the card title, left side only.
      * Pokémon ~22% tall (title row). MTG ~14% (name bar — avoid rules text).
      * The right of the bar is the mana cost or the HP value, so it is left out.
@@ -137,6 +151,40 @@ object CardFrameGeometry {
         val widthFraction = if (mtg) 0.58f else 0.42f
         val w = (strip.width * widthFraction).toInt().coerceAtLeast(1)
         return android.graphics.Bitmap.createBitmap(strip, 0, 0, w, strip.height)
+    }
+
+    /** Title band for Trainer / Supporter / Item / Stadium: category word plus the name. */
+    fun trainerTitleStrip(cardCrop: android.graphics.Bitmap): android.graphics.Bitmap {
+        val stripH = (cardCrop.height * TRAINER_TITLE_HEIGHT_FRACTION)
+            .toInt()
+            .coerceIn(1, cardCrop.height)
+        val stripW = (cardCrop.width * TRAINER_TITLE_WIDTH_FRACTION)
+            .toInt()
+            .coerceIn(1, cardCrop.width)
+        return android.graphics.Bitmap.createBitmap(cardCrop, 0, 0, stripW, stripH)
+    }
+
+    /** Rules text under the art, above the collector line. */
+    fun trainerRulesStrip(cardCrop: android.graphics.Bitmap): android.graphics.Bitmap {
+        val top = (cardCrop.height * TRAINER_RULES_TOP_FRACTION)
+            .toInt()
+            .coerceIn(0, cardCrop.height - 1)
+        val bottom = (cardCrop.height * TRAINER_RULES_BOTTOM_FRACTION)
+            .toInt()
+            .coerceIn(top + 1, cardCrop.height)
+        return android.graphics.Bitmap.createBitmap(cardCrop, 0, top, cardCrop.width, bottom - top)
+    }
+
+    /** Bottom-left set + collector on a trainer card. Thinner than the creature bottom strip. */
+    fun trainerBottomLeftStrip(cardCrop: android.graphics.Bitmap): android.graphics.Bitmap {
+        val stripH = (cardCrop.height * TRAINER_BOTTOM_HEIGHT_FRACTION)
+            .toInt()
+            .coerceIn(1, cardCrop.height)
+        val y = (cardCrop.height - stripH).coerceAtLeast(0)
+        val w = (cardCrop.width * TRAINER_BOTTOM_WIDTH_FRACTION)
+            .toInt()
+            .coerceIn(1, cardCrop.width)
+        return android.graphics.Bitmap.createBitmap(cardCrop, 0, y, w, stripH)
     }
 
     /**
