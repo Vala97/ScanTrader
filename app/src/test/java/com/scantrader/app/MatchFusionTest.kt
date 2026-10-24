@@ -39,7 +39,10 @@ class MatchFusionTest {
     fun exactOcrWithoutVisualCanAutoMatch() {
         val exact = card("Lightning Bolt", "m21", "161", ocr = 0.98f, visual = null)
         val scored = MatchFusion.score(exact, parsed)
-        assertTrue(MatchFusion.isConfidentAutoMatch(scored))
+        val decision = MatchFusion.evaluateAutoMatch(scored, parsed)
+        assertTrue(decision.accepted)
+        assertTrue(decision.strict)
+        assertTrue(MatchFusion.allowsAutoSave(decision))
     }
 
     @Test
@@ -61,7 +64,10 @@ class MatchFusionTest {
             visualScore = 0.58f,
             matchConfidence = 0.52f,
         )
-        assertTrue(MatchFusion.isConfidentAutoMatch(mid, pokemonParsed))
+        val decision = MatchFusion.evaluateAutoMatch(mid, pokemonParsed)
+        assertTrue(decision.accepted)
+        assertFalse(decision.strict)
+        assertFalse(MatchFusion.allowsAutoSave(decision))
         assertFalse(
             MatchFusion.isConfidentAutoMatch(mid.copy(matchConfidence = 0.40f), pokemonParsed),
         )
@@ -154,6 +160,8 @@ class MatchFusionTest {
         )
         val decision = MatchFusion.evaluateAutoMatch(card, mtgParsed)
         assertTrue(decision.accepted)
+        assertFalse(decision.strict)
+        assertFalse(MatchFusion.allowsAutoSave(decision))
         assertTrue(decision.cnOk)
         assertTrue(decision.setOk)
         assertEquals("cn+set", decision.reason)
@@ -178,6 +186,106 @@ class MatchFusionTest {
         )
         // cn+set present but ocr/visual/conf all below soft thresholds.
         assertFalse(MatchFusion.isConfidentAutoMatch(weak, mtgParsed))
+    }
+
+    @Test
+    fun mtgSoftAcceptsNeuralWhenItalianTitleSharesCollector() {
+        // Device log: OCR "Bolla Protettiva" cn=80, gallery "Protective Bubble" v=0.639 conf=0.629.
+        val parsed = ParsedCardText(
+            nameGuess = "Bolla Protettiva",
+            collectorNumber = "80",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Protective Bubble",
+            setCode = "lrw",
+            setName = "Lorwyn",
+            collectorNumber = "80",
+            ocrScore = 0.61538464f,
+            visualScore = 0.6394928f,
+            matchConfidence = 0.62936735f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertTrue(decision.accepted)
+        assertEquals("cn+neural", decision.reason)
+        assertTrue(decision.cnOk)
+        assertFalse(decision.setOk)
+        assertEquals(
+            "il numero coincide e il riconoscimento visivo conferma la carta",
+            MatchFusion.signalPhrase(decision.reason),
+        )
+    }
+
+    @Test
+    fun mtgSoftRejectsNeuralBelowVisualFloor() {
+        val parsed = ParsedCardText(
+            nameGuess = "Bolla Protettiva",
+            collectorNumber = "80",
+            setCode = null,
+        )
+        val weak = IdentifiedCard(
+            game = Game.MTG,
+            name = "Protective Bubble",
+            setCode = "lrw",
+            setName = "Lorwyn",
+            collectorNumber = "80",
+            ocrScore = 0.615f,
+            visualScore = 0.50f,
+            matchConfidence = 0.62f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(weak, parsed)
+        assertFalse(decision.accepted)
+        assertTrue(decision.nameConflict)
+    }
+
+    @Test
+    fun mtgSoftAcceptsItalianOcrAgainstEnglishGalleryWhenCollectorMatches() {
+        // Device log: OCR Ostinazione Mortale cn=17, gallery Mortal Obstinacy v≈0.59.
+        val parsed = ParsedCardText(
+            nameGuess = "Ostinazione Mortale",
+            collectorNumber = "17",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Mortal Obstinacy",
+            setCode = "jou",
+            setName = "Journey into Nyx",
+            collectorNumber = "17",
+            ocrScore = 0.60f,
+            visualScore = 0.586f,
+            matchConfidence = 0.598f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertTrue(decision.accepted)
+        assertEquals("cn+neural", decision.reason)
+        assertTrue(decision.cnOk)
+    }
+
+    @Test
+    fun mtgPrintedNameClearsItalianConflictWithEnglishOracle() {
+        val parsed = ParsedCardText(
+            nameGuess = "Ostinazione Mortale",
+            collectorNumber = "17",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Mortal Obstinacy",
+            setCode = "jou",
+            setName = "Journey into Nyx",
+            collectorNumber = "17",
+            ocrScore = 0.80f,
+            visualScore = 0.59f,
+            matchConfidence = 0.70f,
+            printedName = "Ostinazione Mortale",
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertTrue(decision.accepted)
+        assertTrue(decision.nameOk)
+        assertFalse(decision.nameConflict)
+        assertEquals("name+cn", decision.reason)
     }
 
     @Test
@@ -317,6 +425,137 @@ class MatchFusionTest {
         assertFalse(decision.accepted)
         assertTrue(decision.shortCn)
         assertEquals("cnShortWeak", decision.reason)
+    }
+
+    @Test
+    fun strictAutoSaveNoteWhenWaitIsEnabled() {
+        val strong = MatchFusion.score(
+            card("Lightning Bolt", "m21", "161", ocr = 0.90f, visual = 0.88f),
+            parsed,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(strong, parsed)
+        assertTrue(decision.strict)
+        assertTrue(MatchFusion.allowsAutoSave(decision))
+        val note = MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+        )
+        assertEquals(MatchFusion.ConfirmMatchTone.AUTO_SAVE, note.tone)
+        assertEquals("Salvataggio automatico", note.title)
+        assertTrue(note.body.contains("Riconoscimento forte"))
+        assertTrue(note.body.contains("da sola"))
+    }
+
+    @Test
+    fun softMatchNoteRequiresManualSave() {
+        val mtgParsed = ParsedCardText(
+            nameGuess = "Lightning Bolt",
+            collectorNumber = "181",
+            setCode = "dft",
+        )
+        val partial = IdentifiedCard(
+            game = Game.MTG,
+            name = "Lightning Bolt",
+            setCode = "dft",
+            setName = "Aetherdrift",
+            collectorNumber = "181",
+            ocrScore = 0.78f,
+            visualScore = null,
+            matchConfidence = 0.68f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(partial, mtgParsed)
+        assertTrue(decision.accepted)
+        assertFalse(MatchFusion.allowsAutoSave(decision))
+        val note = MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+        )
+        assertEquals(MatchFusion.ConfirmMatchTone.CONFIRM, note.tone)
+        assertEquals("Conferma a mano", note.title)
+        assertTrue(note.body.contains("set e numero collezionista coincidono"))
+        assertTrue(note.body.contains("74%"))
+        assertTrue(note.body.contains("Tocca Salva"))
+        assertTrue(note.body.contains("68%"))
+    }
+
+    @Test
+    fun strictNoteWhenAutoSaveWaitIsOff() {
+        val strong = MatchFusion.score(
+            card("Lightning Bolt", "m21", "161", ocr = 0.90f, visual = 0.88f),
+            parsed,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(strong, parsed)
+        val note = MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 0,
+        )
+        assertEquals(MatchFusion.ConfirmMatchTone.CONFIRM, note.tone)
+        assertTrue(note.body.contains("Impostazioni"))
+        assertTrue(note.body.contains("Tocca Salva"))
+    }
+
+    @Test
+    fun choosingAnotherPrintDropsAutomaticSave() {
+        val strong = MatchFusion.score(
+            card("Lightning Bolt", "m21", "161", ocr = 0.90f, visual = 0.88f),
+            parsed,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(strong, parsed)
+        val note = MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+            selectedMatchesGate = false,
+        )
+        assertEquals(MatchFusion.ConfirmMatchTone.BLOCKED, note.tone)
+        assertTrue(note.body.contains("altra stampa"))
+        assertFalse(note.body.contains("da sola"))
+    }
+
+    @Test
+    fun editingTheCardCancelsTheAutomaticSaveNote() {
+        val strong = MatchFusion.score(
+            card("Lightning Bolt", "m21", "161", ocr = 0.90f, visual = 0.88f),
+            parsed,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(strong, parsed)
+        val note = MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+            autoSaveCancelled = true,
+        )
+        assertEquals(MatchFusion.ConfirmMatchTone.CONFIRM, note.tone)
+        assertTrue(note.body.contains("Hai modificato la scheda"))
+        assertFalse(note.body.contains("da sola"))
+    }
+
+    @Test
+    fun manualScanKeepsStrictMatchOnTheSaveButton() {
+        val strong = MatchFusion.score(
+            card("Lightning Bolt", "m21", "161", ocr = 0.90f, visual = 0.88f),
+            parsed,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(strong, parsed)
+        val note = MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = false,
+            autoSaveWaitSeconds = 5,
+        )
+        assertEquals(MatchFusion.ConfirmMatchTone.CONFIRM, note.tone)
+        assertTrue(note.body.contains("Tocca Salva"))
+        assertFalse(note.body.contains("da sola"))
+    }
+
+    @Test
+    fun nameConflictPhraseUsesTheReadTitle() {
+        assertEquals(
+            "il nome letto («Staravia di Ubaldo») non coincide con «Iono's Tadbulb»",
+            MatchFusion.signalPhrase("nameConflict name=Staravia di Ubaldo top=Iono's Tadbulb"),
+        )
     }
 
     private fun card(

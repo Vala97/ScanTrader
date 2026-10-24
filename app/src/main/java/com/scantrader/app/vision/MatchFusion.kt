@@ -57,14 +57,20 @@ object MatchFusion {
 
     /**
      * Soft floors for auto-scan without a decisive neural hit.
-     * Confirm screen is the safety net — better to open confirm than loop forever.
+     * Opening confirm is the safety net. Auto-save on that screen stays off
+     * unless [AutoMatchDecision.strict] is set.
      */
     const val POKEMON_AUTO_CONFIDENCE_MIN = 0.48f
     const val MTG_AUTO_CONFIDENCE_MIN = 0.52f
 
-    /** Result of the auto-scan confidence gate (for logcat diagnostics). */
+    /** Result of the auto-scan confidence gate. */
     data class AutoMatchDecision(
         val accepted: Boolean,
+        /**
+         * True only when the 0.74 bar and its existing strict exceptions passed.
+         * Soft accepts (Pokémon from 0.48, MTG from 0.52) keep [accepted] and leave this false.
+         */
+        val strict: Boolean = false,
         val reason: String,
         val nameOk: Boolean = false,
         val nameConflict: Boolean = false,
@@ -74,6 +80,111 @@ object MatchFusion {
         val shortCn: Boolean = false,
         val confidence: Float? = null,
     )
+
+    enum class ConfirmMatchTone { AUTO_SAVE, CONFIRM, BLOCKED }
+
+    /** Italian copy for the confirm screen: why auto-save will or will not run. */
+    data class ConfirmMatchNote(
+        val title: String,
+        val body: String,
+        val tone: ConfirmMatchTone,
+    )
+
+    /** Configurable confirm-screen wait may fire only for a strict accept. */
+    fun allowsAutoSave(decision: AutoMatchDecision?): Boolean =
+        decision != null && decision.accepted && decision.strict
+
+    fun confirmMatchNote(
+        decision: AutoMatchDecision,
+        fromAutoScan: Boolean,
+        autoSaveWaitSeconds: Int,
+        selectedMatchesGate: Boolean = true,
+        autoSaveCancelled: Boolean = false,
+    ): ConfirmMatchNote {
+        val pct = decision.confidence?.let { confidence ->
+            "${(confidence * 100f).toInt().coerceIn(0, 100)}%"
+        } ?: "senza percentuale"
+        val signal = signalPhrase(decision.reason)
+        val waitOn = autoSaveWaitSeconds > 0
+        return when {
+            decision.strict && fromAutoScan && waitOn && !selectedMatchesGate -> ConfirmMatchNote(
+                title = "Conferma a mano",
+                body = "Il riconoscimento forte ($pct) riguarda un’altra stampa. " +
+                    "Tocca Salva per aggiungere la carta scelta.",
+                tone = ConfirmMatchTone.BLOCKED,
+            )
+            decision.strict && fromAutoScan && waitOn && selectedMatchesGate && autoSaveCancelled ->
+                ConfirmMatchNote(
+                    title = "Conferma a mano",
+                    body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
+                        "Hai modificato la scheda: tocca Salva per aggiungere la carta.",
+                    tone = ConfirmMatchTone.CONFIRM,
+                )
+            decision.strict && fromAutoScan && waitOn && selectedMatchesGate -> ConfirmMatchNote(
+                title = "Salvataggio automatico",
+                body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
+                    "Se non tocchi nulla, la carta entra in collezione da sola.",
+                tone = ConfirmMatchTone.AUTO_SAVE,
+            )
+            decision.strict && fromAutoScan && !waitOn -> ConfirmMatchNote(
+                title = "Riconoscimento forte",
+                body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
+                    "L’attesa in Impostazioni è disattivata. Tocca Salva.",
+                tone = ConfirmMatchTone.CONFIRM,
+            )
+            decision.strict -> ConfirmMatchNote(
+                title = "Riconoscimento forte",
+                body = "Riconoscimento forte ($pct). ${signal.sentence()}. Tocca Salva per aggiungere la carta.",
+                tone = ConfirmMatchTone.CONFIRM,
+            )
+            decision.accepted -> ConfirmMatchNote(
+                title = "Conferma a mano",
+                body = "Match parziale ($pct): $signal. " +
+                    "Resta sotto la soglia forte del 74%. Tocca Salva per aggiungere la carta.",
+                tone = ConfirmMatchTone.CONFIRM,
+            )
+            else -> ConfirmMatchNote(
+                title = "Conferma a mano",
+                body = "Serve un controllo ($pct): $signal. Tocca Salva solo se la carta è quella giusta.",
+                tone = ConfirmMatchTone.CONFIRM,
+            )
+        }
+    }
+
+    /** Short Italian clause for an [AutoMatchDecision.reason] code. */
+    fun signalPhrase(reason: String): String {
+        val conflict = NAME_CONFLICT.matchEntire(reason)
+        if (conflict != null) {
+            val read = conflict.groupValues[1]
+            val proposed = conflict.groupValues[2]
+            return "il nome letto («$read») non coincide con «$proposed»"
+        }
+        return when (reason) {
+            "strict" -> "testo e immagine superano la soglia forte"
+            "nameOk" -> "il nome letto coincide"
+            "cn+count" -> "numero collezionista e totale del set coincidono"
+            "cn+ocr" -> "il numero collezionista coincide, con OCR debole"
+            "conf+visual" -> "immagine e confidenza sono solo medie"
+            "scryfallName" -> "la ricerca per nome ha trovato la carta e il titolo OCR è in un'altra lingua"
+            "cn+neural" -> "il numero coincide e il riconoscimento visivo conferma la carta"
+            "cn+set+visualStrong" -> "set, numero e immagine coincidono"
+            "cn+set" -> "set e numero collezionista coincidono"
+            "name+cn+set" -> "nome, numero e set coincidono"
+            "name+cn" -> "nome e numero collezionista coincidono"
+            "name+set" -> "nome e set coincidono"
+            "nameExact" -> "il nome coincide in modo netto"
+            "name+visual" -> "nome e immagine coincidono"
+            "cn+set+visual" -> "set, numero e immagine coincidono"
+            "confLow" -> "la confidenza è sotto la soglia"
+            "visualLow" -> "l'immagine non assomiglia alla carta"
+            "strictFail" -> "la soglia forte non è raggiunta"
+            "softFail" -> "i segnali OCR non bastano"
+            "cnShortWeak" -> "il numero è corto e gli altri segnali sono deboli"
+            "noTop" -> "nessun candidato"
+            "noConf" -> "manca la confidenza del match"
+            else -> "motivo $reason"
+        }
+    }
 
     /**
      * Gate for hands-free auto-scan.
@@ -105,6 +216,7 @@ object MatchFusion {
         if (strictOk) {
             return AutoMatchDecision(
                 accepted = true,
+                strict = true,
                 reason = "strict",
                 confidence = confidence,
             )
@@ -228,7 +340,10 @@ object MatchFusion {
 
         val nameGuess = parsed.nameGuess?.trim().orEmpty()
         val namePresent = nameGuess.length >= 2
-        val nameOk = namePresent && mtgNameMatches(top.name, nameGuess)
+        val nameOk = namePresent && (
+            mtgNameMatches(top.name, nameGuess) ||
+                mtgNameMatches(top.printedName.orEmpty(), nameGuess)
+            )
         val numbers = OcrParser.collectorCandidates(parsed.collectorNumber)
         val cn = top.collectorNumber.trimStart('0').ifBlank { top.collectorNumber }
         val cnOk = numbers.any {
@@ -249,13 +364,19 @@ object MatchFusion {
             // Only trust the name-search band so IT title → EN Scryfall name is accepted,
             // while Divinatrice→Emrakul (cn mistook +1/+1) stays rejected.
             val fromNameSearch = ocr >= 0.85f && ocr < 0.95f
+            // Gallery top (visual at or above the embedder floor) plus the same collector
+            // is enough: Italian OCR vs the English oracle name is not a different card.
+            val neuralAgrees = cnOk && (visual ?: 0f) >= GalleryMatcher.MIN_SCORE && confidence >= 0.58f
             val softReason = when {
                 fromNameSearch && confidence >= 0.58f -> "scryfallName"
+                neuralAgrees -> "cn+neural"
                 cnOk && setOk && ocr >= 0.95f && (visual ?: 0f) >= 0.70f ->
                     "cn+set+visualStrong"
                 else -> "nameConflict name=$nameGuess top=${top.name}"
             }
-            val accepted = softReason == "scryfallName" || softReason == "cn+set+visualStrong"
+            val accepted = softReason == "scryfallName" ||
+                softReason == "cn+neural" ||
+                softReason == "cn+set+visualStrong"
             return AutoMatchDecision(
                 accepted = accepted,
                 reason = softReason,
@@ -289,10 +410,20 @@ object MatchFusion {
         )
     }
 
+    private val NAME_CONFLICT = Regex("""nameConflict name=(.*) top=(.*)""")
+
+    private fun String.sentence(): String = replaceFirstChar { it.uppercaseChar() }
+
     private fun looksLikeMtgRulesNoise(name: String): Boolean =
         Regex(
             """(?i)\b(?:if|exile|target|creature|battlefield|mana|wizards|mtgstory)\b""",
         ).containsMatchIn(name) || name.trim().length < 4
+
+    /** True when [cardTitle] and the OCR title share enough tokens (EN or printed IT). */
+    fun titleMatches(cardTitle: String?, ocrTitle: String?): Boolean {
+        if (cardTitle.isNullOrBlank() || ocrTitle.isNullOrBlank()) return false
+        return mtgNameMatches(cardTitle, ocrTitle)
+    }
 
     /** Loose token overlap for EN/IT MTG titles (not Pokémon species matching). */
     private fun mtgNameMatches(cardName: String, query: String): Boolean {
@@ -340,11 +471,7 @@ object MatchFusion {
             val nameHit = if (card.game == Game.POKEMON) {
                 PokemonCatalog.nameMatches(card.name, name)
             } else {
-                val tokens = name.lowercase()
-                    .split(Regex("""[^a-z0-9àèéìòù]+"""))
-                    .filter { it.length >= 3 }
-                val cardName = card.name.lowercase()
-                tokens.isNotEmpty() && tokens.count { token -> cardName.contains(token) } > 0
+                titleMatches(card.name, name) || titleMatches(card.printedName, name)
             }
             if (nameHit) {
                 score += 0.25f

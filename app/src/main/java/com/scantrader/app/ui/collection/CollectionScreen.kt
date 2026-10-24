@@ -4,8 +4,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,7 +19,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.Card
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,6 +40,7 @@ import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.ui.CollectionViewModel
 import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
+import com.scantrader.app.ui.theme.scanTraderAppBarColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,9 +55,11 @@ fun CollectionScreen(
     val title = collection?.name ?: "Collezione"
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(title) },
+                title = { Text(title, fontWeight = FontWeight.SemiBold) },
+                colors = scanTraderAppBarColors(),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Indietro")
@@ -67,7 +72,7 @@ fun CollectionScreen(
                         },
                         enabled = cards.isNotEmpty(),
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = "Esporta CSV")
+                        Icon(Icons.Default.Share, contentDescription = "Esporta un CSV per gioco")
                     }
                     IconButton(onClick = onScan) {
                         Icon(Icons.Default.CameraAlt, contentDescription = "Scan")
@@ -82,8 +87,15 @@ fun CollectionScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .padding(24.dp),
+                verticalArrangement = Arrangement.Center,
             ) {
-                Text("Nessuna carta. Scansiona o cerca per aggiungere.")
+                Text("Nessuna carta", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Scansiona o cerca per aggiungere.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         } else {
             LazyColumn(
@@ -94,9 +106,12 @@ fun CollectionScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(cards, key = { it.id }) { card ->
-                    Card(Modifier.fillMaxWidth()) {
+                    ElevatedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
                         Row(
-                            Modifier.padding(12.dp),
+                            Modifier.padding(14.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             CardImage(
@@ -117,17 +132,14 @@ fun CollectionScreen(
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
-                                val avgPrice = if (card.foil) {
-                                    card.priceEurFoil?.takeIf { it.isNotBlank() } ?: card.priceEur
-                                } else {
-                                    card.priceEur
-                                }
+                                val avgPrice = com.scantrader.app.data.catalog.ListingAverage.display(
+                                    eur = card.priceEur,
+                                    eurFoil = card.priceEurFoil,
+                                    source = card.priceSource,
+                                    foil = card.foil,
+                                )
                                 Text(
-                                    text = if (!avgPrice.isNullOrBlank()) {
-                                        "Prezzo medio: €$avgPrice"
-                                    } else {
-                                        "Prezzo medio: n/d"
-                                    },
+                                    text = avgPrice?.let { "Prezzo medio: $it" } ?: "Prezzo medio: n/d",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.Medium,

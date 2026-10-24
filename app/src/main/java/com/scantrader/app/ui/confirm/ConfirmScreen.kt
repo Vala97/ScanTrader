@@ -16,13 +16,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -47,12 +49,16 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.scantrader.app.data.catalog.CardLanguageDetector
+import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.ui.ConfirmViewModel
 import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
+import com.scantrader.app.ui.theme.scanTraderAppBarColors
+import com.scantrader.app.vision.MatchFusion
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,6 +76,7 @@ fun ConfirmScreen(
     var query by remember { mutableStateOf(viewModel.parsed?.nameGuess.orEmpty()) }
     var selected by remember { mutableStateOf<IdentifiedCard?>(null) }
     var quantity by remember { mutableIntStateOf(1) }
+    var languageTouched by remember { mutableStateOf(false) }
     var language by remember {
         mutableStateOf(viewModel.sessionLanguage ?: defaults.language)
     }
@@ -80,9 +87,24 @@ fun ConfirmScreen(
     var collectionId by remember { mutableStateOf(viewModel.preferredCollectionId) }
     var autoSaveCancelled by remember { mutableStateOf(false) }
     var secondsLeft by remember { mutableIntStateOf(0) }
+    val autoMatch = viewModel.autoMatch
+    val gatedKey = viewModel.autoMatchCardKey
+    val selectedKey = selected?.identityKey()
+    val selectedMatchesGate = gatedKey == null || selectedKey == null || gatedKey == selectedKey
     val autoSaveArmed = viewModel.fromAutoScan &&
         defaults.autoSaveWaitSeconds > 0 &&
+        MatchFusion.allowsAutoSave(autoMatch) &&
+        selectedMatchesGate &&
         !autoSaveCancelled
+    val matchNote = autoMatch?.let { decision ->
+        MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = viewModel.fromAutoScan,
+            autoSaveWaitSeconds = defaults.autoSaveWaitSeconds,
+            selectedMatchesGate = selectedMatchesGate,
+            autoSaveCancelled = autoSaveCancelled,
+        )
+    }
 
     fun cancelAutoSave() {
         autoSaveCancelled = true
@@ -97,9 +119,30 @@ fun ConfirmScreen(
 
     LaunchedEffect(Unit) { viewModel.reload() }
     LaunchedEffect(defaults) {
-        // Prefer last choice from this session; otherwise follow saved defaults.
-        language = viewModel.sessionLanguage ?: defaults.language
         condition = viewModel.sessionCondition ?: defaults.condition
+        if (!languageTouched && !defaults.detectCardLanguage) {
+            language = viewModel.sessionLanguage ?: defaults.language
+        }
+    }
+    LaunchedEffect(selected?.identityKey(), defaults.detectCardLanguage) {
+        if (languageTouched || !defaults.detectCardLanguage) return@LaunchedEffect
+        val card = selected ?: return@LaunchedEffect
+        val detected = viewModel.detectCardLanguage(card)
+        language = CardLanguageDetector.choose(
+            detectEnabled = true,
+            detected = detected,
+            lastChosen = viewModel.sessionLanguage ?: defaults.language,
+        )
+    }
+    LaunchedEffect(selected?.identityKey(), language, condition, foil) {
+        val card = selected ?: return@LaunchedEffect
+        val priced = viewModel.proposePrice(card, language, condition, foil)
+        val changed = priced.priceEur != card.priceEur ||
+            priced.priceEurFoil != card.priceEurFoil ||
+            priced.priceUsd != card.priceUsd ||
+            priced.priceSource != card.priceSource ||
+            priced.priceCurrency != card.priceCurrency
+        if (changed) selected = priced
     }
     LaunchedEffect(candidates) {
         if (selected == null || candidates.none { sameCard(it, selected) }) {
@@ -132,8 +175,13 @@ fun ConfirmScreen(
         }
     }
 
-    val displayedPrice = selected?.let { card ->
-        if (foil) card.priceEurFoil?.takeIf { it.isNotBlank() } ?: card.priceEur else card.priceEur
+    val priceLine = selected?.let { card ->
+        ListingAverage.display(
+            eur = card.priceEur,
+            eurFoil = card.priceEurFoil,
+            source = card.priceSource,
+            foil = foil,
+        )
     }
     val canSave = selected != null && collectionId != null && !saving
     val saveLabel = when {
@@ -143,8 +191,10 @@ fun ConfirmScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
+                colors = scanTraderAppBarColors(),
                 title = {
                     Column {
                         Text(selected?.name ?: "Conferma carta")
@@ -187,6 +237,11 @@ fun ConfirmScreen(
                         Button(
                             onClick = { doSave() },
                             enabled = canSave,
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(52.dp),
@@ -209,6 +264,9 @@ fun ConfirmScreen(
         ) {
             if (!viewModel.errorMessage.isNullOrBlank()) {
                 item { Text(viewModel.errorMessage!!) }
+            }
+            matchNote?.let { note ->
+                item { MatchNote(note) }
             }
 
             selected?.let { current ->
@@ -242,11 +300,7 @@ fun ConfirmScreen(
                             )
                         }
                         Text(
-                            text = when {
-                                displayedPrice != null && foil -> "Prezzo Cardmarket (foil): €$displayedPrice"
-                                displayedPrice != null -> "Prezzo Cardmarket: €$displayedPrice"
-                                else -> "Prezzo EUR non disponibile su Scryfall"
-                            },
+                            text = priceLine?.let { "Prezzo medio: $it" } ?: "Prezzo medio: n/d",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium,
@@ -282,6 +336,7 @@ fun ConfirmScreen(
                         selected = language,
                         onSelect = {
                             cancelAutoSave()
+                            languageTouched = true
                             language = it
                             viewModel.setLanguage(it)
                         },
@@ -378,12 +433,13 @@ fun ConfirmScreen(
             }
             items(candidates, key = { candidateKey(it) }) { card ->
                 val isSelected = sameCard(selected, card)
-                Card(
-                    Modifier
+                ElevatedCard(
+                    shape = MaterialTheme.shapes.large,
+                    modifier = Modifier
                         .fillMaxWidth()
                         .then(
                             if (isSelected) {
-                                Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.medium)
+                                Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
                             } else {
                                 Modifier
                             },
@@ -426,6 +482,31 @@ fun ConfirmScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MatchNote(note: MatchFusion.ConfirmMatchNote) {
+    val (container, content) = when (note.tone) {
+        MatchFusion.ConfirmMatchTone.AUTO_SAVE ->
+            MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+        MatchFusion.ConfirmMatchTone.CONFIRM ->
+            MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
+        MatchFusion.ConfirmMatchTone.BLOCKED ->
+            MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
+    }
+    Surface(
+        color = container,
+                    shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(note.title, fontWeight = FontWeight.SemiBold, color = content)
+            Text(note.body, style = MaterialTheme.typography.bodyMedium, color = content)
         }
     }
 }

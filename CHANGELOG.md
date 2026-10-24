@@ -5,15 +5,42 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+## [1.0] - 2026-10-24
+
+Prima versione: scan Magic e Pokémon, collezioni locali, conferma con salvataggio automatico solo sui match forti, prezzi in euro e export CSV per CardTrader.
+
 ### Aggiunto
+- Durante la schermata di scan lo schermo resta acceso (`FLAG_KEEP_SCREEN_ON`), così il telefono non va in blocco da solo. Il flag si toglie uscendo dallo scan.
+- Scelta della **lente** nel pannello Impostazioni scan (e in Impostazioni): Automatica, Principale, Ultra-grandangolo, Teleobiettivo. Si elencano le fotocamere posteriori, comprese le lenti fisiche della multi-camera logica (nome in base alla focale). Se una lente fisica non si può aprire, si usano gli zoom 0,5× / 1× / 2× / 5× dentro l’intervallo dello zoom. Con una sola scelta il selettore resta nascosto. La preferenza è salvata; torcia e auto-scan restano attivi.
+- Schermata **Informazioni**: versione visibile letta da `BuildConfig` (`Versione V1.0 (build 1)`). Le build debug aggiungono il suffisso `· debug`.
 - Riconoscimento neurale **Pokémon**: import di un pack `.stcat` (gallery Milo su catalogo TCGdex EN) da **Impostazioni → Riconoscimento Pokémon → Importa .stcat**.
 - Strumento `tools/build_pokemon_stcat` (Python) per generare `pokemon.stcat`, con modalità smoke su pochi set.
 - Selezione della fotocamera posteriore da usare per la scansione (`CameraDevices`).
 - Conversione dei frame CameraX in bitmap dritte con gestione rotazione/EXIF (`CameraBitmaps`), così il ritaglio colpisce titolo e numero di collezione.
 - Auto-Scan con salvataggio automatico in collezione dopo un'attesa configurabile.
+- In **Impostazioni generali**, «Rileva lingua dalla carta» (attivo di default). In conferma la lingua è quella del titolo letto, confrontato con il nome stampato (Scryfall `it`/`de`/`fr`/`es`/`pt`/`ja`/… o il nome TCGdex). Se il confronto non è chiaro, resta l’ultima lingua scelta. Con l’interruttore spento si usa solo l’ultima lingua.
+- Prezzo medio Magic da Scryfall in euro (`prices.eur` / `prices.eur_foil`), senza token. CardTrader è opzionale: solo se in Impostazioni c’è un token API (cifrato nel Keystore del telefono, non nel progetto) si cerca l’espansione, il blueprint con lo stesso `scryfall_id` e la media delle inserzioni (lingua, condizione e foil se ce ne sono, altrimenti tutte). Senza token non parte nessuna richiesta a CardTrader. L’etichetta dice la fonte (`Scryfall`, `Scryfall (circa)`, `CardTrader`, `Cardmarket`).
 - Nuovi test: `CameraBitmapsTest`, `EmbeddingCatalogStcatTest`, `GalleryMergeTest` e casi aggiuntivi per OCR, fusione dei match e catalogo Pokémon.
 
 ### Modificato
+- Export CSV CardTrader allineato a `POST /product_imports`: lingue con i codici (`en`, `it`, `fr`, `de`, `es`, `pt`, `jp`, `kr`, `zh-CN`), Damaged esportato come `Poor`, colonna `price_cents` in centesimi. Un file per gioco; su CardTrader va scelto aggiungi allo stock.
+- Icona dell’app: medaglione con il robot e la sfera ciano, al posto dell’icona blu. È usata come icona adattiva (anche monocromatica) e compare in piccolo in **Informazioni**.
+- Interfaccia ridisegnata in stile Material 3 con palette blu, in chiaro e in scuro: sfondi blu navy, primario blu acceso, accenti ciano. Tipografia, angoli, spaziatura, card e controlli sono allineati su tutte le schermate (home, scan e pannello impostazioni, conferma, collezione, informazioni, dialoghi e banner).
+- Scelta del gioco prima dello scan: card grandi con i loghi Pokémon e Magic. Gli stessi loghi, in piccolo, compaiono nel selettore del gioco sulla schermata di scan.
+- Versione dell’app impostata a `versionName` `1.0` (`versionCode` 1). Il salvataggio automatico in conferma parte solo se il match supera la soglia forte (74%); i match deboli restano da confermare a mano.
+
+### Corretto
+- Il prezzo Magic non resta più su «n/d» quando la stampa letta (spesso non inglese) non ha `prices.eur`. Si mostra l’euro della stampa esatta; se manca, quello della stampa inglese con lo stesso set e numero di collezione; se manca ancora, il più basso tra le ristampe con un prezzo in euro e, a parità, la più recente. Quei due fallback sono segnati `Scryfall (circa)`. Il prezzo in dollari non viene mostrato.
+- L’auto-scan di una carta italiana non resta più ~20 secondi su «analisi in corso» quando l’OCR legge `l'Ostinazione Mortale` o `'Ostinazione Mortale` e la gallery trova il nome inglese (Mortal Obstinacy). L’apostrofo e l’articolo `l'` / `L'` / `1'` in testa al titolo si tolgono. Il nome stampato nella lingua di scan (Scryfall, in cache) si confronta subito con l’OCR; se resta un conflitto di nome, la ricerca nel catalogo parte al primo frame, senza aspettare la stabilità. Il download dell’immagine non blocca il salvataggio: parte in background e la conferma la mostra appena è pronta. Numero uguale e hit visivo (collector 17, visual ≥ 0,55) bastano per accettare.
+- L’auto-scan non resta più fermo su «analisi in corso» quando legge sempre lo stesso nome e numero. La ricerca parte dopo due letture uguali (nome + numero + set) e, se l’id non cambia, si ripete dopo circa 2 secondi: non resta bloccata per sempre. Con nome e numero già stabili non rifà l’OCR dell’intera carta. Se il pack Magic è installato, il riconoscimento visivo può salvare la carta anche mentre la ricerca nel catalogo è in attesa (es. «Bolla Protettiva» / Protective Bubble, numero 80).
+- «Stendardiere del Lancio della Rana» è Frogtosser Banneret. Il 64/150 è Morningtide (`mor`, 150 carte), non Bloomburrow. Se il nome inglese non torna nulla, la ricerca `lang:it !"…"` usa il nome stampato italiano e, con il numero di collezione, sceglie quella stampa.
+- Il nome della carta non include più il costo di mana in alto a destra (`Llanowar Elves G`, `Shivan Dragon 4RR`, `Counterspell UU`, `Pioppo Tagliaerbacce 2G`, simboli `{G}`). Il ritaglio del titolo lascia fuori il lato destro della barra. Se la ricerca per nome fallisce, si riprova senza quei token; se ci sono set e numero, quelli restano la prima query. Su Pokémon si ignora anche `PS 120` / `HP 120`.
+- Scan Magic che non trovava la carta (es. «Pioppo Tagliaerbacce», 83/150) con Scryfall in 429. Le chiamate sono in coda, distanziate (~10 al secondo), con cache anche dei «non trovato» e pausa dopo un HTTP 429 (`Retry-After`). In auto-scan, durante la pausa, compare «Scryfall occupato, riprovo…» e non partono nuove query. Lo stesso testo OCR non viene chiesto di nuovo a ogni frame.
+- Il numero e il set si leggono su tutta la fascia bassa della carta (sinistra, centro e destra, circa il 15% in basso), non solo in basso a sinistra. Un intervallo di copyright (`1993-2008`, anche `01993-20O8`) e la riga Wizards non diventano più set o numero. `N3/150` torna `83/150`. Se il titolo in alto è quasi uguale a una frase del testo completo, si usa quella.
+- Se il pack Magic non è installato, lo scan lo segnala: il riconoscimento resta sull’OCR.
+- Dopo il salvataggio, tornando allo scan, lente e zoom restano quelli di prima (anche il pinch e il preset della lente). Il rapporto 1× che la fotocamera riporta al bind non sostituisce l’inquadratura.
+- Aprendo **Impostazioni scan** l’anteprima non si blocca più e il riquadro della carta resta della stessa misura. Il pannello è un overlay: non ridimensiona la preview e non rifà il bind della fotocamera.
+- Dopo il salvataggio, automatico o manuale, si torna subito allo scan dello stesso gioco, con la fotocamera pronta e l’auto-scan riarmato. Non si ripresenta la scelta Pokémon / Magic.
 - Parser OCR molto più robusto (nomi, set, numeri di collezione) e lookup del catalogo migliorato per MTG e Pokémon.
 - Fusione dei risultati (OCR + fingerprint + gallery neurale) e gestione dei pack neurali rivisti.
 - Schermate di scansione, conferma e impostazioni riorganizzate (impostazioni generali scorrevoli: lingua, condizione, attesa auto-scan, fotocamera).

@@ -15,10 +15,10 @@ object CardFrameGeometry {
 
     /**
      * Max fraction of preview height for the frame.
-     * Keep high enough that the bottom collector line stays visible above the control bar.
+     * The settings panel is an overlay and must not change this: the on-screen
+     * guide and the OCR crop share one rectangle.
      */
-    const val MAX_HEIGHT_FRACTION_EXPANDED = 0.42f
-    const val MAX_HEIGHT_FRACTION_COLLAPSED = 0.62f
+    const val MAX_HEIGHT_FRACTION = 0.62f
 
     /** Shift frame slightly upward so bottom strip clears the shutter bar. */
     const val TOP_BIAS_FRACTION = 0.02f
@@ -33,20 +33,16 @@ object CardFrameGeometry {
         val bottom: Float get() = top + height
     }
 
-    fun frameIn(viewWidth: Float, viewHeight: Float, panelExpanded: Boolean): Rect {
-        val maxH = if (panelExpanded) MAX_HEIGHT_FRACTION_EXPANDED else MAX_HEIGHT_FRACTION_COLLAPSED
+    fun frameIn(viewWidth: Float, viewHeight: Float): Rect {
         val frameW = viewWidth * WIDTH_FRACTION
-        val frameH = (frameW / ASPECT).coerceAtMost(viewHeight * maxH)
+        val frameH = (frameW / ASPECT).coerceAtMost(viewHeight * MAX_HEIGHT_FRACTION)
         val left = (viewWidth - frameW) / 2f
         val top = ((viewHeight - frameH) / 2f - viewHeight * TOP_BIAS_FRACTION).coerceAtLeast(viewHeight * 0.08f)
         return Rect(left, top, frameW, frameH)
     }
 
-    fun cropBitmap(
-        source: android.graphics.Bitmap,
-        panelExpanded: Boolean = false,
-    ): android.graphics.Bitmap {
-        val rect = frameIn(source.width.toFloat(), source.height.toFloat(), panelExpanded)
+    fun cropBitmap(source: android.graphics.Bitmap): android.graphics.Bitmap {
+        val rect = frameIn(source.width.toFloat(), source.height.toFloat())
         val x = rect.left.toInt().coerceIn(0, source.width - 1)
         val y = rect.top.toInt().coerceIn(0, source.height - 1)
         val w = rect.width.toInt().coerceAtMost(source.width - x).coerceAtLeast(1)
@@ -55,18 +51,38 @@ object CardFrameGeometry {
     }
 
     /**
-     * Top strip for the card title.
-     * Pokémon ~22% (title + HP). MTG ~14% (name bar only — avoid rules text).
+     * Share of the title-bar width kept for the name.
+     * MTG mana symbols and the Pokémon HP/PS box sit on the right.
+     */
+    const val MTG_TITLE_WIDTH_FRACTION = 0.72f
+    const val POKEMON_TITLE_WIDTH_FRACTION = 0.80f
+
+    /**
+     * Top strip for the card title, left side only.
+     * Pokémon ~22% tall (title row). MTG ~14% (name bar — avoid rules text).
+     * The right of the bar is the mana cost or the HP value, so it is left out.
      */
     fun topNameStrip(cardCrop: android.graphics.Bitmap, mtg: Boolean = false): android.graphics.Bitmap {
         val fraction = if (mtg) 0.14f else 0.22f
+        val widthFraction = if (mtg) MTG_TITLE_WIDTH_FRACTION else POKEMON_TITLE_WIDTH_FRACTION
         val stripH = (cardCrop.height * fraction).toInt().coerceAtLeast(1).coerceAtMost(cardCrop.height)
-        return android.graphics.Bitmap.createBitmap(cardCrop, 0, 0, cardCrop.width, stripH)
+        val stripW = (cardCrop.width * widthFraction).toInt().coerceIn(1, cardCrop.width)
+        return android.graphics.Bitmap.createBitmap(cardCrop, 0, 0, stripW, stripH)
     }
 
     /** Bottom ~24% of the card crop — full width (both corners). */
     fun bottomStrip(cardCrop: android.graphics.Bitmap): android.graphics.Bitmap {
         val stripH = (cardCrop.height * 0.24f).toInt().coerceAtLeast(1)
+        val y = (cardCrop.height - stripH).coerceAtLeast(0)
+        return android.graphics.Bitmap.createBitmap(cardCrop, 0, y, cardCrop.width, stripH)
+    }
+
+    /**
+     * Full-width bottom band (~15%). Older frames print `83/150` in the center
+     * or beside the copyright line; modern frames use the left corner.
+     */
+    fun bottomBandStrip(cardCrop: android.graphics.Bitmap): android.graphics.Bitmap {
+        val stripH = (cardCrop.height * 0.15f).toInt().coerceAtLeast(1).coerceAtMost(cardCrop.height)
         val y = (cardCrop.height - stripH).coerceAtLeast(0)
         return android.graphics.Bitmap.createBitmap(cardCrop, 0, y, cardCrop.width, stripH)
     }

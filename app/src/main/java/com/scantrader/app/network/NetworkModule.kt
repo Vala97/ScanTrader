@@ -12,7 +12,7 @@ object NetworkModule {
         val userAgent = Interceptor { chain ->
             chain.proceed(
                 chain.request().newBuilder()
-                    .header("User-Agent", "ScanTrader/0.1 (https://github.com/Vala97/ScanTrader)")
+                    .header("User-Agent", "ScanTrader/1.0 (Android; +https://github.com/Vala97/ScanTrader)")
                     .header("Accept", "application/json")
                     .build(),
             )
@@ -34,4 +34,21 @@ object NetworkModule {
             .client(client)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
+
+    /** Bearer token is read on each call and is not attached to the Scryfall client. */
+    fun cardTraderClient(token: () -> String?): OkHttpClient {
+        val auth = Interceptor { chain ->
+            val bearer = token()?.trim().orEmpty()
+            val builder = chain.request().newBuilder()
+                .header("Accept", "application/json")
+                .header("User-Agent", "ScanTrader/1.0 (Android; +https://github.com/Vala97/ScanTrader)")
+            if (bearer.isNotEmpty()) builder.header("Authorization", "Bearer $bearer")
+            chain.proceed(builder.build())
+        }
+        return OkHttpClient.Builder()
+            .addInterceptor(auth)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
 }

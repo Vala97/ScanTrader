@@ -3,8 +3,9 @@ package com.scantrader.app.data.catalog
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
-import com.scantrader.app.network.scryfall.ScryfallApi
+import com.scantrader.app.network.scryfall.ScryfallBusyException
 import com.scantrader.app.network.scryfall.ScryfallCard
+import com.scantrader.app.network.scryfall.ScryfallClient
 import com.scantrader.app.network.tcgdex.TcgdexApi
 import com.scantrader.app.network.tcgdex.TcgdexCard
 import com.scantrader.app.network.tcgdex.TcgdexCardBrief
@@ -16,7 +17,7 @@ import kotlinx.coroutines.coroutineScope
 import retrofit2.HttpException
 
 class CatalogLookup(
-    private val scryfall: ScryfallApi,
+    private val scryfall: ScryfallClient,
     private val tcgdex: TcgdexApi,
 ) {
     suspend fun identify(game: Game, parsed: ParsedCardText, manualQuery: String? = null): List<IdentifiedCard> {
@@ -29,84 +30,111 @@ class CatalogLookup(
     }
 
     private suspend fun lookupMtg(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
-        val results = mutableListOf<IdentifiedCard>()
+        if (scryfall.coolingDown()) throw ScryfallBusyException()
         val setCandidates = OcrParser.setCodeCandidates(parsed.setCode)
-            .filter { code -> code.any { it.isLetter() } }
-        val numberCandidates = OcrParser.collectorCandidates(parsed.collectorNumber)
-        val searchName = OcrParser.cleanMtgNameGuess(name)
+            .filter { code -> code.any { it.isLetter() } && code.count { it.isDigit() } < 3 }
+            .take(2)
+        val number = OcrParser.collectorCandidates(parsed.collectorNumber).firstOrNull()
+        val nameAttempts = OcrParser.mtgNameAttempts(name)
+        if (nameAttempts.isEmpty() && number.isNullOrBlank()) return emptyList()
 
-        // Strongest signal for MTG: set + collector number (language-independent).
-        outer@ for (set in setCandidates) {
-            for (number in numberCandidates) {
-                val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.getOrNull()
-                if (card != null) {
-                    results += card.toIdentified(ocrScore = 0.98f)
-                    break@outer
-                }
-            }
+        // Set + collector number wins over a noisy title (mana pips glued to the name).
+        for (set in setCandidates) {
+            if (number.isNullOrBlank()) break
+            val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.orRethrowBusy()
+            if (card != null) return listOf(card.toIdentified(ocrScore = 0.98f))
         }
 
-        if (!parsed.collectorNumber.isNullOrBlank() && setCandidates.isNotEmpty() && results.isEmpty()) {
-            val cn = numberCandidates.first()
-            val setPart = setCandidates.first()
-            runCatching { scryfall.search("cn:\"$cn\" s:$setPart") }
-                .onSuccess { response ->
-                    results += response.data.map { it.toIdentified(ocrScore = 0.78f) }
-                }
+        for (searchName in nameAttempts) {
+            val found = lookupMtgByName(
+                searchName = searchName,
+                number = number,
+                nameAndNumber = number != null && setCandidates.isEmpty(),
+            )
+            if (found.isNotEmpty()) return found
         }
-
-        val idHitDisagreesWithName = results.isNotEmpty() &&
-            !searchName.isNullOrBlank() &&
-            !mtgNameAgrees(results.first().name, searchName)
-
-        // Name search when no id hit, or id hit contradicts OCR title (bad cn from +1/+1).
-        if (!searchName.isNullOrBlank() && (results.isEmpty() || idHitDisagreesWithName)) {
-            val nameHits = mutableListOf<IdentifiedCard>()
-            val longToken = searchName.split(Regex("""\s+"""))
-                .map { it.trim().trim(',', '.', '!', '?') }
-                .filter { it.length >= 8 }
-                .maxByOrNull { it.length }
-            val queries = buildList {
-                add("lang:it !\"$searchName\"")
-                add("!\"$searchName\"")
-                add("lang:it name:\"$searchName\"")
-                // OCR typos (`Traslormazione…`): unique long token still finds the print.
-                if (longToken != null) {
-                    add("lang:it name:$longToken")
-                    add("name:$longToken")
-                }
-                if (!parsed.collectorNumber.isNullOrBlank() && !idHitDisagreesWithName) {
-                    add("cn:${numberCandidates.first()} name:\"$searchName\"")
-                }
-            }
-            for (q in queries) {
-                runCatching { scryfall.search(q) }
-                    .onSuccess { response ->
-                        if (response.data.isNotEmpty()) {
-                            val exact = q.contains("!\"")
-                            nameHits += response.data.take(6).map {
-                                it.toIdentified(ocrScore = if (exact) 0.88f else 0.55f)
-                            }
-                        }
-                    }
-                    .onFailure { if (it !is HttpException) throw it }
-                if (nameHits.isNotEmpty()) break
-            }
-            if (nameHits.isNotEmpty()) {
-                return if (idHitDisagreesWithName) nameHits else (nameHits + results)
-            }
-        }
-        return results
+        return emptyList()
     }
 
-    /** Loose check: shared tokens or substring — IT titles rarely equal EN Scryfall names. */
-    private fun mtgNameAgrees(cardName: String, queryName: String): Boolean {
-        val card = cardName.lowercase().substringBefore("//").trim()
-        val query = queryName.lowercase().trim()
-        if (card.contains(query) || query.contains(card)) return true
-        val qTokens = query.split(Regex("""[^a-z0-9àèéìòù]+""")).filter { it.length >= 4 }
-        if (qTokens.isEmpty()) return false
-        return qTokens.count { token -> card.contains(token) } >= 1
+    /**
+     * One name: collector+name when there is no set code, then fuzzy, then the Italian exact title.
+     * [lookupMtg] calls this again with the trailing mana token removed when the first try misses.
+     */
+    private suspend fun lookupMtgByName(
+        searchName: String,
+        number: String?,
+        nameAndNumber: Boolean,
+    ): List<IdentifiedCard> {
+        val safeName = searchName.replace("\"", "").trim()
+        if (safeName.isBlank()) return emptyList()
+        // English `name:` field. An Italian printed title misses here.
+        if (nameAndNumber && !number.isNullOrBlank()) {
+            val byNumber = searchOnce("cn:$number (lang:it name:\"$safeName\" OR name:\"$safeName\")")
+            if (byNumber.isNotEmpty()) return byNumber
+        }
+        val fuzzy = runCatching { scryfall.namedFuzzy(safeName) }.orRethrowBusy()
+        val cnOk = number.isNullOrBlank() || collectorEquals(fuzzy?.collectorNumber, number)
+        if (fuzzy != null && cnOk) {
+            return listOf(fuzzy.toIdentified(ocrScore = 0.72f))
+        }
+        return lookupItalianPrintedName(safeName, number)
+    }
+
+    /**
+     * `lang:it !"…"` matches [ScryfallCard.printedName] (there is no `printed_name:` keyword).
+     * The Italian scan is often a different printing than the one OCR numbered: Morningtide
+     * prints Frogtosser Banneret as 64/150, while the Italian object on Scryfall is another set.
+     * Resolve the English name, then pick the print with the collector number.
+     */
+    private suspend fun lookupItalianPrintedName(safeName: String, number: String?): List<IdentifiedCard> {
+        val printed = searchCards("lang:it !\"$safeName\"")
+        val italian = printed.firstOrNull() ?: return emptyList()
+        if (number.isNullOrBlank() || collectorEquals(italian.collectorNumber, number)) {
+            return listOf(italian.toIdentified(ocrScore = 0.88f))
+        }
+        val english = italian.name.replace("\"", "").trim()
+        if (english.isNotBlank() && !english.equals(safeName, ignoreCase = true)) {
+            val sameNumber = searchCards("cn:$number !\"$english\"")
+            val print = sameNumber.firstOrNull()
+            if (print != null) {
+                val title = italian.printedName?.takeIf { it.isNotBlank() } ?: safeName
+                return listOf(
+                    print.toIdentified(ocrScore = 0.9f).copy(
+                        name = title,
+                        printedName = title,
+                        printedLang = "it",
+                    ),
+                )
+            }
+        }
+        return listOf(italian.toIdentified(ocrScore = 0.88f))
+    }
+
+    private suspend fun searchCards(query: String): List<ScryfallCard> {
+        val response = runCatching { scryfall.search(query) }
+            .onFailure { if (it !is HttpException && it !is com.scantrader.app.network.scryfall.ScryfallMissException) throw it }
+            .getOrNull()
+            ?: return emptyList()
+        return response.data
+    }
+
+    private suspend fun searchOnce(query: String): List<IdentifiedCard> {
+        val cards = searchCards(query)
+        if (cards.isEmpty()) return emptyList()
+        val exact = query.contains("!\"")
+        return cards.take(4).map { it.toIdentified(ocrScore = if (exact) 0.88f else 0.7f) }
+    }
+
+    private fun <T> Result<T>.orRethrowBusy(): T? {
+        val error = exceptionOrNull()
+        if (error is ScryfallBusyException) throw error
+        return getOrNull()
+    }
+
+    private fun collectorEquals(cardNumber: String?, wanted: String): Boolean {
+        val left = cardNumber?.filter { it.isDigit() }?.trimStart('0').orEmpty()
+        val right = wanted.filter { it.isDigit() }.trimStart('0')
+        return left.isNotEmpty() && left == right
     }
 
     private suspend fun lookupPokemon(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
@@ -287,6 +315,23 @@ class CatalogLookup(
             imageUrl = bestImageUrl(),
             priceEur = prices?.eur?.takeIf { it.isNotBlank() },
             priceEurFoil = prices?.eurFoil?.takeIf { it.isNotBlank() },
+            priceUsd = prices?.usd?.takeIf { it.isNotBlank() },
+            priceUsdFoil = prices?.usdFoil?.takeIf { it.isNotBlank() },
+            priceCurrency = if (
+                !prices?.eur.isNullOrBlank() || !prices?.eurFoil.isNullOrBlank()
+            ) {
+                "EUR"
+            } else {
+                null
+            },
+            priceSource = if (
+                !prices?.eur.isNullOrBlank() || !prices?.eurFoil.isNullOrBlank()
+            ) {
+                "Scryfall"
+            } else {
+                null
+            },
+            printedName = printedName?.takeIf { it.isNotBlank() },
             ocrScore = ocrScore,
         )
 
@@ -303,6 +348,8 @@ class CatalogLookup(
             imageUrl = image?.let { "$it/low.webp" },
             priceEur = formatEur(cm?.avg ?: cm?.trend),
             priceEurFoil = formatEur(cm?.avgHolo ?: cm?.trendHolo),
+            priceCurrency = if (cm?.avg != null || cm?.trend != null || cm?.avgHolo != null) "EUR" else null,
+            priceSource = if (cm?.avg != null || cm?.trend != null || cm?.avgHolo != null) "Cardmarket" else null,
         )
     }
 

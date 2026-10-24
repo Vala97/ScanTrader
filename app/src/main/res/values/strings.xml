@@ -1,4 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ScanTrader</string>
+    <string name="about_version">Versione V%1$s (build %2$d)</string>
+    <string name="about_version_debug">Versione V%1$s (build %2$d) · debug</string>
+    <string name="lens_automatic">Automatica</string>
+    <string name="lens_ultrawide">Ultra-grandangolo</string>
+    <string name="lens_main">Principale</string>
+    <string name="lens_main_numbered">Principale %1$d</string>
+    <string name="lens_tele">Teleobiettivo</string>
+    <string name="lens_role_numbered">%1$s %2$d</string>
+    <string name="lens_with_focal">%1$s · %2$.1f mm</string>
+    <string name="lens_with_zoom">%1$s · %2$s×</string>
+    <string name="lens_section">Fotocamera</string>
+    <string name="lens_field">Lente</string>
+    <string name="lens_hint">La lente scelta resta salvata. Torcia e auto-scan continuano a funzionare.</string>
 </resources>

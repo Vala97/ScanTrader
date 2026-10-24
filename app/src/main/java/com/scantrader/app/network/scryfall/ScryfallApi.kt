@@ -12,6 +12,14 @@ interface ScryfallApi {
         @Path("number") number: String,
     ): ScryfallCard
 
+    /** Localized printing (`printed_name`) for a set and collector number. */
+    @GET("cards/{set}/{number}/{lang}")
+    suspend fun cardBySetNumberLang(
+        @Path("set") set: String,
+        @Path("number") number: String,
+        @Path("lang") lang: String,
+    ): ScryfallCard
+
     @GET("cards/{id}")
     suspend fun cardById(
         @Path("id") id: String,
@@ -22,6 +30,12 @@ interface ScryfallApi {
         @Query("q") query: String,
         @Query("unique") unique: String = "prints",
     ): ScryfallSearchResponse
+
+    /** One closest English (or printed) card. 404 when nothing is close. */
+    @GET("cards/named")
+    suspend fun namedFuzzy(
+        @Query("fuzzy") fuzzy: String,
+    ): ScryfallCard
 }
 
 data class ScryfallSearchResponse(
@@ -36,6 +50,12 @@ data class ScryfallCard(
     val set: String,
     @SerializedName("set_name") val setName: String? = null,
     @SerializedName("collector_number") val collectorNumber: String = "",
+    /** Scryfall language code of this printing (`en`, `it`, …). */
+    val lang: String? = null,
+    /** Shared by every printing of the same card. Used to find an EUR price elsewhere. */
+    @SerializedName("oracle_id") val oracleId: String? = null,
+    /** `YYYY-MM-DD`. Tie-break when several prints share the cheapest EUR. */
+    @SerializedName("released_at") val releasedAt: String? = null,
     @SerializedName("image_uris") val imageUris: ScryfallImages? = null,
     @SerializedName("card_faces") val cardFaces: List<ScryfallFace>? = null,
     @SerializedName("tcgplayer_id") val tcgplayerId: Long? = null,

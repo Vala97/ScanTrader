@@ -4,6 +4,7 @@ import com.scantrader.app.data.model.Game
 import com.scantrader.app.scan.OcrParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -475,11 +476,122 @@ class OcrParserTest {
     }
 
     @Test
+    fun oldFrameCopyrightIsNotASetAndMisreadCollectorIsFixed() {
+        // Device OCR: copyright year glued to a digit, N read instead of 8, real cn is 83/150.
+        val full = """
+            Pioppo Tagliaerhacce
+            Creatura — Albero
+            diversa dal Pioppo Tagliaerbacce prende
+        """.trimIndent()
+        val bottom = "14&01993-20O8 Wizards of the Cast, Inc N3/150"
+        val parsed = OcrParser.parse(
+            rawText = full,
+            game = Game.MTG,
+            bottomPriorityText = bottom,
+            namePriorityText = "Pioppo Tagliaerhacce",
+        )
+        assertEquals("Pioppo Tagliaerbacce", parsed.nameGuess)
+        assertEquals("83", parsed.collectorNumber)
+        assertNull(parsed.setCode)
+        assertTrue(!OcrParser.identityReadyForFastPath(parsed))
+    }
+
+    @Test
+    fun oldFrameCenterFractionIgnoresCopyrightYear() {
+        val bottom = "© 1993-2008 Wizards of the Coast 83/150"
+        val parsed = OcrParser.parse("Llanowar Elves", Game.MTG, bottom)
+        assertEquals("Llanowar Elves", parsed.nameGuess)
+        assertEquals("83", parsed.collectorNumber)
+        assertNull(parsed.setCode)
+    }
+
+    @Test
+    fun modernBottomLineOutranksOldFractionInTheSameBand() {
+        val bottom = """
+            83/150
+            0181 • DFT • IT
+        """.trimIndent()
+        val parsed = OcrParser.parse("Entrata Scortese", Game.MTG, bottom)
+        assertEquals("181", parsed.collectorNumber)
+        assertEquals("dft", parsed.setCode)
+    }
+
+    @Test
+    fun setCodesWithTwoDigitsStayValid() {
+        val parsed = OcrParser.parse("Some Name", Game.MTG, "10 • 10E • EN")
+        assertEquals("10", parsed.collectorNumber)
+        assertEquals("10e", parsed.setCode)
+        val double = OcrParser.parse("Some Name", Game.MTG, "2 • 2X2 • EN")
+        assertEquals("2", double.collectorNumber)
+        assertEquals("2x2", double.setCode)
+    }
+
+    @Test
     fun cleanMtgNameGuessStripsTrailingDigits() {
         assertEquals(
             "Trasformazione Raccapricciante",
             OcrParser.cleanMtgNameGuess("Trasformazione Raccapricciante 2"),
         )
         assertEquals("Mountain", OcrParser.cleanMtgNameGuess("Mountain"))
+    }
+
+    @Test
+    fun stripsManaCostFromTheTitle() {
+        assertEquals("Sol Ring", OcrParser.cleanMtgNameGuess("Sol Ring"))
+        assertEquals("Llanowar Elves", OcrParser.cleanMtgNameGuess("Llanowar Elves G"))
+        assertEquals("Shivan Dragon", OcrParser.cleanMtgNameGuess("Shivan Dragon 4RR"))
+        assertEquals("Counterspell", OcrParser.cleanMtgNameGuess("Counterspell UU"))
+        assertEquals("Pioppo Tagliaerbacce", OcrParser.cleanMtgNameGuess("Pioppo Tagliaerbacce 2G"))
+        assertEquals("Counterspell", OcrParser.cleanMtgNameGuess("Counterspell {U}{U}"))
+        assertEquals("Shivan Dragon", OcrParser.cleanMtgNameGuess("4RR Shivan Dragon"))
+        assertEquals("Llanowar Elves", OcrParser.parse("Llanowar Elves G", Game.MTG).nameGuess)
+        assertEquals("Shivan Dragon", OcrParser.parse("Shivan Dragon 4RR", Game.MTG).nameGuess)
+        assertEquals("Counterspell", OcrParser.parse("Counterspell UU", Game.MTG).nameGuess)
+        assertEquals(
+            "Pioppo Tagliaerbacce",
+            OcrParser.parse("Pioppo Tagliaerbacce 2G", Game.MTG).nameGuess,
+        )
+        // Italian Morningtide card: mana cost {1}{B} read as 1W / 1 / 1B on the title.
+        assertEquals(
+            "Stendardiere del Lancio della Rana",
+            OcrParser.cleanMtgNameGuess("Stendardiere del Lancio della Rana 1W"),
+        )
+        assertEquals(
+            "Stendardiere del Lancio della Rana",
+            OcrParser.cleanMtgNameGuess("Stendardiere del Lancio della Rana 1"),
+        )
+        assertEquals(
+            "Stendardiere del Lancio della Rana",
+            OcrParser.parse("Stendardiere del Lancio della Rana 1B", Game.MTG).nameGuess,
+        )
+        assertEquals("Ostinazione Mortale", OcrParser.cleanMtgNameGuess("'Ostinazione Mortale"))
+        assertEquals("Ostinazione Mortale", OcrParser.cleanMtgNameGuess("l'Ostinazione Mortale"))
+        assertEquals("Ostinazione Mortale", OcrParser.cleanMtgNameGuess("L'Ostinazione Mortale"))
+        assertEquals("Ostinazione Mortale", OcrParser.cleanMtgNameGuess("1'Ostinazione Mortale"))
+        assertEquals(
+            "Ostinazione Mortale",
+            OcrParser.cleanMtgNameGuess("l’Ostinazione Mortale"),
+        )
+        assertEquals(
+            "Ostinazione Mortale",
+            OcrParser.parse("'Ostinazione Mortale", Game.MTG).nameGuess,
+        )
+        assertEquals(
+            "Ostinazione Mortale",
+            OcrParser.parse("l'Ostinazione Mortale", Game.MTG).nameGuess,
+        )
+        assertEquals("Go for the Throat", OcrParser.cleanMtgNameGuess("Go for the Throat"))
+        assertEquals(listOf("Shivan Dragon"), OcrParser.mtgNameAttempts("Shivan Dragon 4RR"))
+        assertEquals(listOf("Counterspell"), OcrParser.mtgNameAttempts("Counterspell UU"))
+    }
+
+    @Test
+    fun ignoresPokemonHpOnTheTopRight() {
+        val ps = OcrParser.parse("Pikachu PS 120", Game.POKEMON, "025/165")
+        assertEquals("Pikachu", ps.nameGuess)
+        val hp = OcrParser.parse("Charmander HP 120", Game.POKEMON, "004/165")
+        assertEquals("Charmander", hp.nameGuess)
+        val above = OcrParser.parse("PS 70\nNoibat", Game.POKEMON, "106/217")
+        assertEquals("Noibat", above.nameGuess)
     }
 }

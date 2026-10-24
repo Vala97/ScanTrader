@@ -51,6 +51,10 @@ class CardRepository(private val db: AppDatabase) {
                     quantity = existing.quantity + quantity,
                     priceEur = card.priceEur ?: existing.priceEur,
                     priceEurFoil = card.priceEurFoil ?: existing.priceEurFoil,
+                    priceUsd = card.priceUsd ?: existing.priceUsd,
+                    priceUsdFoil = card.priceUsdFoil ?: existing.priceUsdFoil,
+                    priceCurrency = card.priceCurrency ?: existing.priceCurrency,
+                    priceSource = card.priceSource ?: existing.priceSource,
                     imageUrl = card.imageUrl ?: existing.imageUrl,
                 ),
             )
@@ -72,6 +76,10 @@ class CardRepository(private val db: AppDatabase) {
                     foil = foil,
                     priceEur = card.priceEur,
                     priceEurFoil = card.priceEurFoil,
+                    priceUsd = card.priceUsd,
+                    priceUsdFoil = card.priceUsdFoil,
+                    priceCurrency = card.priceCurrency,
+                    priceSource = card.priceSource,
                 ),
             )
         }

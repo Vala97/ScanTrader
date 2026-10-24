@@ -4,17 +4,30 @@ App Android non ufficiale: scansiona carte **Magic: The Gathering** e **Pokémon
 
 Non è affiliata a Wizards of the Coast, The Pokémon Company, Nintendo o CardTrader.
 
-## Cosa fa (MVP)
+**V1.0** (build 1). La stessa stringa è in **Informazioni** (`Versione V1.0 (build 1)`; le build debug aggiungono `· debug`).
 
-1. Scan carta singola o sessione (più carte di fila)
-2. Riconoscimento **ibrido**: OCR + fingerprint arte + (opzionale) pack neurale Milo on-device (AGPL) con gallery Scryfall (MTG) e/o TCGdex EN (Pokémon)
-3. Conferma lingua, condizione, foil, quantità, collezione (con % match)
-4. Export CSV CardTrader (un file per gioco) tramite share Android
+## Cosa fa
+
+- **Scelta del gioco** con i loghi Pokémon e Magic, prima dello scan e nel selettore sulla schermata di scan.
+- Scan di una carta o di una sessione. **Auto-scan** riconosce la carta e, se il match supera la soglia forte (74%), la **salva da solo** dopo un’attesa configurabile, poi **torna allo scan dello stesso gioco** con fotocamera pronta e auto-scan riarmato. I match deboli restano da confermare a mano.
+- Durante lo scan lo **schermo resta acceso**.
+- **Lente e zoom**: Automatica, Principale, Ultra-grandangolo, Teleobiettivo. Se una lente fisica non si apre, i preset 0,5× / 1× / 2× / 5× restano dentro l’intervallo dello zoom. Lente e zoom (anche il pinch) restano dopo il salvataggio.
+- Riconoscimento **ibrido**: OCR, fingerprint dell’arte e **pack neurali** Milo on-device (opzionali, AGPL). Magic usa una gallery Scryfall; Pokémon una gallery TCGdex in inglese.
+- **Nomi localizzati**: una carta italiana (o in un’altra lingua) si risolve dal nome stampato e dal numero di collezione, non solo dal nome inglese.
+- **«Rileva lingua dalla carta»** in Impostazioni generali (attivo di default). In conferma la lingua proposta è quella del titolo letto; se il confronto non è chiaro, resta l’ultima lingua scelta. Con l’interruttore spento si usa solo l’ultima lingua.
+- **Prezzi in euro.** Magic usa Scryfall (`prices.eur` / `prices.eur_foil`), senza token: stampa esatta, poi la stampa inglese dello stesso set e numero, poi la ristampa di carta più economica (a parità, la più recente). I fallback sono segnati come approssimati (`Scryfall (circa)`). Pokémon usa Cardmarket. Il prezzo in dollari non viene mostrato.
+- **Token API CardTrader** opzionale, in Impostazioni, cifrato nel Keystore del telefono. Solo con un token il prezzo Magic è la media delle inserzioni (lingua, condizione e foil se ci sono). Senza token non parte nessuna chiamata a CardTrader.
+- Chiamate Scryfall in coda (~10 al secondo), con cache e pausa dopo un HTTP 429.
+- Conferma di lingua, condizione, foil, quantità e collezione, con la percentuale di match e la fonte del prezzo (`Scryfall`, `Scryfall (circa)`, `CardTrader`, `Cardmarket`).
+- **Export CSV CardTrader**, un file per gioco, nel formato `POST /product_imports`.
+- Interfaccia **Material 3 blu** (chiaro e scuro) e icona con il **robot** nel medaglione.
 
 Nessun account, nessun backend a pagamento. Unico costo eventuale: account sviluppatore Google Play (~25 USD) se pubblichi.
 
-- Pack neurale **MTG**: **Impostazioni** → download da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0).
-- Pack neurale **Pokémon**: genera `pokemon.stcat` con [`tools/build_pokemon_stcat`](tools/build_pokemon_stcat/README.md), poi **Impostazioni → Importa .stcat**.
+### Pack neurali
+
+- **MTG**: **Impostazioni** → download da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0). Senza pack il riconoscimento resta sull’OCR e lo scan lo segnala.
+- **Pokémon**: genera `pokemon.stcat` con [`tools/build_pokemon_stcat`](tools/build_pokemon_stcat/README.md), poi **Impostazioni → Riconoscimento Pokémon → Importa .stcat**.
 
 ## Aprire il progetto
 
@@ -32,7 +45,20 @@ gradlew.bat :app:assembleDebug
 
 ## Import su CardTrader
 
-Nella collezione tocca Condividi. Carica il CSV da CardTrader (un file per MTG e uno per Pokémon se la lista è mista). I prezzi restano da impostare sul sito.
+Nella collezione tocca Condividi. Esce **un file per gioco** (`nome-mtg.csv`, `nome-pokemon.csv`). Se la lista mescola Magic e Pokémon, la condivisione allega entrambi.
+
+Su CardTrader carica **un file alla volta** e scegli **aggiungi allo stock** (`add_to_stock`), non sostituire lo stock.
+
+Colonne, in quest’ordine:
+
+- Magic: `scryfall_id,name,expansion_code,collector_number,quantity,language,condition,foil,price_cents`
+- Pokémon: `name,expansion_code,collector_number,quantity,language,condition,foil,tcgplayer_id,price_cents`
+
+`language` usa i codici della reference CardTrader (proprietà `mtg_language`): `en`, `it`, `fr`, `de`, `es`, `pt`, `jp`, `kr`, `zh-CN`. Giapponese è `jp`, coreano `kr`, cinese semplificato `zh-CN`. La stessa colonna vale per Pokémon: la reference non elenca un secondo vocabolario e gli ordini usano `pokemon_language` con gli stessi codici (`en`).
+
+`condition` resta `Near Mint`, `Slightly Played`, `Moderately Played`, `Heavily Played`. Damaged diventa `Poor` (valore documentato; esistono anche `Played` e, nel testo, Mint, che non è tra i `possible_values`).
+
+`price_cents` è il prezzo in centesimi interi (3,50 EUR → `350`). Una foil usa il prezzo foil se c’è; se il prezzo manca o è ≤ 0 la cella resta vuota.
 
 ## Cataloghi
 

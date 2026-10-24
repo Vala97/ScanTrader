@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,10 +18,11 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,9 +38,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.scantrader.app.ui.HomeViewModel
+import com.scantrader.app.ui.theme.scanTraderAppBarColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,9 +58,11 @@ fun HomeScreen(
     var newName by remember { mutableStateOf("") }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("ScanTrader") },
+                title = { Text("ScanTrader", fontWeight = FontWeight.SemiBold) },
+                colors = scanTraderAppBarColors(),
                 actions = {
                     IconButton(onClick = onAbout) { Icon(Icons.Default.Info, contentDescription = "Info") }
                     IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, contentDescription = "Impostazioni") }
@@ -64,9 +71,13 @@ fun HomeScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onScan) {
-                Icon(Icons.Default.CameraAlt, contentDescription = "Scan")
-            }
+            ExtendedFloatingActionButton(
+                onClick = onScan,
+                icon = { Icon(Icons.Default.CameraAlt, contentDescription = null) },
+                text = { Text("Scansiona") },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            )
         },
     ) { padding ->
         if (collections.isEmpty()) {
@@ -77,7 +88,13 @@ fun HomeScreen(
                     .padding(24.dp),
                 verticalArrangement = Arrangement.Center,
             ) {
-                Text("Nessuna collezione. Creane una e inizia a scansionare.")
+                Text("Nessuna collezione", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Creane una e inizia a scansionare.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         } else {
             LazyColumn(
@@ -88,12 +105,15 @@ fun HomeScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(collections, key = { it.id }) { collection ->
-                    Card(Modifier.fillMaxWidth()) {
+                    ElevatedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .clickable { onOpenCollection(collection.id) }
-                                .padding(16.dp),
+                                .padding(horizontal = 18.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
@@ -102,10 +122,15 @@ fun HomeScreen(
                                 Text(
                                     "${collection.cardCount} carte",
                                     style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             IconButton(onClick = { viewModel.delete(collection.id) }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Elimina")
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Elimina",
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
                             }
                         }
                     }
@@ -117,6 +142,7 @@ fun HomeScreen(
     if (showCreate) {
         AlertDialog(
             onDismissRequest = { showCreate = false },
+            shape = RoundedCornerShape(28.dp),
             title = { Text("Nuova collezione") },
             text = {
                 OutlinedTextField(

@@ -22,22 +22,35 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.scantrader.app.R
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
-import com.scantrader.app.scan.DeviceCamera
+import com.scantrader.app.scan.LensCatalog
+import com.scantrader.app.scan.LensOption
 import com.scantrader.app.ui.SettingsViewModel
 import com.scantrader.app.ui.components.SimpleDropdown
+import com.scantrader.app.ui.displayLabel
+import com.scantrader.app.ui.theme.scanTraderAppBarColors
 import com.scantrader.app.vision.NeuralPackManager
 import com.scantrader.app.vision.NeuralPackState
 
@@ -48,9 +61,10 @@ fun SettingsScreen(
     onBack: () -> Unit,
 ) {
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
+    val tokenSaved by viewModel.hasCardTraderToken.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
     val pokemonNeural by viewModel.pokemonPackState.collectAsStateWithLifecycle()
-    val cameras = viewModel.availableCameras
+    val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
 
     val importPokemon = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -58,12 +72,17 @@ fun SettingsScreen(
         if (uri != null) viewModel.importPokemonPack(uri)
     }
 
-    LaunchedEffect(Unit) { viewModel.loadNeuralPack() }
+    LaunchedEffect(Unit) {
+        viewModel.loadNeuralPack()
+        viewModel.refreshLenses()
+    }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Impostazioni") },
+                colors = scanTraderAppBarColors(),
+                title = { Text("Impostazioni", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Indietro")
@@ -108,15 +127,40 @@ fun SettingsScreen(
                     },
                 )
                 Text(
-                    "In auto-scan, se non tocchi la carta trovata, salva in collezione dopo N secondi.",
+                    "In auto-scan, se il riconoscimento supera la soglia forte (74%) e non tocchi la carta, " +
+                        "salva in collezione dopo N secondi. I match deboli restano in conferma.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (cameras.size > 1) {
-                    CameraDropdown(
-                        cameras = cameras,
-                        selectedId = defaults.cameraId,
-                        onSelect = viewModel::setCameraId,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Rileva lingua dalla carta")
+                        Text(
+                            "In conferma preseleziona la lingua letta sul titolo. Se non è chiara, resta l’ultima scelta.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = defaults.detectCardLanguage,
+                        onCheckedChange = viewModel::setDetectCardLanguage,
+                    )
+                }
+                CardTraderTokenField(
+                    saved = tokenSaved,
+                    onSave = viewModel::saveCardTraderToken,
+                    onClear = viewModel::clearCardTraderToken,
+                )
+                if (lensOptions.size > 1) {
+                    LensDropdown(
+                        options = lensOptions,
+                        lensKey = defaults.lensKey,
+                        legacyCameraId = defaults.cameraId,
+                        onSelect = viewModel::setLens,
                     )
                 }
             }
@@ -219,10 +263,51 @@ fun SettingsScreen(
             }
 
             Text(
-                "I prezzi CardTrader si impostano sul sito dopo l’import CSV.",
+                "Il CSV include il prezzo in centesimi (price_cents). Su CardTrader carica un file per gioco e scegli aggiungi allo stock.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun CardTraderTokenField(
+    saved: Boolean,
+    onSave: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    var draft by remember { mutableStateOf("") }
+    Text("Token API CardTrader")
+    Text(
+        if (saved) {
+            "Token salvato sul telefono, cifrato. Il prezzo Magic è la media CardTrader. Senza token resta Scryfall in euro."
+        } else {
+            "Senza token il prezzo Magic è solo Scryfall in euro: nessuna chiamata a CardTrader. Con un token si usa la media delle inserzioni. Il token non esce dal telefono."
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { draft = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(if (saved) "Sostituisci token" else "Token") },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            onClick = {
+                onSave(draft)
+                draft = ""
+            },
+            enabled = draft.isNotBlank(),
+        ) {
+            Text("Salva token")
+        }
+        if (saved) {
+            TextButton(onClick = onClear) { Text("Rimuovi") }
         }
     }
 }
@@ -239,8 +324,8 @@ private fun SettingsSection(
             color = MaterialTheme.colorScheme.primary,
         )
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(
@@ -254,24 +339,23 @@ private fun SettingsSection(
 }
 
 @Composable
-private fun CameraDropdown(
-    cameras: List<DeviceCamera>,
-    selectedId: String?,
-    onSelect: (String?) -> Unit,
+private fun LensDropdown(
+    options: List<LensOption>,
+    lensKey: String?,
+    legacyCameraId: String?,
+    onSelect: (LensOption) -> Unit,
 ) {
-    val selected = cameras.firstOrNull { it.id == selectedId }
-        ?: cameras.firstOrNull { it.label.startsWith("Principale") }
-        ?: cameras.getOrNull(cameras.size / 2)
-        ?: cameras.first()
+    val resources = LocalContext.current.resources
+    val selected = LensCatalog.resolve(options, lensKey, legacyCameraId) ?: options.first()
     SimpleDropdown(
-        label = "Fotocamera",
-        options = cameras,
+        label = stringResource(R.string.lens_field),
+        options = options,
         selected = selected,
-        onSelect = { onSelect(it.id) },
-        labelOf = { it.label },
+        onSelect = onSelect,
+        labelOf = { it.displayLabel(resources) },
     )
     Text(
-        "Usata per le scansioni. Lo zoom resta quello dell’ultima scansione.",
+        stringResource(R.string.lens_hint),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
