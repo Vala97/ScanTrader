@@ -177,6 +177,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     val zoomRatio = MutableStateFlow(app.scanSession.zoomRatio)
     val cameraId = MutableStateFlow(app.scanSession.cameraId)
     val lensKey = MutableStateFlow(app.scanSession.lensKey)
+    val guideViewWidth = MutableStateFlow(app.scanSession.guideViewWidth)
+    val guideViewHeight = MutableStateFlow(app.scanSession.guideViewHeight)
     private var hardware: List<BackCamera> = CameraDevices.backCameras(app)
     private var zoomRangeLive: Boolean = false
     val lensOptions = MutableStateFlow(LensCatalog.optionsFor(hardware))
@@ -211,6 +213,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
      */
     @Volatile
     private var zoomRestoreArmed: Boolean = false
+
+    /**
+     * Set when leaving the scanner for confirm, before CameraX can report the
+     * unbind zoom. Cleared only once the stored ratio is observed again.
+     */
+    @Volatile
+    private var zoomWritesHeld: Boolean = false
 
     /** Set once prefs or a user zoom/lens choice have defined the framing. */
     @Volatile
@@ -252,20 +261,40 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         val lens = app.scanSession.lensKey
         if (lensKey.value != lens) lensKey.value = lens
         if (cameraId.value != app.scanSession.cameraId) cameraId.value = app.scanSession.cameraId
-        zoomRestoreArmed = true
-        programmaticZoom = ratio
-        val gen = ++zoomLockGen
+        // Cancel a lens-lock timer so it cannot drop the restore guard.
+        // Do not start a timeout: a late 1× must not replace the session zoom.
+        zoomLockGen++
         zoomLockJob?.cancel()
-        zoomLockJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(3_000)
-            if (gen == zoomLockGen && zoomRestoreArmed) {
-                zoomRestoreArmed = false
-                programmaticZoom = null
-            }
-        }
+        zoomRestoreArmed = true
+        zoomWritesHeld = true
+        programmaticZoom = ratio
     }
 
     fun isZoomRestoreArmed(): Boolean = zoomRestoreArmed
+
+    fun isFramingHeld(): Boolean = zoomWritesHeld || zoomRestoreArmed
+
+    /** Confirm is covering the scanner. Ignore zoom reports until we restore. */
+    fun holdFraming() {
+        zoomWritesHeld = true
+    }
+
+    /** Stored ratio was observed after CameraControl and zoomState were ready. */
+    fun onZoomRestoreSettled() {
+        zoomRestoreArmed = false
+        zoomWritesHeld = false
+        programmaticZoom = null
+    }
+
+    /** First real scanner layout. Later sizes must not move the guide. */
+    fun lockGuideViewport(width: Float, height: Float) {
+        if (width <= 1f || height <= 1f) return
+        if (app.scanSession.guideViewWidth > 1f && app.scanSession.guideViewHeight > 1f) return
+        app.scanSession.guideViewWidth = width
+        app.scanSession.guideViewHeight = height
+        guideViewWidth.value = width
+        guideViewHeight.value = height
+    }
 
     fun setGame(value: Game) {
         game.value = value
@@ -331,12 +360,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun onObservedZoom(reported: Float) {
         if (!reported.isFinite() || reported <= 0f) return
-        if (zoomRestoreArmed) {
-            val target = programmaticZoom ?: zoomRatio.value
-            if (!ZoomFraming.ignoreReportedZoom(target, reported, restoreArmed = true)) {
-                zoomRestoreArmed = false
-                programmaticZoom = null
-            }
+        val stored = programmaticZoom ?: zoomRatio.value
+        if (!ZoomFraming.acceptReportedZoom(stored, reported, restorePending = isFramingHeld())) {
+            return
+        }
+        if (isFramingHeld()) {
+            onZoomRestoreSettled()
             return
         }
         val pending = programmaticZoom
@@ -349,8 +378,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     /** Pause/dispose path. Ignores the 1× jump CameraX emits while unbinding. */
     fun persistCameraZoom(reported: Float) {
-        if (zoomRestoreArmed) return
-        if (ZoomFraming.isUnbindReset(zoomRatio.value, reported)) return
+        if (isFramingHeld()) return
+        if (!ZoomFraming.acceptReportedZoom(zoomRatio.value, reported, restorePending = false)) return
         onObservedZoom(reported)
     }
 
@@ -396,6 +425,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     private fun lockZoom(target: Float) {
         zoomRestoreArmed = false
+        zoomWritesHeld = false
         programmaticZoom = target
         zoomRatio.value = target
         app.scanSession.zoomRatio = target

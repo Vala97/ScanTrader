@@ -43,6 +43,14 @@ class ScanSession {
     /** LensCatalog key: auto, cam:id, or zoom:ratio. Same lifetime as [zoomRatio]. */
     var lensKey: String? = null
 
+    /**
+     * First measured scanner view, in pixels. The card guide keeps this
+     * rectangle across confirm → scan so a new preview aspect cannot move it.
+     * Not cleared by [resetResults].
+     */
+    var guideViewWidth: Float = 0f
+    var guideViewHeight: Float = 0f
+
     /** Last language/condition chosen on confirm — reused until settings override. */
     var language: CardLanguage? = null
     var condition: CardCondition? = null

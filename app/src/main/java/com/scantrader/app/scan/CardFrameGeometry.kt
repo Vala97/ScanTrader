@@ -1,5 +1,8 @@
 package com.scantrader.app.scan
 
+import kotlin.math.abs
+import kotlin.math.min
+
 /**
  * Shared card guide / crop geometry so the on-screen frame matches the OCR crop.
  *
@@ -39,6 +42,34 @@ object CardFrameGeometry {
         val left = (viewWidth - frameW) / 2f
         val top = ((viewHeight - frameH) / 2f - viewHeight * TOP_BIAS_FRACTION).coerceAtLeast(viewHeight * 0.08f)
         return Rect(left, top, frameW, frameH)
+    }
+
+    /**
+     * Guide for the scanner overlay.
+     *
+     * [lockedWidth] / [lockedHeight] are the first measured view. A later layout
+     * pass — or a preview buffer with a different aspect — must not recompute
+     * the rectangle from that new box. The locked frame is mapped uniformly
+     * into the current view so the card aspect stays put.
+     *
+     * Preview stream width and height are intentionally not parameters.
+     */
+    fun frameStable(
+        viewWidth: Float,
+        viewHeight: Float,
+        lockedWidth: Float,
+        lockedHeight: Float,
+    ): Rect {
+        if (viewWidth <= 0f || viewHeight <= 0f) return Rect(0f, 0f, 0f, 0f)
+        if (lockedWidth <= 1f || lockedHeight <= 1f) return frameIn(viewWidth, viewHeight)
+        val base = frameIn(lockedWidth, lockedHeight)
+        if (abs(viewWidth - lockedWidth) < 1f && abs(viewHeight - lockedHeight) < 1f) return base
+        val scale = min(viewWidth / lockedWidth, viewHeight / lockedHeight)
+        val mappedW = base.width * scale
+        val mappedH = base.height * scale
+        val left = (viewWidth - mappedW) / 2f
+        val top = base.top * scale + (viewHeight - lockedHeight * scale) / 2f
+        return Rect(left, top, mappedW, mappedH)
     }
 
     fun cropBitmap(source: android.graphics.Bitmap): android.graphics.Bitmap {

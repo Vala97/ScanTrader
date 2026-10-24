@@ -1,11 +1,18 @@
 package com.scantrader.app.ui.navigation
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.scantrader.app.ScanTraderApp
@@ -76,19 +83,36 @@ fun AppNav() {
                 },
             )
         }
-        composable("confirm") {
+        // Dialog keeps the scan destination STARTED and composed. A normal
+        // destination would stop that lifecycle, detach PreviewView, and rebind
+        // the camera at 1× — which shifts zoom and the card guide after save.
+        dialog(
+            "confirm",
+            dialogProperties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = false,
+            ),
+        ) {
             val vm: ConfirmViewModel = viewModel(factory = ConfirmViewModel.factory(app))
-            ConfirmScreen(
-                viewModel = vm,
-                onBack = { nav.popBackStack() },
-                onSaved = {
-                    // Pop confirm only. Scan stays underneath with the same
-                    // ViewModel, so the chosen game and autoscan stay armed.
-                    // resetResults drops the previous card without clearing the game.
-                    app.scanSession.resetResults()
-                    nav.popBackStack()
-                },
-            )
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+            ) {
+                ConfirmScreen(
+                    viewModel = vm,
+                    onBack = { nav.popBackStack() },
+                    onSaved = {
+                        // Pop confirm only. Scan stays underneath with the same
+                        // ViewModel and the same camera binding, so the chosen
+                        // game, lens, and zoom stay armed.
+                        app.scanSession.resetResults()
+                        nav.popBackStack()
+                    },
+                )
+            }
         }
         composable("settings") {
             val vm: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(app))
