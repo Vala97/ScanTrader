@@ -4,6 +4,7 @@ import com.scantrader.app.data.catalog.CardLanguageDetector
 import com.scantrader.app.data.model.CardLanguage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CardLanguageDetectorTest {
@@ -109,6 +110,37 @@ class CardLanguageDetectorTest {
     }
 
     @Test
+    fun italianMachopBaseSetOcrIsItalianEvenThoughTheNameIsShared() {
+        val shared = mapOf(CardLanguage.ITALIAN to "Machop")
+        val fromBothCatalogs = CardLanguageDetector.explain(
+            ocrName = "Machop",
+            englishName = "Machop",
+            printed = shared,
+            ocrText = MACHOP_OCR_LOG,
+            pokemonSignals = true,
+        )
+        assertEquals(CardLanguage.ITALIAN, fromBothCatalogs.language)
+        assertTrue(fromBothCatalogs.evidence.contains("debolezza"))
+        assertTrue(fromBothCatalogs.evidence.contains("resistenza"))
+        assertTrue(fromBothCatalogs.evidence.contains("costo di ritirata"))
+        assertTrue(fromBothCatalogs.evidence.contains("pv"))
+        assertTrue(fromBothCatalogs.evidence.contains("lunghezza"))
+        assertTrue(fromBothCatalogs.evidence.contains("peso"))
+        assertTrue(fromBothCatalogs.evidence.contains("pokemon base"))
+        assertTrue(fromBothCatalogs.evidence.contains("name=shared"))
+        assertTrue(fromBothCatalogs.logLine().startsWith("lang: Italiano evidence="))
+
+        val englishOnly = CardLanguageDetector.detect(
+            ocrName = "Machop",
+            englishName = "Machop",
+            printed = emptyMap(),
+            ocrText = MACHOP_OCR_LOG,
+            pokemonSignals = true,
+        )
+        assertEquals(CardLanguage.ITALIAN, englishOnly)
+    }
+
+    @Test
     fun uncertainPokemonTextFallsBack() {
         assertNull(
             CardLanguageDetector.detect(
@@ -146,6 +178,21 @@ class CardLanguageDetectorTest {
     )
 
     private companion object {
+        /** Device log scan_log6: Italian Base Machop 52/102. `deboleIza` is the OCR of debolezza. */
+        val MACHOP_OCR_LOG = """
+            Pokémon Base
+            Machop
+            50 PV
+            Pokémon superpotenza. Lunghezza: 0,8 m; Peso: 19,5 kg.
+            deboleIza
+            Colpo basso
+            resistenza
+            costo di ritirata
+            S allene continuamente per sviluppare al mass
+            SI allena continuamente per
+            52/102
+        """.trimIndent()
+
         val KILOWATTREL_OCR_LOG = """
             A!
             FASEJ

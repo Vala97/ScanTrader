@@ -19,15 +19,19 @@ class CardLanguageResolver(
     private val scryfall: ScryfallClient,
     private val tcgdex: TcgdexApi,
 ) {
-    suspend fun detect(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguage? {
+    suspend fun detect(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguage? =
+        explain(card, ocrName, ocrText).language
+
+    suspend fun explain(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguageDetector.Detection {
         val pokemon = card.game == Game.POKEMON
         val local = localNames(card)
-        CardLanguageDetector.detect(ocrName, local.first, local.second, ocrText, pokemon)?.let { return it }
+        val fromLocal = CardLanguageDetector.explain(ocrName, local.first, local.second, ocrText, pokemon)
+        if (fromLocal.language != null) return fromLocal
         val (english, printed) = when (card.game) {
             Game.MTG -> mtgNames(card)
             Game.POKEMON -> pokemonNames(card)
         }
-        return CardLanguageDetector.detect(ocrName, english, printed, ocrText, pokemon)
+        return CardLanguageDetector.explain(ocrName, english, printed, ocrText, pokemon)
     }
 
     private fun localNames(card: IdentifiedCard): Pair<String?, Map<CardLanguage, String>> {

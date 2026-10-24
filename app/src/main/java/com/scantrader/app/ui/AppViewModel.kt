@@ -994,12 +994,16 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             )
             app.scanSession.ocrText = buildString {
                 append(text)
+                if (topNameText.isNotBlank() && !text.contains(topNameText)) {
+                    append("\n").append(topNameText)
+                }
                 if (bottomText.isNotBlank()) {
                     append("\n--- bottom ---\n")
                     append(bottomText)
                 }
             }
             app.scanSession.parsed = matched
+            app.rememberDetectedLanguage(top)
             app.scanSession.queryFingerprint = fingerprint
             app.scanSession.candidates = candidates
             app.scanSession.autoMatch = gate
@@ -1121,12 +1125,8 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setLanguage(language) }
     }
 
-    suspend fun detectCardLanguage(card: IdentifiedCard): CardLanguage? {
-        if (!app.prefs.currentDefaults().detectCardLanguage) return null
-        return runCatching {
-            app.languageResolver.detect(card, parsed?.nameGuess, app.scanSession.ocrText)
-        }.getOrNull()
-    }
+    suspend fun detectCardLanguage(card: IdentifiedCard): CardLanguage? =
+        app.rememberDetectedLanguage(card)
 
     /**
      * Pokémon keeps its Cardmarket EUR. Magic uses a CardTrader average only when
@@ -1203,6 +1203,41 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     companion object {
         fun factory(app: ScanTraderApp) = factoryOf { ConfirmViewModel(app) }
     }
+}
+
+/**
+ * Runs printed-language detection for manual confirm and autoscan.
+ * A confident result is stored on the session so the confirm dropdown and
+ * timed auto-save both start on that language. Logcat: `ScanTrader lang:`.
+ */
+private suspend fun ScanTraderApp.rememberDetectedLanguage(card: IdentifiedCard?): CardLanguage? {
+    if (!prefs.currentDefaults().detectCardLanguage) {
+        com.scantrader.app.scan.ScanDebug.d("lang: off")
+        return null
+    }
+    val ocrName = scanSession.parsed?.nameGuess
+    val ocrText = scanSession.ocrText
+    val detection = runCatching {
+        if (card != null) {
+            languageResolver.explain(card, ocrName, ocrText)
+        } else if (scanSession.game == Game.POKEMON) {
+            com.scantrader.app.data.catalog.CardLanguageDetector.explain(
+                ocrName = ocrName,
+                englishName = null,
+                printed = emptyMap(),
+                ocrText = ocrText,
+                pokemonSignals = true,
+            )
+        } else {
+            com.scantrader.app.data.catalog.CardLanguageDetector.Detection(null, "none")
+        }
+    }.getOrElse { error ->
+        com.scantrader.app.scan.ScanDebug.w("lang: failed", error)
+        com.scantrader.app.data.catalog.CardLanguageDetector.Detection(null, "error")
+    }
+    com.scantrader.app.scan.ScanDebug.d(detection.logLine())
+    detection.language?.let { scanSession.language = it }
+    return detection.language
 }
 
 inline fun <reified VM : ViewModel> factoryOf(crossinline create: () -> VM): ViewModelProvider.Factory =
