@@ -107,19 +107,19 @@ object MatchFusion {
         val signal = signalPhrase(decision.reason)
         val waitOn = autoSaveWaitSeconds > 0
         return when {
+            decision.strict && fromAutoScan && waitOn && autoSaveCancelled ->
+                ConfirmMatchNote(
+                    title = "Salvataggio automatico annullato",
+                    body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
+                        "Hai modificato la scheda: tocca Salva in collezione per aggiungere la carta.",
+                    tone = ConfirmMatchTone.CONFIRM,
+                )
             decision.strict && fromAutoScan && waitOn && !selectedMatchesGate -> ConfirmMatchNote(
                 title = "Conferma a mano",
                 body = "Il riconoscimento forte ($pct) riguarda un’altra stampa. " +
                     "Tocca Salva per aggiungere la carta scelta.",
                 tone = ConfirmMatchTone.BLOCKED,
             )
-            decision.strict && fromAutoScan && waitOn && selectedMatchesGate && autoSaveCancelled ->
-                ConfirmMatchNote(
-                    title = "Conferma a mano",
-                    body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
-                        "Hai modificato la scheda: tocca Salva per aggiungere la carta.",
-                    tone = ConfirmMatchTone.CONFIRM,
-                )
             decision.strict && fromAutoScan && waitOn && selectedMatchesGate -> ConfirmMatchNote(
                 title = "Salvataggio automatico",
                 body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +

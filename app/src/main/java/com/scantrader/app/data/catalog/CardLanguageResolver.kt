@@ -19,24 +19,25 @@ class CardLanguageResolver(
     private val scryfall: ScryfallClient,
     private val tcgdex: TcgdexApi,
 ) {
-    suspend fun detect(card: IdentifiedCard, ocrName: String?): CardLanguage? {
-        val quick = quickDetect(card, ocrName)
-        if (quick != null) return quick
+    suspend fun detect(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguage? {
+        val pokemon = card.game == Game.POKEMON
+        val local = localNames(card)
+        CardLanguageDetector.detect(ocrName, local.first, local.second, ocrText, pokemon)?.let { return it }
         val (english, printed) = when (card.game) {
             Game.MTG -> mtgNames(card)
             Game.POKEMON -> pokemonNames(card)
         }
-        return CardLanguageDetector.detect(ocrName, english, printed)
+        return CardLanguageDetector.detect(ocrName, english, printed, ocrText, pokemon)
     }
 
-    private fun quickDetect(card: IdentifiedCard, ocrName: String?): CardLanguage? {
+    private fun localNames(card: IdentifiedCard): Pair<String?, Map<CardLanguage, String>> {
         val displayIsPrinted = !card.printedName.isNullOrBlank() &&
             card.name.equals(card.printedName, ignoreCase = true)
         val english = card.name.takeUnless { displayIsPrinted }
         val printed = linkedMapOf<CardLanguage, String>()
         val lang = card.printedLang?.let { CardLanguage.fromCatalogCode(it) }
         if (lang != null && !card.printedName.isNullOrBlank()) printed[lang] = card.printedName
-        return CardLanguageDetector.detect(ocrName, english, printed)
+        return english to printed
     }
 
     private suspend fun mtgNames(card: IdentifiedCard): Pair<String?, Map<CardLanguage, String>> {
@@ -77,6 +78,9 @@ class CardLanguageResolver(
     }
 }
 
+internal fun pokemonTcgdexLanguages(): List<String> =
+    CardLanguage.entries.mapNotNull { it.tcgdexLang() }
+
 private fun CardLanguage.tcgdexLang(): String? = when (this) {
     CardLanguage.ENGLISH -> "en"
     CardLanguage.ITALIAN -> "it"
@@ -85,6 +89,7 @@ private fun CardLanguage.tcgdexLang(): String? = when (this) {
     CardLanguage.SPANISH -> "es"
     CardLanguage.PORTUGUESE -> "pt"
     CardLanguage.JAPANESE -> "ja"
-    CardLanguage.KOREAN -> null
+    CardLanguage.KOREAN -> "ko"
     CardLanguage.CHINESE_S -> "zh-cn"
+    CardLanguage.CHINESE_T -> "zh-tw"
 }

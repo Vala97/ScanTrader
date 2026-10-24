@@ -140,7 +140,7 @@ fun SettingsScreen(
                     Column(Modifier.weight(1f)) {
                         Text("Rileva lingua dalla carta")
                         Text(
-                            "In conferma preseleziona la lingua letta sul titolo. Se non è chiara, resta l’ultima scelta.",
+                            "In conferma, per Magic e Pokémon, preseleziona la lingua letta sulla carta. Se non è chiara, resta l’ultima scelta.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

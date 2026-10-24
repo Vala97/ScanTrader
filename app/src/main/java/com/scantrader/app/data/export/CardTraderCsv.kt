@@ -175,5 +175,8 @@ object CardTraderCsv {
         "zh_cn" to "zh-CN",
         "zh-tw" to "zh-TW",
         "zh_tw" to "zh-TW",
+        "zht" to "zh-TW",
+        "chinese traditional" to "zh-TW",
+        "繁體中文" to "zh-TW",
     )
 }

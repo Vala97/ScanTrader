@@ -23,6 +23,7 @@ enum class CardLanguage(val csvValue: String, val label: String) {
     JAPANESE("Japanese", "日本語"),
     KOREAN("Korean", "한국어"),
     CHINESE_S("Chinese", "简体中文"),
+    CHINESE_T("Chinese Traditional", "繁體中文"),
     ;
 
     /** Scryfall language code (`it`, `zhs`, …). */
@@ -36,6 +37,7 @@ enum class CardLanguage(val csvValue: String, val label: String) {
         JAPANESE -> "ja"
         KOREAN -> "ko"
         CHINESE_S -> "zhs"
+        CHINESE_T -> "zht"
     }
 
     /** CardTrader `mtg_language` (`jp`, `zh-CN`, …). */
@@ -43,6 +45,7 @@ enum class CardLanguage(val csvValue: String, val label: String) {
         JAPANESE -> "jp"
         KOREAN -> "kr"
         CHINESE_S -> "zh-CN"
+        CHINESE_T -> "zh-TW"
         else -> scryfallLang()
     }
 
@@ -57,6 +60,7 @@ enum class CardLanguage(val csvValue: String, val label: String) {
             "ja", "jp", "japanese" -> JAPANESE
             "ko", "kr", "korean" -> KOREAN
             "zhs", "zh", "zh-cn", "zh_cn", "chinese" -> CHINESE_S
+            "zht", "zh-tw", "zh_tw", "traditional" -> CHINESE_T
             else -> null
         }
     }

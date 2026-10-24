@@ -1123,7 +1123,9 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     suspend fun detectCardLanguage(card: IdentifiedCard): CardLanguage? {
         if (!app.prefs.currentDefaults().detectCardLanguage) return null
-        return runCatching { app.languageResolver.detect(card, parsed?.nameGuess) }.getOrNull()
+        return runCatching {
+            app.languageResolver.detect(card, parsed?.nameGuess, app.scanSession.ocrText)
+        }.getOrNull()
     }
 
     /**

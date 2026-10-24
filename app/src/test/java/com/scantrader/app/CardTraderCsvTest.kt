@@ -103,6 +103,8 @@ class CardTraderCsvTest {
         assertEquals("kr", CardTraderCsv.exportLanguage("Korean"))
         assertEquals("zh-CN", CardTraderCsv.exportLanguage("Chinese"))
         assertEquals("zh-CN", CardTraderCsv.exportLanguage("zh-cn"))
+        assertEquals("zh-TW", CardTraderCsv.exportLanguage("Chinese Traditional"))
+        assertEquals("zh-TW", CardTraderCsv.exportLanguage("zh-tw"))
         assertEquals("Near Mint", CardTraderCsv.exportCondition("Near Mint"))
         assertEquals("Slightly Played", CardTraderCsv.exportCondition("Slightly Played"))
         assertEquals("Moderately Played", CardTraderCsv.exportCondition("Moderately Played"))
