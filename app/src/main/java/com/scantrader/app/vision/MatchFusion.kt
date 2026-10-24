@@ -5,6 +5,7 @@ import com.scantrader.app.data.catalog.PokemonSets
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
+import com.scantrader.app.scan.FrameNameGate
 import com.scantrader.app.scan.OcrParser
 
 /**
@@ -214,10 +215,15 @@ object MatchFusion {
             else -> false
         }
         if (strictOk) {
+            if (top.game == Game.POKEMON && parsed != null) {
+                val conflict = pokemonNameConflict(top, parsed, confidence)
+                if (conflict != null) return conflict
+            }
             return AutoMatchDecision(
                 accepted = true,
                 strict = true,
                 reason = "strict",
+                nameOk = parsed != null && FrameNameGate.agrees(top, parsed),
                 confidence = confidence,
             )
         }
@@ -232,6 +238,26 @@ object MatchFusion {
             Game.POKEMON -> evaluatePokemonSoft(top, parsed, confidence, visual, ocr)
             Game.MTG -> evaluateMtgSoft(top, parsed, confidence, visual, ocr)
         }
+    }
+
+    /**
+     * Strict confidence does not override a real OCR title.
+     * Abra at conf 1.0 must not be accepted on a frame that reads Machop.
+     */
+    private fun pokemonNameConflict(
+        top: IdentifiedCard,
+        parsed: ParsedCardText,
+        confidence: Float,
+    ): AutoMatchDecision? {
+        if (FrameNameGate.agrees(top, parsed)) return null
+        val name = parsed.nameGuess?.trim().orEmpty()
+        return AutoMatchDecision(
+            accepted = false,
+            reason = "nameConflict name=$name top=${top.name}",
+            nameOk = false,
+            nameConflict = true,
+            confidence = confidence,
+        )
     }
 
     private fun evaluatePokemonSoft(

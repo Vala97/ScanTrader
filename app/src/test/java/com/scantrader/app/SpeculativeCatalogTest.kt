@@ -38,6 +38,20 @@ class SpeculativeCatalogTest {
     }
 
     @Test
+    fun aDifferentNameDropsTheInFlightLookupInsteadOfAcceptingIt() {
+        val catalog = SpeculativeCatalog()
+        catalog.onOcr(ParsedCardText("Abra", "43", "base", 102))
+        val machopBare = catalog.onOcr(ParsedCardText("Machop", null, null, 102))
+        assertTrue(machopBare.dropInFlight)
+        assertFalse(machopBare.accept)
+
+        val machop = catalog.onOcr(ParsedCardText("Machop", "52", "base", 102))
+        assertTrue(machop.start)
+        assertFalse(machop.accept)
+        assertEquals("p:52/102", machop.key)
+    }
+
+    @Test
     fun aiutoOrAMissingCollectorIsNotConfident() {
         assertNull(SpeculativeCatalog.confidentKey(ParsedCardText("Aiuto", "176", "dri", 182)))
         assertNull(SpeculativeCatalog.confidentKey(ParsedCardText("Machop", null, "wird", 102)))

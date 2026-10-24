@@ -4,8 +4,10 @@ import com.scantrader.app.data.catalog.CardIdentity
 import com.scantrader.app.data.model.ParsedCardText
 
 /**
- * Once auto-scan accepts a card, later frames and a different collector must not
- * start a new lookup until the card has left the guide.
+ * Holds the card shown on the confirm overlay.
+ * The lock lasts only while that overlay is pending: [clear] on close.
+ * A parsed name or collector that belongs to a different card releases it
+ * immediately so the next card is not ignored and cannot reuse this identity.
  */
 class AcceptedCandidateLock(
     private val clearFramesNeeded: Int = 3,
@@ -35,9 +37,9 @@ class AcceptedCandidateLock(
 
     /**
      * True when this frame must not query the catalog or replace the accepted card.
-     * The same physical card (collector, or trainer title when the number is missing)
-     * stays ignored. A different card is ignored until [clearFramesNeeded] frames,
-     * then the lock opens.
+     * The same physical card stays ignored while the overlay is pending.
+     * A different name or collector releases the lock on this frame.
+     * Frames with no usable identity still wait [clearFramesNeeded] reads.
      */
     fun shouldIgnore(parsed: ParsedCardText): Boolean {
         val locked = snapshot ?: return false
@@ -45,10 +47,21 @@ class AcceptedCandidateLock(
             clearFrames = 0
             return true
         }
+        if (identityChanged(locked, parsed)) {
+            clear()
+            return false
+        }
         clearFrames++
         if (clearFrames < clearFramesNeeded) return true
         clear()
         return false
+    }
+
+    private fun identityChanged(locked: Snapshot, parsed: ParsedCardText): Boolean {
+        val cn = CardIdentity.normCollector(parsed.collectorNumber)
+        val lockedCn = CardIdentity.normCollector(locked.collectorNumber)
+        if (cn != null && lockedCn != null && cn != lockedCn) return true
+        return FrameNameGate.disagrees(parsed.nameGuess, locked.name)
     }
 
     private fun sameCard(locked: Snapshot, parsed: ParsedCardText): Boolean {

@@ -94,6 +94,18 @@ class CatalogQueryDebounce(
         lastQueryAtMs = 0L
     }
 
+    /** Drop the current region. The next card starts the stability count over. */
+    fun reset() {
+        recent.clear()
+        lastFrame = null
+        regionStartedAtMs = 0L
+        regionFrames = 0
+        lastSeenRaw = null
+        seenCount = 0
+        lastQueriedKey = null
+        lastQueryAtMs = 0L
+    }
+
     /** Majority-vote read of the current card region, including the latest frame. */
     fun votedFrame(): Frame? {
         if (recent.isEmpty()) return null

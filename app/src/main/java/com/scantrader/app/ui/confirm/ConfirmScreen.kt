@@ -43,11 +43,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +72,8 @@ import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.IdentifiedCard
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import com.scantrader.app.ui.ConfirmViewModel
 import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
@@ -223,32 +228,46 @@ fun ConfirmScreen(
             else -> collections.firstOrNull()?.id
         }
     }
-    LaunchedEffect(autoSaveArmed, selected?.identityKey(), collectionId, defaults.autoSaveWaitSeconds) {
-        if (!autoSaveArmed || selectedState.value == null || collectionIdState.value == null) return@LaunchedEffect
+    val autoSaveScope = rememberCoroutineScope()
+    val autoSaveJob = remember { mutableStateOf<Job?>(null) }
+    val scheduledMatch = remember { mutableStateOf<String?>(null) }
+    val matchKey = selected?.identityKey()
+    SideEffect {
         val wait = defaults.autoSaveWaitSeconds
-        if (wait <= 0) return@LaunchedEffect
-        ScanDebug.d("autosave: scheduled")
-        for (left in wait downTo 1) {
-            if (autoSaveCancelledState.value) return@LaunchedEffect
-            secondsLeftState.intValue = left
-            delay(1_000)
+        val key = matchKey
+        if (!autoSaveArmed || key == null || collectionId == null || wait <= 0) return@SideEffect
+        val claim = AutoSaveSchedule.claim(scheduledMatch.value, key)
+        if (!claim.start) return@SideEffect
+        scheduledMatch.value = claim.activeKey
+        autoSaveJob.value?.cancel()
+        autoSaveJob.value = autoSaveScope.launch {
+            ScanDebug.d("autosave: scheduled")
+            for (left in wait downTo 1) {
+                if (autoSaveCancelledState.value) return@launch
+                if (selectedState.value?.identityKey() != key) return@launch
+                secondsLeftState.intValue = left
+                delay(1_000)
+            }
+            if (autoSaveCancelledState.value) return@launch
+            secondsLeftState.intValue = 0
+            val card = selectedState.value
+            val target = collectionIdState.value
+            if (card != null && card.identityKey() == key && target != null && !viewModel.saving.value) {
+                ScanDebug.d("autosave: saved")
+                viewModel.save(
+                    card,
+                    target,
+                    quantityState.intValue,
+                    languageState.value,
+                    conditionState.value,
+                    foilState.value,
+                    onSaved,
+                )
+            }
         }
-        if (autoSaveCancelledState.value) return@LaunchedEffect
-        secondsLeftState.intValue = 0
-        val card = selectedState.value
-        val target = collectionIdState.value
-        if (card != null && target != null && !viewModel.saving.value) {
-            ScanDebug.d("autosave: saved")
-            viewModel.save(
-                card,
-                target,
-                quantityState.intValue,
-                languageState.value,
-                conditionState.value,
-                foilState.value,
-                onSaved,
-            )
-        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { autoSaveJob.value?.cancel() }
     }
 
     val pokemonCard = selected?.game == com.scantrader.app.data.model.Game.POKEMON

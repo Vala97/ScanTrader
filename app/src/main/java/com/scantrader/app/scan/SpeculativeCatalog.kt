@@ -13,23 +13,38 @@ class SpeculativeCatalog {
         val start: Boolean,
         val accept: Boolean,
         val key: String?,
+        /** The in-flight lookup was for a different card and must be discarded. */
+        val dropInFlight: Boolean = false,
     )
 
     private var pendingKey: String? = null
+    private var pendingName: String? = null
 
     fun onOcr(parsed: ParsedCardText): Step {
         val key = confidentKey(parsed)
-        if (key == null) return Step(start = false, accept = false, key = null)
-        if (pendingKey == key) {
+        if (key == null) {
+            if (pendingKey != null && FrameNameGate.disagrees(parsed.nameGuess, pendingName)) {
+                pendingKey = null
+                pendingName = null
+                return Step(start = false, accept = false, key = null, dropInFlight = true)
+            }
+            return Step(start = false, accept = false, key = null)
+        }
+        val sameLookup = pendingKey == key && !FrameNameGate.disagrees(parsed.nameGuess, pendingName)
+        if (sameLookup) {
             pendingKey = null
+            pendingName = null
             return Step(start = false, accept = true, key = key)
         }
+        val drop = pendingKey != null
         pendingKey = key
-        return Step(start = true, accept = false, key = key)
+        pendingName = parsed.nameGuess
+        return Step(start = true, accept = false, key = key, dropInFlight = drop)
     }
 
     fun clear() {
         pendingKey = null
+        pendingName = null
     }
 
     companion object {

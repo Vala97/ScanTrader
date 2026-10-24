@@ -18,6 +18,16 @@ class CatalogQueryDebounceTest {
     }
 
     @Test
+    fun resetStartsTheStabilityCountOver() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2)
+        assertTrue(!debounce.shouldQuery("abra|43|base|102"))
+        assertTrue(debounce.shouldQuery("abra|43|base|102"))
+        debounce.reset()
+        assertTrue(!debounce.shouldQuery("machop|52|base|102"))
+        assertTrue(debounce.shouldQuery("machop|52|base|102"))
+    }
+
+    @Test
     fun failedQueryCanRunAgainForTheSameIdentity() {
         val debounce = CatalogQueryDebounce(stableFramesNeeded = 2)
         assertTrue(!debounce.shouldQuery("pioppo|83|"))

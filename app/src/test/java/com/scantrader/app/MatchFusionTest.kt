@@ -46,6 +46,34 @@ class MatchFusionTest {
     }
 
     @Test
+    fun strictPokemonHitIsRejectedWhenTheFrameNameDisagrees() {
+        val machop = ParsedCardText(nameGuess = "Machop", collectorNumber = null, setCode = null, setCardCount = 102)
+        val abra = IdentifiedCard(
+            game = Game.POKEMON,
+            name = "Abra",
+            setCode = "base1",
+            setName = "Base",
+            collectorNumber = "43",
+            tcgdexId = "base1-43",
+            ocrScore = 1f,
+            visualScore = null,
+            matchConfidence = 1f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(abra, machop)
+        assertFalse(decision.accepted)
+        assertFalse(decision.strict)
+        assertTrue(decision.nameConflict)
+        assertFalse(MatchFusion.allowsAutoSave(decision))
+
+        val agreed = MatchFusion.evaluateAutoMatch(
+            abra.copy(name = "Abra"),
+            ParsedCardText("Abra", "43", "base", 102),
+        )
+        assertTrue(agreed.accepted)
+        assertTrue(agreed.strict)
+    }
+
+    @Test
     fun pokemonAutoMatchWithAlignedCollectorAndCount() {
         val pokemonParsed = ParsedCardText(
             nameGuess = null,

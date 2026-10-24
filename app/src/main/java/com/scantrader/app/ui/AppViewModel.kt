@@ -16,9 +16,12 @@ import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.data.prefs.ScanDefaults
 import com.scantrader.app.network.scryfall.ScryfallBusyException
 import com.scantrader.app.scan.AcceptedCandidateLock
+import com.scantrader.app.scan.AutosaveDuplicateGuard
 import com.scantrader.app.scan.BackCamera
 import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.FrameGate
+import com.scantrader.app.scan.FrameNameGate
+import com.scantrader.app.scan.FrameQuery
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
 import com.scantrader.app.scan.LensOption
@@ -195,10 +198,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private var lastAutoAttemptMs: Long = 0
 
     /**
-     * Identity of the last auto-accepted card. Later frames must not replace it
-     * or start another lookup until a different card has been in frame.
+     * Identity of the card on the confirm overlay. Released when that overlay
+     * closes and when the parsed name or collector changes.
      */
     private val acceptedLock = AcceptedCandidateLock(clearFramesNeeded = SAME_CARD_CLEAR_FRAMES)
+    private val duplicateGuard = AutosaveDuplicateGuard()
     private val lastAcceptedCardKey: String?
         get() = acceptedLock.key
 
@@ -497,10 +501,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     fun resumeScanning() {
         autoHitPending.set(false)
         autoBusy.set(false)
+        val closed = acceptedLock.snapshot
+        duplicateGuard.onOverlayClosed(closed?.key, closed?.name)
+        acceptedLock.clear()
         cancelSpeculative()
-        // Keep lastAcceptedCardKey so the same physical card still in frame is ignored.
+        catalogDebounce.reset()
         if (autoScan.value) {
-            autoStatus.value = if (lastAcceptedCardKey != null) {
+            autoStatus.value = if (duplicateGuard.holdingSameCard()) {
                 "Metti un’altra carta…"
             } else {
                 "Inquadra la carta…"
@@ -558,12 +565,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 } else when (autoHold) {
                     AutoHold.BUSY -> autoStatus.value = "Scryfall occupato, riprovo…"
                     AutoHold.SPECULATIVE -> autoStatus.value = "Analisi in corso…"
-                    AutoHold.UNSTABLE -> autoStatus.value = if (lastAcceptedCardKey != null) {
+                    AutoHold.UNSTABLE -> autoStatus.value = if (duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
                         "Metti un’altra carta…"
                     } else {
                         "Inquadra la carta…"
                     }
-                    AutoHold.NONE -> autoStatus.value = if (lastAcceptedCardKey != null) {
+                    AutoHold.NONE -> autoStatus.value = if (duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
                         "Metti un’altra carta…"
                     } else {
                         "Inquadra meglio…"
@@ -923,13 +930,23 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 return@withContext false
             }
 
-            if (autoMode && acceptedLock.key != null && acceptedLock.shouldIgnore(parsed)) {
+            val lockedKey = if (autoMode) acceptedLock.key else null
+            if (autoMode && lockedKey != null && acceptedLock.shouldIgnore(parsed)) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "frame ignored (candidate locked key=${acceptedLock.key}) " +
                         "name=${parsed.nameGuess} cn=${parsed.collectorNumber}",
                 )
                 return@withContext false
             }
+            if (autoMode && lockedKey != null && acceptedLock.key == null) {
+                cancelSpeculativeJob()
+                speculativeCatalog.clear()
+                catalogDebounce.reset()
+                com.scantrader.app.scan.ScanDebug.d(
+                    "candidate lock released name=${parsed.nameGuess} cn=${parsed.collectorNumber}",
+                )
+            }
+            if (autoMode) duplicateGuard.observe(parsed)
             val debounceFrame = com.scantrader.app.data.catalog.CatalogQueryDebounce.Frame(
                 name = parsed.nameGuess,
                 collectorNumber = parsed.collectorNumber,
@@ -938,6 +955,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 pokemon = isPokemon,
             )
             val speculativeStep = if (autoMode && isPokemon) speculativeCatalog.onOcr(parsed) else null
+            if (speculativeStep?.dropInFlight == true && speculativeStep.start != true) {
+                cancelSpeculativeJob()
+                com.scantrader.app.scan.ScanDebug.d(
+                    "speculative dropped (name=${parsed.nameGuess} cn=${parsed.collectorNumber})",
+                )
+            }
             if (speculativeStep?.start == true) {
                 catalogDebounce.shouldQuery(debounceFrame)
                 startSpeculative(parsed)
@@ -957,7 +980,17 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             val tCat0 = System.currentTimeMillis()
             val prefetched = if (speculativeStep?.accept == true) {
-                takeSpeculative()?.takeIf { it.isNotEmpty() }
+                val hits = takeSpeculative().orEmpty()
+                val agreed = FrameNameGate.keep(hits, parsed)
+                if (hits.isNotEmpty() && agreed.isEmpty()) {
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "speculative dropped (name disagrees frame=${parsed.nameGuess} " +
+                            "top=${hits.firstOrNull()?.name})",
+                    )
+                    null
+                } else {
+                    agreed.takeIf { it.isNotEmpty() }
+                }
             } else {
                 null
             }
@@ -971,7 +1004,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 (debounceWants || speculativeStep?.accept == true)
             // Majority name/cn/set over the recent frames. One FASE / asch read must not
             // be what we send to TCGdex, and it must not reset the stability clock.
-            val matched = if (autoMode && !cooling) catalogDebounce.voted(parsed) else parsed
+            val voted = if (autoMode && !cooling) catalogDebounce.voted(parsed) else parsed
+            val matched = if (autoMode) FrameQuery.resolve(parsed, voted) else voted
             val catalogIdentity = catalogIdentity(matched)
             val neuralOn = app.neuralPack.isInstalled(game.value)
             // No catalog yet and no neural pack: wait for a second identical id.
@@ -1118,27 +1152,51 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 catalogHits
             }
             val merged = com.scantrader.app.vision.mergeHybridCandidates(fingerprintRanked, galleryHits)
-            val candidates = com.scantrader.app.vision.MatchFusion.fuse(merged, matched)
+            val fused = com.scantrader.app.vision.MatchFusion.fuse(merged, matched)
                 .distinctBy {
                     it.scryfallId
                         ?: it.tcgdexId
                         ?: "${it.setCode}-${it.collectorNumber}-${it.name}"
                 }
                 .take(12)
+            val candidates = FrameNameGate.keep(fused, parsed)
+            if (candidates.size < fused.size) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "result dropped (name disagrees frame=${parsed.nameGuess} " +
+                        "top=${fused.firstOrNull()?.name})",
+                )
+            }
             val top = candidates.firstOrNull()
-            val gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(top, matched)
+            val gateParsed = if (FrameNameGate.confidentTitle(parsed.nameGuess) != null) {
+                matched.copy(nameGuess = parsed.nameGuess)
+            } else {
+                matched
+            }
+            val gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(top, gateParsed)
             val autoOk = gate.accepted
             val topKey = top?.let { autoCardKey(it) }
             val blockedSameCard = requireMatch &&
                 autoOk &&
                 topKey != null &&
                 topKey == acceptedLock.key
-            val acceptAuto = autoOk && !blockedSameCard
+            val duplicateBlocked = requireMatch &&
+                autoOk &&
+                topKey != null &&
+                !duplicateGuard.allowAutoSave(topKey)
+            val acceptAuto = autoOk && !blockedSameCard && !duplicateBlocked
+            if (duplicateBlocked) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "autosave: skipped (same card still in frame key=$topKey)",
+                )
+            }
             if (requireMatch && acceptAuto && topKey != null) {
                 acceptedLock.lock(
                     key = topKey,
                     collectorNumber = top.collectorNumber,
-                    name = matched.nameGuess ?: top.printedName ?: top.name,
+                    name = FrameNameGate.confidentTitle(parsed.nameGuess)
+                        ?: matched.nameGuess
+                        ?: top.printedName
+                        ?: top.name,
                 )
             }
             candidates.take(3).forEachIndexed { i, c ->
@@ -1166,6 +1224,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 catalogMs = catalogMs,
                 totalMs = System.currentTimeMillis() - t0,
             )
+            if (requireMatch && (duplicateBlocked || (candidates.isEmpty() && fused.isNotEmpty()))) {
+                autoHold = AutoHold.UNSTABLE
+                return@withContext false
+            }
             app.scanSession.ocrText = buildString {
                 append(text)
                 if (topNameText.isNotBlank() && !text.contains(topNameText)) {
@@ -1205,7 +1267,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     private fun clearSameCardLock() {
         acceptedLock.clear()
+        duplicateGuard.clear()
         cancelSpeculative()
+        catalogDebounce.reset()
     }
 
     private fun skipUnstableFrame(bitmap: android.graphics.Bitmap, startedAt: Long): Boolean {
@@ -1222,6 +1286,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         lastLuma = luma
         lastLumaAtMs = now
         val reason = FrameGate.skipReason(blur, motion, since) ?: return false
+        if (reason == "motion") duplicateGuard.noteSceneChanged()
         autoHold = AutoHold.UNSTABLE
         logTiming("skip-$reason", 0, 0, now - startedAt)
         return true
@@ -1260,11 +1325,15 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         }
     }
 
-    private fun cancelSpeculative() {
-        speculativeCatalog.clear()
+    private fun cancelSpeculativeJob() {
         speculativeDeferred?.cancel()
         speculativeDeferred = null
         speculativeInFlight.set(false)
+    }
+
+    private fun cancelSpeculative() {
+        speculativeCatalog.clear()
+        cancelSpeculativeJob()
         lastLuma = null
         lastLumaAtMs = 0L
     }
