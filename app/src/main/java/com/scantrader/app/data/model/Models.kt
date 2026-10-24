@@ -109,8 +109,13 @@ data class IdentifiedCard(
     /** Scryfall/TCGdex code of [printedName], when it was resolved (`it`, `ja`, …). */
     val printedLang: String? = null,
 ) {
+    /** Pokémon has no foil price. Magic keeps the foil EUR when the copy is foil. */
     fun priceForExport(foil: Boolean): String? =
-        if (foil) priceEurFoil?.takeIf { it.isNotBlank() } ?: priceEur else priceEur
+        if (game == Game.POKEMON || !foil) priceEur else priceEurFoil?.takeIf { it.isNotBlank() } ?: priceEur
+
+    /** Drop holo amounts so they cannot be shown, saved, or exported for Pokémon. */
+    fun withoutPokemonFoil(): IdentifiedCard =
+        if (game != Game.POKEMON) this else copy(priceEurFoil = null, priceUsdFoil = null)
 
     fun confidenceLabel(): String? {
         val c = matchConfidence ?: return null

@@ -177,11 +177,20 @@ class GalleryMatcher(
             visualScore = score.coerceIn(0f, 1f),
             ocrScore = MatchFusion.ocrAgreement(stub, parsed),
             priceEur = formatEur(card.pricing?.cardmarket?.avg ?: card.pricing?.cardmarket?.trend),
-            priceEurFoil = formatEur(
-                card.pricing?.cardmarket?.avgHolo ?: card.pricing?.cardmarket?.trendHolo,
-            ),
-            priceCurrency = "EUR",
-            priceSource = "Cardmarket",
+            priceCurrency = if (
+                card.pricing?.cardmarket?.avg != null || card.pricing?.cardmarket?.trend != null
+            ) {
+                "EUR"
+            } else {
+                null
+            },
+            priceSource = if (
+                card.pricing?.cardmarket?.avg != null || card.pricing?.cardmarket?.trend != null
+            ) {
+                "Cardmarket"
+            } else {
+                null
+            },
         )
     }
 

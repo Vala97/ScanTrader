@@ -243,12 +243,13 @@ fun ConfirmScreen(
         }
     }
 
+    val pokemonCard = selected?.game == com.scantrader.app.data.model.Game.POKEMON
     val priceLine = selected?.let { card ->
         ListingAverage.display(
             eur = card.priceEur,
-            eurFoil = card.priceEurFoil,
+            eurFoil = if (pokemonCard) null else card.priceEurFoil,
             source = card.priceSource,
-            foil = foil,
+            foil = foil && !pokemonCard,
         )
     }
     val canSave = selected != null && collectionId != null && !saving
@@ -360,7 +361,10 @@ fun ConfirmScreen(
                             fontWeight = FontWeight.Medium,
                             modifier = Modifier.clickable { cancelAutoSave(AutoSaveControl.Gesture.PRICE) },
                         )
-                        if (!foil && !current.priceEurFoil.isNullOrBlank()) {
+                        if (current.game != com.scantrader.app.data.model.Game.POKEMON &&
+                            !foil &&
+                            !current.priceEurFoil.isNullOrBlank()
+                        ) {
                             Text(
                                 "Foil: €${current.priceEurFoil}",
                                 style = MaterialTheme.typography.bodySmall,
@@ -411,20 +415,22 @@ fun ConfirmScreen(
                         labelOf = { it.label },
                     )
                 }
-                item {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Foil / holo")
-                        Switch(
-                            checked = foil,
-                            onCheckedChange = {
-                                cancelAutoSave(AutoSaveControl.Gesture.FOIL)
-                                foil = it
-                            },
-                        )
+                if (current.game != com.scantrader.app.data.model.Game.POKEMON) {
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Foil / holo")
+                            Switch(
+                                checked = foil,
+                                onCheckedChange = {
+                                    cancelAutoSave(AutoSaveControl.Gesture.FOIL)
+                                    foil = it
+                                },
+                            )
+                        }
                     }
                 }
                 item {

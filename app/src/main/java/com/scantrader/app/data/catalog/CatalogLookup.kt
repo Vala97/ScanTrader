@@ -348,9 +348,8 @@ class CatalogLookup(
             tcgdexId = id,
             imageUrl = image?.let { "$it/low.webp" },
             priceEur = formatEur(cm?.avg ?: cm?.trend),
-            priceEurFoil = formatEur(cm?.avgHolo ?: cm?.trendHolo),
-            priceCurrency = if (cm?.avg != null || cm?.trend != null || cm?.avgHolo != null) "EUR" else null,
-            priceSource = if (cm?.avg != null || cm?.trend != null || cm?.avgHolo != null) "Cardmarket" else null,
+            priceCurrency = if (cm?.avg != null || cm?.trend != null) "EUR" else null,
+            priceSource = if (cm?.avg != null || cm?.trend != null) "Cardmarket" else null,
         )
     }
 
