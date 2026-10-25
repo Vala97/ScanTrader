@@ -5,6 +5,9 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Corretto
+- L’export CSV CardTrader scrive il nome inglese del blueprint (`Frogtosser Banneret`, `Smitten Swordmaster // Curry Favor`) e, se la stampa salvata non è inglese, lo `scryfall_id` di quella stampa. Il titolo in collezione resta quello stampato. `it` resta la lingua della copia. Le righe già salvate si risolvono al momento della condivisione, anche senza rete se il nome catalogo c’è già. Senza rete e senza nome catalogo si esporta il titolo salvato.
+
 ## [1.0] - 2026-10-24
 
 Prima versione: scan Magic e Pokémon, collezioni locali, conferma con salvataggio automatico solo sui match forti, prezzi in euro e export CSV per CardTrader.

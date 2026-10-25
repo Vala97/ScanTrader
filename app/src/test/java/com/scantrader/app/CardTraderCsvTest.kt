@@ -115,12 +115,54 @@ class CardTraderCsvTest {
     }
 
     @Test
+    fun exportsEnglishBlueprintNameAndKeepsItalianLanguage() {
+        val csv = CardTraderCsv.build(
+            listOf(
+                mtgEntry(
+                    name = "Stendardiere del Lancio della Rana",
+                    setCode = "mor",
+                    collectorNumber = "64",
+                    scryfallId = "it-id",
+                    quantity = 1,
+                    language = "Italian",
+                    priceEur = "0.33",
+                    catalogName = "Frogtosser Banneret",
+                    catalogScryfallId = "en-id",
+                ),
+                mtgEntry(
+                    name = "Maestro di Spada Invaghito // Conquistare il Favore",
+                    setCode = "eld",
+                    collectorNumber = "105",
+                    scryfallId = "eld-it",
+                    quantity = 1,
+                    language = "it",
+                    priceEur = "0.07",
+                    catalogName = "Smitten Swordmaster // Curry Favor",
+                ),
+            ),
+            Game.MTG,
+        )
+        assertTrue(csv.contains("en-id,Frogtosser Banneret,mor,64,1,it,Near Mint,false,33"))
+        assertTrue(
+            csv.contains(
+                "eld-it,Smitten Swordmaster // Curry Favor,eld,105,1,it,Near Mint,false,7",
+            ),
+        )
+        assertFalse(csv.contains("Stendardiere"))
+        assertFalse(csv.contains("Maestro di Spada"))
+    }
+
+    @Test
     fun pokemonExportIgnoresTheHoloPrice() {
         val entry = pokemonEntry(foil = true, priceEur = "1.25", priceEurFoil = "9.99")
         assertEquals("125", CardTraderCsv.exportPriceCents(entry))
         val csv = CardTraderCsv.build(listOf(entry), Game.POKEMON)
         assertTrue(csv.contains("false,12345,125"))
         assertFalse(csv.contains("999"))
+        val named = entry.copy(name = "Kilowattrel di Kissara", catalogName = "Iono's Kilowattrel")
+        val namedCsv = CardTraderCsv.build(listOf(named), Game.POKEMON)
+        assertTrue(namedCsv.contains("Iono's Kilowattrel,base1,58,1,en,Slightly Played,false,12345,125"))
+        assertFalse(namedCsv.contains("Kilowattrel di Kissara"))
         val mtg = mtgEntry(foil = true, priceEur = "1.25", priceEurFoil = "9.99")
         assertEquals("999", CardTraderCsv.exportPriceCents(mtg))
     }
@@ -151,6 +193,8 @@ class CardTraderCsvTest {
         foil: Boolean = false,
         priceEur: String? = "1.50",
         priceEurFoil: String? = "4.00",
+        catalogName: String? = null,
+        catalogScryfallId: String? = null,
     ) = CardEntryEntity(
         collectionId = 1,
         game = Game.MTG,
@@ -167,6 +211,8 @@ class CardTraderCsvTest {
         foil = foil,
         priceEur = priceEur,
         priceEurFoil = priceEurFoil,
+        catalogName = catalogName,
+        catalogScryfallId = catalogScryfallId,
     )
 
     private fun pokemonEntry(

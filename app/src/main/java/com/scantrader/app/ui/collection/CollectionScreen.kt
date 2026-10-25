@@ -35,7 +35,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.scantrader.app.data.export.CsvShare
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.ui.CollectionViewModel
 import com.scantrader.app.ui.components.CardImage
@@ -51,6 +50,7 @@ fun CollectionScreen(
 ) {
     val collection by viewModel.collection.collectAsStateWithLifecycle()
     val cards by viewModel.cards.collectAsStateWithLifecycle()
+    val exporting by viewModel.exporting.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val title = collection?.name ?: "Collezione"
 
@@ -67,10 +67,8 @@ fun CollectionScreen(
                 },
                 actions = {
                     IconButton(
-                        onClick = {
-                            CsvShare.share(context, title, cards)
-                        },
-                        enabled = cards.isNotEmpty(),
+                        onClick = { viewModel.share(context) },
+                        enabled = cards.isNotEmpty() && !exporting,
                     ) {
                         Icon(Icons.Default.Share, contentDescription = "Esporta un CSV per gioco")
                     }

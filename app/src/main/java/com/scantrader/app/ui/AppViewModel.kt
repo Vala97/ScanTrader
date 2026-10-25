@@ -1,9 +1,11 @@
 package com.scantrader.app.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.scantrader.app.ScanTraderApp
+import com.scantrader.app.data.export.CsvShare
 import com.scantrader.app.data.db.CardEntryEntity
 import com.scantrader.app.data.db.CollectionEntity
 import com.scantrader.app.data.db.CollectionWithCount
@@ -75,6 +77,22 @@ class CollectionViewModel(
         app.repository.collection(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val cards: StateFlow<List<CardEntryEntity>> =
         app.repository.cards(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val exporting = MutableStateFlow(false)
+
+    fun share(context: Context) {
+        if (exporting.value || cards.value.isEmpty()) return
+        val snapshot = cards.value
+        val name = collection.value?.name ?: "Collezione"
+        viewModelScope.launch {
+            exporting.value = true
+            try {
+                val resolved = withContext(Dispatchers.IO) { app.blueprintNames.fill(snapshot) }
+                CsvShare.share(context, name, resolved)
+            } finally {
+                exporting.value = false
+            }
+        }
+    }
 
     fun setQuantity(entry: CardEntryEntity, quantity: Int) {
         viewModelScope.launch { app.repository.updateQuantity(entry, quantity) }

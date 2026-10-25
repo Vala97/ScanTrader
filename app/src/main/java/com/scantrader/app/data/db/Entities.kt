@@ -49,6 +49,10 @@ data class CardEntryEntity(
     val priceCurrency: String? = null,
     /** `CardTrader`, `Scryfall`, or `Cardmarket`. */
     val priceSource: String? = null,
+    /** English blueprint name written to the CardTrader `name` column. */
+    val catalogName: String? = null,
+    /** English printing's Scryfall id when [scryfallId] is a localized print. */
+    val catalogScryfallId: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 

@@ -43,7 +43,8 @@ class CardLanguageResolver(
     private fun localNames(card: IdentifiedCard): Pair<String?, Map<CardLanguage, String>> {
         val displayIsPrinted = !card.printedName.isNullOrBlank() &&
             card.name.equals(card.printedName, ignoreCase = true)
-        val english = card.name.takeUnless { displayIsPrinted }
+        val english = card.catalogName?.takeIf { it.isNotBlank() }
+            ?: card.name.takeUnless { displayIsPrinted }
         val printed = linkedMapOf<CardLanguage, String>()
         val lang = card.printedLang?.let { CardLanguage.fromCatalogCode(it) }
         if (lang != null && !card.printedName.isNullOrBlank()) printed[lang] = card.printedName

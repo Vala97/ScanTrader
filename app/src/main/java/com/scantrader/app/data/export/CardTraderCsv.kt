@@ -23,6 +23,9 @@ import java.util.Locale
  * so it is not written. `Played` is accepted if already stored.
  *
  * `price_cents` is an integer number of cents in the seller currency (EUR).
+ *
+ * `name` is the English blueprint name (`catalogName`), not the printed title.
+ * `scryfall_id` is the English printing when the saved id is a localized one.
  */
 object CardTraderCsv {
     fun mtgHeader(): List<String> = listOf(
@@ -68,8 +71,8 @@ object CardTraderCsv {
         val condition = exportCondition(entry.condition)
         return if (game == Game.MTG) {
             listOf(
-                entry.scryfallId.orEmpty(),
-                entry.name,
+                entry.catalogScryfallId?.takeIf { it.isNotBlank() } ?: entry.scryfallId.orEmpty(),
+                entry.catalogName?.takeIf { it.isNotBlank() } ?: entry.name,
                 ExpansionCodes.mtg(entry.setCode),
                 entry.collectorNumber,
                 entry.quantity.toString(),
@@ -80,7 +83,7 @@ object CardTraderCsv {
             )
         } else {
             listOf(
-                entry.name,
+                entry.catalogName?.takeIf { it.isNotBlank() } ?: entry.name,
                 ExpansionCodes.pokemon(entry.setCode),
                 entry.collectorNumber,
                 entry.quantity.toString(),

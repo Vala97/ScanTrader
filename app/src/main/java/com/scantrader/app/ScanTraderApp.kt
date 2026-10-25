@@ -4,6 +4,7 @@ import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import com.scantrader.app.data.catalog.CardLanguageResolver
+import com.scantrader.app.data.export.BlueprintNames
 import com.scantrader.app.data.catalog.CardTraderPrices
 import com.scantrader.app.data.catalog.CatalogLookup
 import com.scantrader.app.data.catalog.ScryfallEurPrices
@@ -56,6 +57,8 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         private set
     lateinit var languageResolver: CardLanguageResolver
         private set
+    lateinit var blueprintNames: BlueprintNames
+        private set
     val scanSession = ScanSession()
 
     private val http by lazy { NetworkModule.client() }
@@ -84,6 +87,7 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
             token = { secrets.getCardTraderToken() },
         )
         languageResolver = CardLanguageResolver(scryfall, tcgdex)
+        blueprintNames = BlueprintNames(scryfall, tcgdex) { repository.updateCard(it) }
         prefs = UserPreferences(this)
         ocr = CardOcr()
         visualRanker = VisualRanker(http)

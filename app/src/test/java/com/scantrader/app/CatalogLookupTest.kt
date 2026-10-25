@@ -96,6 +96,9 @@ class CatalogLookupTest {
         assertEquals("mor", hits[0].setCode)
         assertEquals("Morningtide", hits[0].setName)
         assertEquals("Stendardiere del Lancio della Rana", hits[0].name)
+        assertEquals("Frogtosser Banneret", hits[0].catalogName)
+        assertEquals("mor-64", hits[0].scryfallId)
+        assertEquals(null, hits[0].catalogScryfallId)
         assertTrue(fuzzyCalls >= 1)
         assertTrue(queries.any { it.contains("lang:it") && it.contains("!\"") })
         val printedAt = queries.indexOfFirst { it.contains("lang:it") && it.contains("!\"Stendardiere") }
@@ -419,6 +422,7 @@ class CatalogLookupTest {
             ),
         )
         val italian = english.copy(
+            id = "eld-105-it",
             lang = "it",
             cardFaces = listOf(
                 ScryfallFace(name = "Smitten Swordmaster", printedName = "Maestro di Spada Invaghito"),
@@ -435,6 +439,7 @@ class CatalogLookupTest {
             override suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard {
                 langCalls += "$set/$number/$lang"
                 if (set == "eld" && number == "105" && lang == "it") return italian
+                if (set == "eld" && number == "105" && lang == "en") return english
                 throw notFound()
             }
 
@@ -461,6 +466,9 @@ class CatalogLookupTest {
         assertEquals("it", parsed.printedLang)
         val hits = lookup.identify(Game.MTG, parsed)
         assertEquals("Maestro di Spada Invaghito // Conquistare il Favore", hits.first().name)
+        assertEquals("Smitten Swordmaster // Curry Favor", hits.first().catalogName)
+        assertEquals("eld-105-it", hits.first().scryfallId)
+        assertEquals("eld-105", hits.first().catalogScryfallId)
         assertEquals("eld", hits.first().setCode)
         assertEquals("105", hits.first().collectorNumber)
         assertTrue(idCalls.contains("eld/105"))

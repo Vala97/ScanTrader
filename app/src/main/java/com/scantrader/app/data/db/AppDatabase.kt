@@ -10,7 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [CollectionEntity::class, CardEntryEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -21,7 +21,7 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "scantrader.db")
-                .addMigrations(MIGRATION_2_3)
+                .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                 .fallbackToDestructiveMigration()
                 .build()
 
@@ -31,6 +31,13 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE card_entries ADD COLUMN priceUsdFoil TEXT")
                 db.execSQL("ALTER TABLE card_entries ADD COLUMN priceCurrency TEXT")
                 db.execSQL("ALTER TABLE card_entries ADD COLUMN priceSource TEXT")
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE card_entries ADD COLUMN catalogName TEXT")
+                db.execSQL("ALTER TABLE card_entries ADD COLUMN catalogScryfallId TEXT")
             }
         }
     }
