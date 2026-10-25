@@ -86,6 +86,16 @@ data class ScryfallCard(
         if (id.length < 2) return null
         return "https://cards.scryfall.io/normal/front/${id[0]}/${id[1]}/$id.jpg"
     }
+
+    /**
+     * Italian (and other) adventure cards put the printed title on each face
+     * (`Maestro di Spada Invaghito` // `Conquistare il Favore`), not on [printedName].
+     */
+    fun localizedPrintedName(): String? {
+        val faces = cardFaces.orEmpty().mapNotNull { it.printedName?.takeIf { title -> title.isNotBlank() } }
+        if (faces.isNotEmpty()) return faces.joinToString(" // ")
+        return printedName?.takeIf { it.isNotBlank() }
+    }
 }
 
 data class ScryfallPrices(
@@ -103,5 +113,8 @@ data class ScryfallImages(
 )
 
 data class ScryfallFace(
+    val name: String? = null,
+    /** Localized face title. Adventure cards leave the top-level `printed_name` empty. */
+    @SerializedName("printed_name") val printedName: String? = null,
     @SerializedName("image_uris") val imageUris: ScryfallImages? = null,
 )

@@ -6,6 +6,7 @@ import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.network.scryfall.ScryfallApi
 import com.scantrader.app.network.scryfall.ScryfallCard
 import com.scantrader.app.network.scryfall.ScryfallClient
+import com.scantrader.app.network.scryfall.ScryfallFace
 import com.scantrader.app.network.scryfall.ScryfallGate
 import com.scantrader.app.network.scryfall.ScryfallSearchResponse
 import com.scantrader.app.network.tcgdex.TcgdexApi
@@ -400,6 +401,71 @@ class CatalogLookupTest {
         assertTrue(fragment.isEmpty())
         assertTrue(fuzzyCalls.none { it.equals("nchar", ignoreCase = true) })
         assertTrue(fuzzySetCalls.none { it.contains("nchar") })
+    }
+
+    @Test
+    fun smittenSwordmasterUsesEld105ItalianFace() = runBlocking {
+        val idCalls = mutableListOf<String>()
+        val langCalls = mutableListOf<String>()
+        val english = ScryfallCard(
+            id = "eld-105",
+            name = "Smitten Swordmaster // Curry Favor",
+            set = "eld",
+            setName = "Throne of Eldraine",
+            collectorNumber = "105",
+            cardFaces = listOf(
+                ScryfallFace(name = "Smitten Swordmaster"),
+                ScryfallFace(name = "Curry Favor"),
+            ),
+        )
+        val italian = english.copy(
+            lang = "it",
+            cardFaces = listOf(
+                ScryfallFace(name = "Smitten Swordmaster", printedName = "Maestro di Spada Invaghito"),
+                ScryfallFace(name = "Curry Favor", printedName = "Conquistare il Favore"),
+            ),
+        )
+        val api = object : ScryfallApi {
+            override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard {
+                idCalls += "$set/$number"
+                if (set == "eld" && number == "105") return english
+                throw notFound()
+            }
+
+            override suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard {
+                langCalls += "$set/$number/$lang"
+                if (set == "eld" && number == "105" && lang == "it") return italian
+                throw notFound()
+            }
+
+            override suspend fun cardById(id: String): ScryfallCard = error("unused")
+
+            override suspend fun search(query: String, unique: String): ScryfallSearchResponse = throw notFound()
+
+            override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = throw notFound()
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = throw notFound()
+        }
+        val lookup = CatalogLookup(
+            ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L })),
+            emptyTcgdex(),
+        )
+        val parsed = com.scantrader.app.scan.OcrParser.parse(
+            rawText = "Maestro di Spada Invaghi",
+            game = Game.MTG,
+            bottomPriorityText = "105/269 C\nELDITTAYLOR INGNARSSON",
+            namePriorityText = "Maestro di Spada Invaghi",
+        )
+        assertEquals("eld", parsed.setCode)
+        assertEquals("105", parsed.collectorNumber)
+        assertEquals("it", parsed.printedLang)
+        val hits = lookup.identify(Game.MTG, parsed)
+        assertEquals("Maestro di Spada Invaghito // Conquistare il Favore", hits.first().name)
+        assertEquals("eld", hits.first().setCode)
+        assertEquals("105", hits.first().collectorNumber)
+        assertTrue(idCalls.contains("eld/105"))
+        assertTrue(langCalls.contains("eld/105/it"))
+        assertTrue(hits.none { it.name.contains("Elrond") })
     }
 
     private fun emptyTcgdex(): TcgdexApi = object : TcgdexApi {

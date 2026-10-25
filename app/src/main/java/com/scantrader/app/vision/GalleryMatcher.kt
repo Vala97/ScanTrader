@@ -132,7 +132,8 @@ class GalleryMatcher(
         parsed: ParsedCardText,
         printedLang: String?,
     ): PrintedTitle? {
-        if (MatchFusion.titleMatches(card.name, parsed.nameGuess)) return null
+        val englishFaces = listOf(card.name) + card.cardFaces.orEmpty().mapNotNull { it.name }
+        if (englishFaces.any { MatchFusion.titleMatches(it, parsed.nameGuess) }) return null
         val lang = when {
             printedLang.isNullOrBlank() -> null
             !printedLang.equals("en", ignoreCase = true) -> printedLang
@@ -147,7 +148,8 @@ class GalleryMatcher(
                 it,
             )
         }.getOrNull()
-        val title = localized?.printedName?.takeIf { it.isNotBlank() } ?: return null
+        // Adventure cards leave top-level printed_name empty and put it on each face.
+        val title = localized?.localizedPrintedName() ?: return null
         return PrintedTitle(title, lang)
     }
 

@@ -48,6 +48,10 @@ class CatalogLookup(
             val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.orRethrowBusy()
                 ?: continue
             if (mtgIdAgrees(card, name)) return listOf(card.toIdentified(ocrScore = 0.98f))
+            // English oracle name missed. Adventure faces keep the Italian title
+            // on card_faces.printed_name (`Maestro di Spada Invaghito`).
+            val localized = localizedIdHit(card, name, parsed.printedLang)
+            if (localized != null) return listOf(localized)
             preferNumber = null
         }
 
@@ -164,12 +168,48 @@ class CatalogLookup(
         return first
     }
 
+    /**
+     * Set+collector hit whose English name missed. Try the printed language
+     * (from `ELDIT…`) and Italian, and keep the card only when a face title agrees.
+     * `nchar` is not a confirmation. Ravening Warg still rejects Elrond.
+     */
+    private suspend fun localizedIdHit(
+        card: ScryfallCard,
+        ocrName: String?,
+        printedLang: String?,
+    ): IdentifiedCard? {
+        val title = OcrParser.cleanMtgNameGuess(ocrName) ?: return null
+        if (CardOrientation.implausibleTitle(title)) return null
+        if (FrameNameGate.confidentTitle(title) == null) return null
+        val langs = listOfNotNull(
+            printedLang?.takeIf { !it.equals("en", ignoreCase = true) },
+            "it",
+        ).map { it.lowercase() }.distinct()
+        for (lang in langs) {
+            val local = runCatching {
+                scryfall.cardBySetNumberLang(card.set, card.collectorNumber, lang)
+            }.orRethrowBusy() ?: continue
+            if (!mtgIdAgrees(local, title)) continue
+            val printed = local.localizedPrintedName()
+            return local.toIdentified(ocrScore = 0.98f).copy(
+                name = printed ?: local.name,
+                printedName = printed,
+                printedLang = lang,
+            )
+        }
+        return null
+    }
+
     private fun mtgIdAgrees(card: ScryfallCard, ocrName: String?): Boolean {
         val title = OcrParser.cleanMtgNameGuess(ocrName) ?: return true
         // `nchar` is not evidence for or against the printing. A real title is.
         if (CardOrientation.implausibleTitle(title)) return false
         if (FrameNameGate.confidentTitle(title) == null) return true
-        return FrameNameGate.agreesName(Game.MTG, card.name, card.printedName, title)
+        val printed = card.localizedPrintedName()
+        if (FrameNameGate.agreesName(Game.MTG, card.name, printed, title)) return true
+        return card.cardFaces.orEmpty().any { face ->
+            FrameNameGate.agreesName(Game.MTG, face.name, face.printedName, title)
+        }
     }
 
     /**

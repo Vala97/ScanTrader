@@ -72,6 +72,11 @@ data class ParsedCardText(
     val setCode: String?,
     /** Denominator from Pokémon `124/182` — helps disambiguate the set. */
     val setCardCount: Int? = null,
+    /**
+     * Language glued to the set code (`ELDIT…` → `it`).
+     * Used to verify a set+collector hit against that printing's printed name.
+     */
+    val printedLang: String? = null,
 )
 
 data class IdentifiedCard(

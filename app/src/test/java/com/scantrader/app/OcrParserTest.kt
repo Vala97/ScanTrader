@@ -847,4 +847,28 @@ class OcrParserTest {
         assertEquals("hob", simple.setCode)
         assertEquals("65", simple.collectorNumber)
     }
+
+    @Test
+    fun eldItGluedToTheArtistReadsSetEldAndItalian() {
+        val glued = OcrParser.parse(
+            rawText = "Maestro di Spada Invaghi",
+            game = Game.MTG,
+            bottomPriorityText = "105/269 C\nELDITTAYLOR INGNARSSON",
+            namePriorityText = "Maestro di Spada Invaghi",
+        )
+        assertEquals("Maestro di Spada Invaghi", glued.nameGuess)
+        assertEquals("105", glued.collectorNumber)
+        assertEquals("eld", glued.setCode)
+        assertEquals("it", glued.printedLang)
+
+        val separated = OcrParser.parse(
+            rawText = "Maestro di Spada Invaghi",
+            game = Game.MTG,
+            bottomPriorityText = "105/269 C | ELD -ITTDR",
+            namePriorityText = "Maestro di Spada Invaghi",
+        )
+        assertEquals("105", separated.collectorNumber)
+        assertEquals("eld", separated.setCode)
+        assertEquals("it", separated.printedLang)
+    }
 }

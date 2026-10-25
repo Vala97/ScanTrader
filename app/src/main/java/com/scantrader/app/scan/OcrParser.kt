@@ -43,6 +43,16 @@ object OcrParser {
     )
 
     /**
+     * Set code glued to the language and the artist: `ELDITTAYLOR`, `ELD -ITTDR`.
+     * Three letters, then a 2-letter language, then more letters (the artist).
+     * A clean `DFT • IT` or `HOBEN` stays on [mtgSetNearLang] — the language there
+     * ends the word, so this pattern does not take it.
+     */
+    private val mtgSetLangGlued = Regex(
+        """(?i)\b([A-Z]{3})(?:[•·●\*+.,/|\-–—]+|\s+[•·●\*+.,/|\-–—]+\s*|(?=[A-Z]{2}))(EN|IT|DE|FR|ES|JP|JA|PH|KO|ZHS|ZHT)(?=[A-Z])""",
+    )
+
+    /**
      * OCR often reads leading zero as O: `RO162`, `R O113`, `O162`.
      * Also glues lang: `FRAIT`, `FRA*EN`.
      */
@@ -243,18 +253,21 @@ object OcrParser {
             ),
             rawText,
         )
+        val glued = gluedMtgSetLang(prepared)
         val hit = bestMtgBottom(prepared)
         if (hit != null) {
             return ParsedCardText(
                 nameGuess = name,
                 collectorNumber = hit.collector,
-                setCode = hit.setCode,
+                setCode = hit.setCode ?: glued?.setCode,
+                printedLang = hit.printedLang ?: glued?.lang,
             )
         }
         return ParsedCardText(
             nameGuess = name,
             collectorNumber = extractCollector(prepared, prepared, Game.MTG),
-            setCode = extractSet(prepared, prepared, Game.MTG),
+            setCode = extractSet(prepared, prepared, Game.MTG) ?: glued?.setCode,
+            printedLang = glued?.lang,
         )
     }
 
@@ -323,7 +336,10 @@ object OcrParser {
         val collector: String,
         val setCode: String?,
         val score: Int,
+        val printedLang: String? = null,
     )
+
+    private data class MtgSetLang(val setCode: String, val lang: String)
 
     /**
      * Every collector pattern in the bottom band, best score wins.
@@ -377,7 +393,32 @@ object OcrParser {
             if (!isPlausibleCollector(cn)) return@forEach
             hits += MtgBottomHit(cn, paddedSet, if (paddedSet != null) 85 else 70)
         }
+        // `105/269` next to `ELDITTAYLOR` is collector 105 and set ELD.
+        // The bare fraction scores without a set; attaching the glued code outranks it.
+        val glued = gluedMtgSetLang(prepared)
+        if (glued != null) {
+            hits += hits.filter { it.setCode == null }.map { hit ->
+                hit.copy(setCode = glued.setCode, printedLang = glued.lang, score = hit.score + 17)
+            }
+        }
         return hits.maxByOrNull { it.score }
+    }
+
+    /** `ELDITTAYLOR` / `ELD -ITTDR` → set `eld`, language `it`. */
+    private fun gluedMtgSetLang(prepared: String): MtgSetLang? {
+        if (prepared.isBlank()) return null
+        mtgSetLangGlued.findAll(prepared).forEach { match ->
+            val setRaw = match.groupValues[1].uppercase()
+            if (!isPlausibleMtgSet(setRaw)) return@forEach
+            return MtgSetLang(normalizeSet(setRaw), mtgPrintedLang(match.groupValues[2]))
+        }
+        return null
+    }
+
+    /** Printed language token → Scryfall code (`JP` → `ja`). */
+    fun mtgPrintedLang(code: String): String = when (code.uppercase()) {
+        "JP" -> "ja"
+        else -> code.lowercase()
     }
 
     /**
@@ -608,6 +649,7 @@ object OcrParser {
                 .mapNotNull { it.groupValues.getOrNull(1)?.takeIf { set -> isPlausibleMtgSet(set) } }
                 .firstOrNull()
                 ?.let { return normalizeSet(it) }
+            gluedMtgSetLang(source)?.let { return it.setCode }
             mtgNumberNearSet.findAll(source)
                 .mapNotNull { match ->
                     val set = match.groupValues[2].ifBlank { match.groupValues[3] }

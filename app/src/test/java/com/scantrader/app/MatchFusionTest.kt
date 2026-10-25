@@ -3,6 +3,7 @@ package com.scantrader.app
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
+import com.scantrader.app.scan.FrameNameGate
 import com.scantrader.app.vision.MatchFusion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -149,6 +150,62 @@ class MatchFusionTest {
         assertFalse(fragment.nameOk)
         assertTrue(fragment.nameConflict)
         assertFalse(MatchFusion.allowsAutoSave(fragment))
+    }
+
+    @Test
+    fun smittenSwordmasterItalianFaceIsNotANameConflict() {
+        val swordmaster = IdentifiedCard(
+            game = Game.MTG,
+            name = "Smitten Swordmaster // Curry Favor",
+            setCode = "eld",
+            setName = "Throne of Eldraine",
+            collectorNumber = "105",
+            scryfallId = "eld-105",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+            printedName = "Maestro di Spada Invaghito // Conquistare il Favore",
+            printedLang = "it",
+        )
+        val parsed = ParsedCardText(
+            nameGuess = "Maestro di Spada Invaghi",
+            collectorNumber = "105",
+            setCode = "eld",
+            printedLang = "it",
+        )
+        val decision = MatchFusion.evaluateAutoMatch(swordmaster, parsed)
+        assertTrue(decision.accepted)
+        assertTrue(decision.strict)
+        assertTrue(decision.nameOk)
+        assertFalse(decision.nameConflict)
+        assertTrue(MatchFusion.allowsAutoSave(decision))
+
+        val frontOnly = swordmaster.copy(printedName = "Maestro di Spada Invaghito")
+        assertTrue(FrameNameGate.agrees(frontOnly, parsed))
+
+        val gallery = swordmaster.copy(
+            printedName = null,
+            ocrScore = 0.62f,
+            visualScore = 0.72f,
+            matchConfidence = 0.70f,
+        )
+        assertTrue(FrameNameGate.keep(listOf(gallery), parsed).isNotEmpty())
+        val shown = MatchFusion.evaluateAutoMatch(gallery, parsed)
+        assertTrue(shown.accepted)
+        assertFalse(shown.strict)
+
+        val elrond = swordmaster.copy(
+            name = "Elrond, Moon-Reader",
+            printedName = null,
+            setCode = "hob",
+            collectorNumber = "36",
+            visualScore = null,
+            ocrScore = 0.98f,
+            matchConfidence = 0.98f,
+        )
+        val warg = ParsedCardText(nameGuess = "Ravening Warg", collectorNumber = "36", setCode = "hob")
+        assertFalse(FrameNameGate.agrees(elrond, warg))
+        assertTrue(FrameNameGate.keep(listOf(elrond), warg).isEmpty())
     }
 
     @Test

@@ -32,7 +32,11 @@ object FrameNameGate {
 
     fun agrees(card: IdentifiedCard, frame: ParsedCardText): Boolean {
         val frameName = confidentTitle(frame.nameGuess) ?: return true
-        return agreesName(card.game, card.name, card.printedName, frameName)
+        if (agreesName(card.game, card.name, card.printedName, frameName)) return true
+        // Italian OCR vs the English gallery title is the same card when the
+        // collector matches. An English title that names a different card
+        // (Ravening Warg vs Elrond, no gallery score) stays a conflict.
+        return foreignGalleryAgrees(card, frame, frameName)
     }
 
     /** Fuzzy title check. An id hit whose name disagrees is not a match. */
@@ -41,11 +45,59 @@ object FrameNameGate {
             return PokemonCatalog.nameMatches(cardName, ocrName) ||
                 PokemonCatalog.nameMatches(printedName, ocrName)
         }
-        return CardIdentity.namesSimilar(cardName, ocrName) ||
-            CardIdentity.namesSimilar(printedName, ocrName) ||
-            partialMtgTitle(cardName, ocrName) ||
-            partialMtgTitle(printedName, ocrName)
+        val titles = faceTitles(cardName) + faceTitles(printedName)
+        return titles.any { title ->
+            CardIdentity.namesSimilar(title, ocrName) || partialMtgTitle(title, ocrName)
+        }
     }
+
+    /** Each face of an adventure or split card (`Name // Other`). */
+    fun faceTitles(raw: String?): List<String> {
+        if (raw.isNullOrBlank()) return emptyList()
+        val parts = raw.split(Regex("""\s*//\s*""")).map { it.trim() }.filter { it.isNotBlank() }
+        return if (parts.size <= 1) listOf(raw.trim()) else parts
+    }
+
+    /**
+     * `Maestro di Spada Invaghi` is not an English title. When the gallery
+     * already picked this collector, that OCR is not a different card.
+     */
+    private fun foreignGalleryAgrees(
+        card: IdentifiedCard,
+        frame: ParsedCardText,
+        frameName: String,
+    ): Boolean {
+        if (card.game != Game.MTG) return false
+        val visual = card.visualScore ?: return false
+        // Same floor as GalleryMatcher.MIN_SCORE. Below it the hit is not the gallery top.
+        if (visual < 0.55f) return false
+        if (!looksLikeForeignTitle(frameName)) return false
+        return collectorMatches(card.collectorNumber, frame.collectorNumber)
+    }
+
+    /** Italian / other printed-language function words, or an accented letter. */
+    fun looksLikeForeignTitle(name: String): Boolean {
+        if (name.any { it.isLetter() && it.code > 127 }) return true
+        val tokens = name.lowercase().split(Regex("""[^a-zà-ÿ]+""")).filter { it.isNotBlank() }
+        return tokens.any { it in FOREIGN_PARTICLES }
+    }
+
+    private fun collectorMatches(cardNumber: String, parsedNumber: String?): Boolean {
+        val numbers = OcrParser.collectorCandidates(parsedNumber)
+        if (numbers.isEmpty()) return false
+        val cn = cardNumber.trimStart('0').ifBlank { cardNumber }
+        return numbers.any {
+            cardNumber.equals(it, ignoreCase = true) ||
+                cn.equals(it.trimStart('0').ifBlank { it }, ignoreCase = true)
+        }
+    }
+
+    private val FOREIGN_PARTICLES = setOf(
+        "di", "del", "della", "dello", "dei", "delle", "degli",
+        "il", "lo", "la", "gli", "le", "un", "una", "uno",
+        "al", "allo", "alla", "nel", "nella", "sul", "sulla",
+        "von", "der", "und", "des", "les", "une", "aux", "los", "las",
+    )
 
     /**
      * `Goblir` / `Goblin-town` against "Down, Down to Goblin-town".
