@@ -132,7 +132,8 @@ class GalleryMatcher(
         parsed: ParsedCardText,
         printedLang: String?,
     ): PrintedTitle? {
-        if (MatchFusion.titleMatches(card.name, parsed.nameGuess)) return null
+        val englishFaces = listOf(card.name) + card.cardFaces.orEmpty().mapNotNull { it.name }
+        if (englishFaces.any { MatchFusion.titleMatches(it, parsed.nameGuess) }) return null
         val lang = when {
             printedLang.isNullOrBlank() -> null
             !printedLang.equals("en", ignoreCase = true) -> printedLang
@@ -147,7 +148,8 @@ class GalleryMatcher(
                 it,
             )
         }.getOrNull()
-        val title = localized?.printedName?.takeIf { it.isNotBlank() } ?: return null
+        // Adventure cards leave top-level printed_name empty and put it on each face.
+        val title = localized?.localizedPrintedName() ?: return null
         return PrintedTitle(title, lang)
     }
 
@@ -177,11 +179,20 @@ class GalleryMatcher(
             visualScore = score.coerceIn(0f, 1f),
             ocrScore = MatchFusion.ocrAgreement(stub, parsed),
             priceEur = formatEur(card.pricing?.cardmarket?.avg ?: card.pricing?.cardmarket?.trend),
-            priceEurFoil = formatEur(
-                card.pricing?.cardmarket?.avgHolo ?: card.pricing?.cardmarket?.trendHolo,
-            ),
-            priceCurrency = "EUR",
-            priceSource = "Cardmarket",
+            priceCurrency = if (
+                card.pricing?.cardmarket?.avg != null || card.pricing?.cardmarket?.trend != null
+            ) {
+                "EUR"
+            } else {
+                null
+            },
+            priceSource = if (
+                card.pricing?.cardmarket?.avg != null || card.pricing?.cardmarket?.trend != null
+            ) {
+                "Cardmarket"
+            } else {
+                null
+            },
         )
     }
 

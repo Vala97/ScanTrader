@@ -1,5 +1,7 @@
 package com.scantrader.app.data.catalog
 
+import com.scantrader.app.scan.OcrParser
+
 /**
  * Printed codes on international cards (DRI, OBF, …) → TCGdex set ids (`sv10`, `sv03`).
  * Japanese and Chinese cards print their own set id (SV2a, CSV3C); those are not remapped.
@@ -7,7 +9,7 @@ package com.scantrader.app.data.catalog
 object PokemonSets {
     private val internationalPrinted = setOf(
         "svi", "pal", "obf", "mew", "par", "paf", "tef", "twm", "sfa", "scr", "ssp", "pre",
-        "jtg", "dri", "wht", "blk", "meg", "pfl", "asc", "por", "cri", "pbl",
+        "jtg", "dri", "wht", "blk", "meg", "pfl", "asc", "por", "cri", "pbl", "30c",
     )
 
     private val toTcgdex = mapOf(
@@ -73,6 +75,9 @@ object PokemonSets {
         "pbl" to "me05",
         "me5" to "me05",
         "me05" to "me05",
+        // 30th Celebration prints `30C` and `006/128`. TCGdex id is `30th`.
+        "30c" to "30th",
+        "30th" to "30th",
     )
 
     fun isInternationalPrinted(code: String?): Boolean =
@@ -139,11 +144,49 @@ object PokemonSets {
         217 to listOf("me02.5"), // Ascended Heroes / ASC
         226 to listOf("sv09"), // Journey Together
         252 to listOf("sv08"), // Surging Sparks
+        128 to listOf("30th"), // 30th Celebration / 30C (main set, not the secret total)
     )
 
     fun idsForCardCount(officialCount: Int?): List<String> {
         if (officialCount == null) return emptyList()
         return byOfficialCount[officialCount].orEmpty()
+    }
+
+    /**
+     * TCGdex set ids to try from a printed code and/or the `NN/NNN` total.
+     * Unknown OCR tokens (`wird`) are dropped. A known code (`dri`, `oasc`) and
+     * the printed total (`102` → `base1`) are the direct id path.
+     */
+    fun directIds(printed: String?, count: Int?): List<String> {
+        val tokens = OcrParser.setCodeCandidates(printed)
+        val known = tokens.flatMap { recognizedIds(it) }
+        val canon = tokens.mapNotNull { canonicalizePrinted(it) }.flatMap { recognizedIds(it) }
+        return (known + canon + idsForCardCount(count)).distinct()
+    }
+
+    /**
+     * Map an OCR set token onto a known printed code.
+     * Trailing/leading junk (`asch`, `dasc`, `oasc`, `asca`) collapses to `asc`.
+     * Already-known printed codes and TCGdex ids are returned unchanged.
+     */
+    fun canonicalizePrinted(raw: String?): String? {
+        val trimmed = raw?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
+        if (trimmed in internationalPrinted || toTcgdex.containsKey(trimmed)) return trimmed
+        val compact = trimmed.filter { it.isLetterOrDigit() }
+        if (compact in internationalPrinted || toTcgdex.containsKey(compact)) return compact
+        if (!compact.all { it.isLetter() } || compact.length !in 4..6) return null
+        var best: String? = null
+        var bestExtra = Int.MAX_VALUE
+        for (code in internationalPrinted) {
+            if (!compact.contains(code)) continue
+            val extra = compact.length - code.length
+            if (extra !in 1..2) continue
+            if (extra < bestExtra || (extra == bestExtra && code.length > (best?.length ?: 0))) {
+                best = code
+                bestExtra = extra
+            }
+        }
+        return best
     }
 
     private fun normalize(value: String?): String? =

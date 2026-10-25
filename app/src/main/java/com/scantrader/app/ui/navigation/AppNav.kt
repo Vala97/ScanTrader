@@ -1,7 +1,21 @@
 package com.scantrader.app.ui.navigation
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -65,30 +79,47 @@ fun AppNav() {
             val raw = entry.arguments?.getString("collectionId")
             val collectionId = raw?.toLongOrNull() ?: app.scanSession.targetCollectionId
             val vm: ScanViewModel = viewModel(factory = ScanViewModel.factory(app))
-            ScanScreen(
-                viewModel = vm,
-                collectionId = collectionId,
-                onBack = { nav.popBackStack() },
-                onCaptured = { nav.navigate("confirm") },
-                onManualSearch = {
-                    app.scanSession.resetResults()
-                    nav.navigate("confirm")
-                },
-            )
-        }
-        composable("confirm") {
-            val vm: ConfirmViewModel = viewModel(factory = ConfirmViewModel.factory(app))
-            ConfirmScreen(
-                viewModel = vm,
-                onBack = { nav.popBackStack() },
-                onSaved = {
-                    // Pop confirm only. Scan stays underneath with the same
-                    // ViewModel, so the chosen game and autoscan stay armed.
-                    // resetResults drops the previous card without clearing the game.
-                    app.scanSession.resetResults()
-                    nav.popBackStack()
-                },
-            )
+            val confirmVm: ConfirmViewModel = viewModel(factory = ConfirmViewModel.factory(app))
+            // Confirm stays in this destination. A separate route would stop the
+            // scanner lifecycle, detach PreviewView, and rebind the camera at 1×.
+            var showConfirm by rememberSaveable { mutableStateOf(false) }
+            Box(Modifier.fillMaxSize()) {
+                ScanScreen(
+                    viewModel = vm,
+                    collectionId = collectionId,
+                    confirmVisible = showConfirm,
+                    onBack = { nav.popBackStack() },
+                    onCaptured = { showConfirm = true },
+                    onManualSearch = {
+                        app.scanSession.resetResults()
+                        showConfirm = true
+                    },
+                )
+                if (showConfirm) {
+                    BackHandler {
+                        showConfirm = false
+                    }
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .zIndex(1f)
+                            .background(MaterialTheme.colorScheme.background)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { },
+                    ) {
+                        ConfirmScreen(
+                            viewModel = confirmVm,
+                            onBack = { showConfirm = false },
+                            onSaved = {
+                                app.scanSession.resetResults()
+                                showConfirm = false
+                            },
+                        )
+                    }
+                }
+            }
         }
         composable("settings") {
             val vm: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(app))

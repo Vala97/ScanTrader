@@ -3,6 +3,7 @@ package com.scantrader.app
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
+import com.scantrader.app.scan.FrameNameGate
 import com.scantrader.app.vision.MatchFusion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -43,6 +44,168 @@ class MatchFusionTest {
         assertTrue(decision.accepted)
         assertTrue(decision.strict)
         assertTrue(MatchFusion.allowsAutoSave(decision))
+    }
+
+    @Test
+    fun strictPokemonHitIsRejectedWhenTheFrameNameDisagrees() {
+        val machop = ParsedCardText(nameGuess = "Machop", collectorNumber = null, setCode = null, setCardCount = 102)
+        val abra = IdentifiedCard(
+            game = Game.POKEMON,
+            name = "Abra",
+            setCode = "base1",
+            setName = "Base",
+            collectorNumber = "43",
+            tcgdexId = "base1-43",
+            ocrScore = 1f,
+            visualScore = null,
+            matchConfidence = 1f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(abra, machop)
+        assertFalse(decision.accepted)
+        assertFalse(decision.strict)
+        assertTrue(decision.nameConflict)
+        assertFalse(MatchFusion.allowsAutoSave(decision))
+
+        val agreed = MatchFusion.evaluateAutoMatch(
+            abra.copy(name = "Abra"),
+            ParsedCardText("Abra", "43", "base", 102),
+        )
+        assertTrue(agreed.accepted)
+        assertTrue(agreed.strict)
+        assertTrue(agreed.nameOk)
+    }
+
+    @Test
+    fun strictMtgIdHitIsRejectedWhenTheNameDisagrees() {
+        val parsed = ParsedCardText(
+            nameGuess = "Ravening Warg",
+            collectorNumber = "36",
+            setCode = "hob",
+        )
+        val elrond = IdentifiedCard(
+            game = Game.MTG,
+            name = "Elrond, Moon-Reader",
+            setCode = "hob",
+            setName = "The Hobbit",
+            collectorNumber = "36",
+            scryfallId = "elrond",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(elrond, parsed)
+        assertFalse(decision.accepted)
+        assertFalse(decision.strict)
+        assertFalse(decision.nameOk)
+        assertTrue(decision.nameConflict)
+        assertEquals("nameConflict name=Ravening Warg top=Elrond, Moon-Reader", decision.reason)
+        assertFalse(MatchFusion.allowsAutoSave(decision))
+
+        val warg = elrond.copy(name = "Ravening Warg", collectorNumber = "80", scryfallId = "warg")
+        val agreed = MatchFusion.evaluateAutoMatch(warg, parsed.copy(collectorNumber = "80"))
+        assertTrue(agreed.accepted)
+        assertTrue(agreed.strict)
+        assertTrue(agreed.nameOk)
+        assertFalse(agreed.nameConflict)
+        assertTrue(MatchFusion.allowsAutoSave(agreed))
+    }
+
+    @Test
+    fun goblinTownPartialAgreesAndNcharDoesNot() {
+        val goblinTown = IdentifiedCard(
+            game = Game.MTG,
+            name = "Down, Down to Goblin-town",
+            setCode = "hob",
+            setName = "The Hobbit",
+            collectorNumber = "65",
+            scryfallId = "goblin-town",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+        )
+        val partial = ParsedCardText(
+            nameGuess = "Goblir",
+            collectorNumber = "65",
+            setCode = "hob",
+        )
+        val agreed = MatchFusion.evaluateAutoMatch(goblinTown, partial)
+        assertTrue(agreed.accepted)
+        assertTrue(agreed.strict)
+        assertTrue(agreed.nameOk)
+        assertFalse(agreed.nameConflict)
+        assertTrue(MatchFusion.allowsAutoSave(agreed))
+
+        val town = MatchFusion.evaluateAutoMatch(
+            goblinTown,
+            partial.copy(nameGuess = "Goblin-town"),
+        )
+        assertTrue(town.nameOk)
+        assertTrue(town.strict)
+
+        val fragment = MatchFusion.evaluateAutoMatch(
+            goblinTown,
+            partial.copy(nameGuess = "nchar"),
+        )
+        assertFalse(fragment.accepted)
+        assertFalse(fragment.nameOk)
+        assertTrue(fragment.nameConflict)
+        assertFalse(MatchFusion.allowsAutoSave(fragment))
+    }
+
+    @Test
+    fun smittenSwordmasterItalianFaceIsNotANameConflict() {
+        val swordmaster = IdentifiedCard(
+            game = Game.MTG,
+            name = "Smitten Swordmaster // Curry Favor",
+            setCode = "eld",
+            setName = "Throne of Eldraine",
+            collectorNumber = "105",
+            scryfallId = "eld-105",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+            printedName = "Maestro di Spada Invaghito // Conquistare il Favore",
+            printedLang = "it",
+        )
+        val parsed = ParsedCardText(
+            nameGuess = "Maestro di Spada Invaghi",
+            collectorNumber = "105",
+            setCode = "eld",
+            printedLang = "it",
+        )
+        val decision = MatchFusion.evaluateAutoMatch(swordmaster, parsed)
+        assertTrue(decision.accepted)
+        assertTrue(decision.strict)
+        assertTrue(decision.nameOk)
+        assertFalse(decision.nameConflict)
+        assertTrue(MatchFusion.allowsAutoSave(decision))
+
+        val frontOnly = swordmaster.copy(printedName = "Maestro di Spada Invaghito")
+        assertTrue(FrameNameGate.agrees(frontOnly, parsed))
+
+        val gallery = swordmaster.copy(
+            printedName = null,
+            ocrScore = 0.62f,
+            visualScore = 0.72f,
+            matchConfidence = 0.70f,
+        )
+        assertTrue(FrameNameGate.keep(listOf(gallery), parsed).isNotEmpty())
+        val shown = MatchFusion.evaluateAutoMatch(gallery, parsed)
+        assertTrue(shown.accepted)
+        assertFalse(shown.strict)
+
+        val elrond = swordmaster.copy(
+            name = "Elrond, Moon-Reader",
+            printedName = null,
+            setCode = "hob",
+            collectorNumber = "36",
+            visualScore = null,
+            ocrScore = 0.98f,
+            matchConfidence = 0.98f,
+        )
+        val warg = ParsedCardText(nameGuess = "Ravening Warg", collectorNumber = "36", setCode = "hob")
+        assertFalse(FrameNameGate.agrees(elrond, warg))
+        assertTrue(FrameNameGate.keep(listOf(elrond), warg).isEmpty())
     }
 
     @Test
@@ -529,7 +692,27 @@ class MatchFusionTest {
             autoSaveCancelled = true,
         )
         assertEquals(MatchFusion.ConfirmMatchTone.CONFIRM, note.tone)
+        assertEquals("Salvataggio automatico annullato", note.title)
         assertTrue(note.body.contains("Hai modificato la scheda"))
+        assertTrue(note.body.contains("Salva in collezione"))
+        assertFalse(note.body.contains("da sola"))
+    }
+
+    @Test
+    fun cancelledAutoSaveWinsOverADifferentPrint() {
+        val strong = MatchFusion.score(
+            card("Lightning Bolt", "m21", "161", ocr = 0.90f, visual = 0.88f),
+            parsed,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(strong, parsed)
+        val note = MatchFusion.confirmMatchNote(
+            decision = decision,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+            selectedMatchesGate = false,
+            autoSaveCancelled = true,
+        )
+        assertEquals("Salvataggio automatico annullato", note.title)
         assertFalse(note.body.contains("da sola"))
     }
 

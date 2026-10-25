@@ -15,16 +15,30 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.data.prefs.ScanDefaults
 import com.scantrader.app.network.scryfall.ScryfallBusyException
+import com.scantrader.app.scan.AcceptedCandidateLock
+import com.scantrader.app.scan.AutosaveDuplicateGuard
 import com.scantrader.app.scan.BackCamera
 import com.scantrader.app.scan.CameraDevices
+import com.scantrader.app.scan.FrameGate
+import com.scantrader.app.scan.FrameNameGate
+import com.scantrader.app.scan.FrameQuery
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
 import com.scantrader.app.scan.LensOption
+import com.scantrader.app.scan.RejectedSetCodes
+import com.scantrader.app.scan.SetPrintingGuard
+import com.scantrader.app.scan.SpeculativeCatalog
+import com.scantrader.app.scan.StableTopAccept
 import com.scantrader.app.scan.ZoomFraming
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -177,6 +191,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     val zoomRatio = MutableStateFlow(app.scanSession.zoomRatio)
     val cameraId = MutableStateFlow(app.scanSession.cameraId)
     val lensKey = MutableStateFlow(app.scanSession.lensKey)
+    val guideViewWidth = MutableStateFlow(app.scanSession.guideViewWidth)
+    val guideViewHeight = MutableStateFlow(app.scanSession.guideViewHeight)
     private var hardware: List<BackCamera> = CameraDevices.backCameras(app)
     private var zoomRangeLive: Boolean = false
     val lensOptions = MutableStateFlow(LensCatalog.optionsFor(hardware))
@@ -184,17 +200,28 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     @Volatile
     private var lastAutoAttemptMs: Long = 0
 
-    /** Identity of the last auto-accepted card — block re-scan until a different card appears. */
-    @Volatile
-    private var lastAcceptedCardKey: String? = null
-
-    /** Consecutive frames where the locked card is no longer the top hit. */
-    @Volatile
-    private var sameCardClearFrames: Int = 0
+    /**
+     * Identity of the card on the confirm overlay. Released when that overlay
+     * closes and when the parsed name or collector changes.
+     */
+    private val acceptedLock = AcceptedCandidateLock(clearFramesNeeded = SAME_CARD_CLEAR_FRAMES)
+    private val duplicateGuard = AutosaveDuplicateGuard()
+    private val lastAcceptedCardKey: String?
+        get() = acceptedLock.key
 
     private val autoBusy = AtomicBoolean(false)
     private val autoHitPending = AtomicBoolean(false)
     private val catalogDebounce = CatalogQueryDebounce()
+    private val rejectedSets = RejectedSetCodes()
+    private val stableTop = StableTopAccept()
+    private val speculativeCatalog = SpeculativeCatalog()
+    private val speculativeInFlight = AtomicBoolean(false)
+
+    @Volatile
+    private var speculativeDeferred: Deferred<List<IdentifiedCard>>? = null
+
+    private var lastLuma: IntArray? = null
+    private var lastLumaAtMs: Long = 0L
     private var autoHold = AutoHold.NONE
 
     private var zoomPersistJob: kotlinx.coroutines.Job? = null
@@ -211,6 +238,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
      */
     @Volatile
     private var zoomRestoreArmed: Boolean = false
+
+    /**
+     * Set when leaving the scanner for confirm, before CameraX can report the
+     * unbind zoom. Cleared only once the stored ratio is observed again.
+     */
+    @Volatile
+    private var zoomWritesHeld: Boolean = false
 
     /** Set once prefs or a user zoom/lens choice have defined the framing. */
     @Volatile
@@ -252,20 +286,40 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         val lens = app.scanSession.lensKey
         if (lensKey.value != lens) lensKey.value = lens
         if (cameraId.value != app.scanSession.cameraId) cameraId.value = app.scanSession.cameraId
-        zoomRestoreArmed = true
-        programmaticZoom = ratio
-        val gen = ++zoomLockGen
+        // Cancel a lens-lock timer so it cannot drop the restore guard.
+        // Do not start a timeout: a late 1× must not replace the session zoom.
+        zoomLockGen++
         zoomLockJob?.cancel()
-        zoomLockJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(3_000)
-            if (gen == zoomLockGen && zoomRestoreArmed) {
-                zoomRestoreArmed = false
-                programmaticZoom = null
-            }
-        }
+        zoomRestoreArmed = true
+        zoomWritesHeld = true
+        programmaticZoom = ratio
     }
 
     fun isZoomRestoreArmed(): Boolean = zoomRestoreArmed
+
+    fun isFramingHeld(): Boolean = zoomWritesHeld || zoomRestoreArmed
+
+    /** Confirm is covering the scanner. Ignore zoom reports until we restore. */
+    fun holdFraming() {
+        zoomWritesHeld = true
+    }
+
+    /** Stored ratio was observed after CameraControl and zoomState were ready. */
+    fun onZoomRestoreSettled() {
+        zoomRestoreArmed = false
+        zoomWritesHeld = false
+        programmaticZoom = null
+    }
+
+    /** First real scanner layout. Later sizes must not move the guide. */
+    fun lockGuideViewport(width: Float, height: Float) {
+        if (width <= 1f || height <= 1f) return
+        if (app.scanSession.guideViewWidth > 1f && app.scanSession.guideViewHeight > 1f) return
+        app.scanSession.guideViewWidth = width
+        app.scanSession.guideViewHeight = height
+        guideViewWidth.value = width
+        guideViewHeight.value = height
+    }
 
     fun setGame(value: Game) {
         game.value = value
@@ -331,12 +385,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun onObservedZoom(reported: Float) {
         if (!reported.isFinite() || reported <= 0f) return
-        if (zoomRestoreArmed) {
-            val target = programmaticZoom ?: zoomRatio.value
-            if (!ZoomFraming.ignoreReportedZoom(target, reported, restoreArmed = true)) {
-                zoomRestoreArmed = false
-                programmaticZoom = null
-            }
+        val stored = programmaticZoom ?: zoomRatio.value
+        if (!ZoomFraming.acceptReportedZoom(stored, reported, restorePending = isFramingHeld())) {
+            return
+        }
+        if (isFramingHeld()) {
+            onZoomRestoreSettled()
             return
         }
         val pending = programmaticZoom
@@ -349,8 +403,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     /** Pause/dispose path. Ignores the 1× jump CameraX emits while unbinding. */
     fun persistCameraZoom(reported: Float) {
-        if (zoomRestoreArmed) return
-        if (ZoomFraming.isUnbindReset(zoomRatio.value, reported)) return
+        if (isFramingHeld()) return
+        if (!ZoomFraming.acceptReportedZoom(zoomRatio.value, reported, restorePending = false)) return
         onObservedZoom(reported)
     }
 
@@ -396,6 +450,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     private fun lockZoom(target: Float) {
         zoomRestoreArmed = false
+        zoomWritesHeld = false
         programmaticZoom = target
         zoomRatio.value = target
         app.scanSession.zoomRatio = target
@@ -451,9 +506,15 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     fun resumeScanning() {
         autoHitPending.set(false)
         autoBusy.set(false)
-        // Keep lastAcceptedCardKey so the same physical card still in frame is ignored.
+        val closed = acceptedLock.snapshot
+        duplicateGuard.onOverlayClosed(closed?.key, closed?.name)
+        acceptedLock.clear()
+        cancelSpeculative()
+        catalogDebounce.reset()
+        rejectedSets.clear()
+        stableTop.reset()
         if (autoScan.value) {
-            autoStatus.value = if (lastAcceptedCardKey != null) {
+            autoStatus.value = if (duplicateGuard.holdingSameCard()) {
                 "Metti un’altra carta…"
             } else {
                 "Inquadra la carta…"
@@ -467,6 +528,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun canAcceptAutoFrame(nowMs: Long = System.currentTimeMillis()): Boolean {
         if (!autoScan.value || autoHitPending.get() || autoBusy.get() || processing.value) return false
+        // The catalog job outlives the frame that started it, so the next OCR can overlap it.
+        if (speculativeInFlight.get()) return true
         return nowMs - lastAutoAttemptMs >= AUTO_COOLDOWN_MS
     }
 
@@ -508,12 +571,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     onHit()
                 } else when (autoHold) {
                     AutoHold.BUSY -> autoStatus.value = "Scryfall occupato, riprovo…"
-                    AutoHold.UNSTABLE -> autoStatus.value = if (lastAcceptedCardKey != null) {
+                    AutoHold.SPECULATIVE -> autoStatus.value = "Analisi in corso…"
+                    AutoHold.UNSTABLE -> autoStatus.value = if (duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
                         "Metti un’altra carta…"
                     } else {
                         "Inquadra la carta…"
                     }
-                    AutoHold.NONE -> autoStatus.value = if (lastAcceptedCardKey != null) {
+                    AutoHold.NONE -> autoStatus.value = if (duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
                         "Metti un’altra carta…"
                     } else {
                         "Inquadra meglio…"
@@ -540,7 +604,6 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         bitmap: android.graphics.Bitmap,
         requireMatch: Boolean,
     ): Boolean {
-        app.scanSession.resetResults()
         app.scanSession.game = game.value
         val autoMode = requireMatch
         return withContext(Dispatchers.IO) {
@@ -551,20 +614,45 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "neuralMtg=${app.neuralPack.isInstalled(Game.MTG)} " +
                     "neuralPkm=${app.neuralPack.isInstalled(Game.POKEMON)}",
             )
-            val croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropBitmap(bitmap)
-            // Auto: lighter crop; manual stills stay higher-res (often 4K).
-            val cropped = downscaleForOcr(
-                croppedFull,
-                maxSide = if (autoMode) AUTO_OCR_MAX_SIDE else MANUAL_OCR_MAX_SIDE,
-            )
-            com.scantrader.app.scan.ScanDebug.d(
-                "crop ${cropped.width}x${cropped.height} from ${bitmap.width}x${bitmap.height}" +
-                    if (cropped !== croppedFull) " (downscaled)" else "",
-            )
+            val oriented = com.scantrader.app.scan.CameraBitmaps.ensurePortrait(bitmap)
+            if (oriented.width != bitmap.width || oriented.height != bitmap.height) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "portrait ${bitmap.width}x${bitmap.height} -> ${oriented.width}x${oriented.height}",
+                )
+            }
+            var croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropBitmap(oriented)
+            if (autoMode && skipUnstableFrame(croppedFull, t0)) {
+                return@withContext false
+            }
             val isMtg = game.value == Game.MTG
             val isPokemon = game.value == Game.POKEMON
+            // Bottom strips stay at 480. The title strip keeps enough pixels for a long name.
+            fun scaled(full: android.graphics.Bitmap): Pair<android.graphics.Bitmap, android.graphics.Bitmap> {
+                val bottomCap = if (autoMode) AUTO_STRIP_MAX_SIDE else MANUAL_OCR_MAX_SIDE
+                val titleCap = if (!autoMode) {
+                    bottomCap
+                } else {
+                    com.scantrader.app.scan.CardOrientation.titleMaxSide(
+                        width = full.width,
+                        height = full.height,
+                        floor = AUTO_STRIP_MAX_SIDE,
+                        ceiling = AUTO_TITLE_MAX_SIDE,
+                        titleHeightFraction = if (isMtg) 0.14f else 0.22f,
+                        minTitlePx = 96,
+                    )
+                }
+                val bottom = downscaleForOcr(full, bottomCap)
+                val title = if (titleCap == bottomCap) bottom else downscaleForOcr(full, titleCap)
+                return bottom to title
+            }
+            var (cropped, titleCard) = scaled(croppedFull)
+            com.scantrader.app.scan.ScanDebug.d(
+                "crop ${cropped.width}x${cropped.height} title ${titleCard.width}x${titleCard.height} " +
+                    "from ${oriented.width}x${oriented.height}" +
+                    if (cropped !== croppedFull || titleCard !== croppedFull) " (downscaled)" else "",
+            )
             val tOcr0 = System.currentTimeMillis()
-            // Parallel OCR: top + bottom-left first (identity). Full card only if needed.
+            // Parallel OCR: title + bottom corners. Full card only when the number is still missing.
             val (topNameText, bottomLeft, text, bottomFull, bottomRight, bottomEdge) =
                 coroutineScope {
                     // Auto: skip 2.5× enhance on first pass; manual keeps enhance for tiny type.
@@ -572,7 +660,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     val topJob = async {
                         runCatching {
                             app.ocr.recognize(
-                                com.scantrader.app.scan.CardFrameGeometry.topNameStrip(cropped, mtg = isMtg),
+                                com.scantrader.app.scan.CardFrameGeometry.topNameStrip(titleCard, mtg = isMtg),
                                 enhance = enhanceFirst,
                             )
                         }.getOrDefault("")
@@ -587,66 +675,43 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             app.ocr.recognize(strip, enhance = enhanceFirst)
                         }.getOrDefault("")
                     }
-                    var top = topJob.await()
-                    var bl = blJob.await()
-                    var quick = com.scantrader.app.scan.OcrParser.parse(
-                        rawText = top,
-                        game = game.value,
-                        bottomPriorityText = bl,
-                        namePriorityText = top.takeIf { it.isNotBlank() },
-                    )
-                    // Auto: one enhanced pass when the collector is still missing.
-                    // Old MTG frames have a number and no set code — don't re-OCR those.
-                    val needsEnhance = if (isMtg) {
-                        quick.collectorNumber.isNullOrBlank()
-                    } else {
-                        quick.collectorNumber.isNullOrBlank() || quick.setCode.isNullOrBlank()
-                    }
-                    if (autoMode && needsEnhance) {
-                        bl = runCatching {
-                            val strip = if (isMtg) {
-                                com.scantrader.app.scan.CardFrameGeometry.bottomBandStrip(cropped)
-                            } else {
-                                com.scantrader.app.scan.CardFrameGeometry.bottomLeftStrip(cropped)
-                            }
-                            app.ocr.recognize(strip, enhance = true)
-                        }.getOrDefault(bl)
-                        quick = com.scantrader.app.scan.OcrParser.parse(
-                            rawText = top,
-                            game = game.value,
-                            bottomPriorityText = bl,
-                            namePriorityText = top.takeIf { it.isNotBlank() },
-                        )
-                    }
-                    val identityReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(quick)
-                    val quickId = catalogIdentity(quick)
-                    val nameAndCnStable = autoMode &&
-                        !quick.nameGuess.isNullOrBlank() &&
-                        !quick.collectorNumber.isNullOrBlank() &&
-                        catalogDebounce.seenThisBefore(quickId)
-                    if (autoMode && top.isBlank() && bl.isBlank()) {
-                        com.scantrader.app.scan.ScanDebug.d("OCR early-abort empty strips")
-                        HexOcrBundle(top, bl, "", "", "", "")
-                    } else if (identityReady || nameAndCnStable) {
-                        com.scantrader.app.scan.ScanDebug.d(
-                            if (identityReady) "OCR fast-path identity ready" else "OCR skip extra passes (name+cn stable)",
-                        )
-                        HexOcrBundle(top, bl, top, bl, "", "")
-                    } else {
-                        val fullJob = async {
-                            runCatching {
-                                // Auto Pokémon: latin-only full pass; CJK only on manual.
-                                app.ocr.recognize(cropped, cjk = isPokemon && !autoMode)
-                            }.getOrDefault("")
-                        }
-                        val bfJob = async {
+                    // Vintage Pokémon prints the collector on the bottom-right. Read it with the title.
+                    val brJob = async {
+                        if (!autoMode || !isPokemon) {
+                            ""
+                        } else {
                             runCatching {
                                 app.ocr.recognize(
-                                    com.scantrader.app.scan.CardFrameGeometry.bottomStrip(cropped),
+                                    com.scantrader.app.scan.CardFrameGeometry.bottomRightStrip(cropped),
                                 )
                             }.getOrDefault("")
                         }
-                        val brJob = async {
+                    }
+                    var top = topJob.await()
+                    var bl = blJob.await()
+                    var br = brJob.await()
+                    var edge = ""
+                    fun bottomSoFar(): String =
+                        listOf(edge, br, bl).filter { it.isNotBlank() }.joinToString("\n")
+                    var quick = com.scantrader.app.scan.OcrParser.parse(
+                        rawText = top,
+                        game = game.value,
+                        bottomPriorityText = bottomSoFar(),
+                        namePriorityText = top.takeIf { it.isNotBlank() },
+                    )
+                    // Auto: enhanced corners only while the collector is still missing.
+                    if (autoMode && quick.collectorNumber.isNullOrBlank()) {
+                        val eblJob = async {
+                            runCatching {
+                                val strip = if (isMtg) {
+                                    com.scantrader.app.scan.CardFrameGeometry.bottomBandStrip(cropped)
+                                } else {
+                                    com.scantrader.app.scan.CardFrameGeometry.bottomLeftStrip(cropped)
+                                }
+                                app.ocr.recognize(strip, enhance = true)
+                            }.getOrDefault(bl)
+                        }
+                        val ebrJob = async {
                             if (!isPokemon) {
                                 ""
                             } else {
@@ -655,10 +720,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                         com.scantrader.app.scan.CardFrameGeometry.bottomRightStrip(cropped),
                                         enhance = true,
                                     )
-                                }.getOrDefault("")
+                                }.getOrDefault(br)
                             }
                         }
-                        val beJob = async {
+                        val edgeJob = async {
                             if (!isPokemon) {
                                 ""
                             } else {
@@ -670,12 +735,219 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                 }.getOrDefault("")
                             }
                         }
+                        val enhancedBl = eblJob.await()
+                        val enhancedBr = ebrJob.await()
+                        val enhancedEdge = edgeJob.await()
+                        if (enhancedBl.isNotBlank()) bl = enhancedBl
+                        if (enhancedBr.isNotBlank()) br = enhancedBr
+                        if (enhancedEdge.isNotBlank()) edge = enhancedEdge
+                        quick = com.scantrader.app.scan.OcrParser.parse(
+                            rawText = top,
+                            game = game.value,
+                            bottomPriorityText = bottomSoFar(),
+                            namePriorityText = top.takeIf { it.isNotBlank() },
+                        )
+                    }
+                    // Collector line in the title band: rotation put the card's bottom at the top.
+                    if (com.scantrader.app.scan.CardOrientation.regionMappingOff(top, quick.nameGuess)) {
+                        com.scantrader.app.scan.ScanDebug.d("OCR region map off, rotate 180 and reread")
+                        val flippedFull = com.scantrader.app.scan.CameraBitmaps.rotateDegrees(
+                            croppedFull,
+                            180,
+                            recycleSource = false,
+                        )
+                        val (flippedBottom, flippedTitle) = scaled(flippedFull)
+                        val newTop = runCatching {
+                            app.ocr.recognize(
+                                com.scantrader.app.scan.CardFrameGeometry.topNameStrip(
+                                    flippedTitle,
+                                    mtg = isMtg,
+                                ),
+                                enhance = enhanceFirst,
+                            )
+                        }.getOrDefault("")
+                        val newBl = runCatching {
+                            val strip = if (isMtg) {
+                                com.scantrader.app.scan.CardFrameGeometry.bottomBandStrip(flippedBottom)
+                            } else {
+                                com.scantrader.app.scan.CardFrameGeometry.bottomLeftStrip(flippedBottom)
+                            }
+                            app.ocr.recognize(strip, enhance = enhanceFirst)
+                        }.getOrDefault("")
+                        val retry = com.scantrader.app.scan.OcrParser.parse(
+                            rawText = newTop,
+                            game = game.value,
+                            bottomPriorityText = newBl,
+                            namePriorityText = newTop.takeIf { it.isNotBlank() },
+                        )
+                        if (com.scantrader.app.scan.CardOrientation.rotatedPassWins(
+                                quick.nameGuess,
+                                retry.nameGuess,
+                            )
+                        ) {
+                            croppedFull = flippedFull
+                            cropped = flippedBottom
+                            titleCard = flippedTitle
+                            if (newTop.isNotBlank()) top = newTop
+                            if (newBl.isNotBlank()) bl = newBl
+                            quick = retry
+                            com.scantrader.app.scan.ScanDebug.d(
+                                "OCR region map kept rot180 name=${retry.nameGuess}",
+                            )
+                        }
+                    }
+                    val stripText = listOf(top, bl, br, edge).filter { it.isNotBlank() }.joinToString("\n")
+                    val trainerLayout = isPokemon &&
+                        com.scantrader.app.scan.OcrParser.looksLikeTrainerLayout(stripText)
+                    val weakTitle = !quick.nameGuess.isNullOrBlank() &&
+                        com.scantrader.app.scan.CardOrientation.implausibleTitle(quick.nameGuess)
+                    val mappingOff = com.scantrader.app.scan.CardOrientation.regionMappingOff(
+                        top,
+                        quick.nameGuess,
+                    )
+                    val identityReady = !weakTitle && !mappingOff &&
+                        com.scantrader.app.scan.OcrParser.identityReadyForFastPath(
+                            quick,
+                            stripText,
+                        )
+                    val quickId = catalogIdentity(quick)
+                    val nameAndCnStable = autoMode && !weakTitle && !mappingOff &&
+                        !quick.nameGuess.isNullOrBlank() &&
+                        !quick.collectorNumber.isNullOrBlank() &&
+                        catalogDebounce.seenThisBefore(quickId)
+                    val stripsEnough = autoMode && !weakTitle && !mappingOff &&
+                        !quick.collectorNumber.isNullOrBlank() &&
+                        (
+                            !quick.nameGuess.isNullOrBlank() ||
+                                quick.setCardCount != null ||
+                                !quick.setCode.isNullOrBlank()
+                            )
+                    if (autoMode && top.isBlank() && bl.isBlank() && br.isBlank() && edge.isBlank()) {
+                        com.scantrader.app.scan.ScanDebug.d("OCR early-abort empty strips")
+                        HexOcrBundle(top, bl, "", "", br, edge)
+                    } else if (trainerLayout && autoMode) {
+                        // Rules text is read after the match so it does not sit on the critical path.
+                        val titleJob = async {
+                            runCatching {
+                                app.ocr.recognize(
+                                    com.scantrader.app.scan.CardFrameGeometry.trainerTitleStrip(cropped),
+                                    enhance = true,
+                                )
+                            }.getOrDefault(top)
+                        }
+                        val bottomJob = async {
+                            runCatching {
+                                app.ocr.recognize(
+                                    com.scantrader.app.scan.CardFrameGeometry.trainerBottomLeftStrip(cropped),
+                                    enhance = true,
+                                )
+                            }.getOrDefault(bl)
+                        }
+                        val titleText = titleJob.await().ifBlank { top }
+                        val bottomText = bottomJob.await().ifBlank { bl }
+                        com.scantrader.app.scan.ScanDebug.d("OCR trainer layout title+bottom (rules deferred)")
+                        HexOcrBundle(
+                            top = titleText,
+                            bl = bottomText,
+                            text = titleText,
+                            bottomFull = bottomText,
+                            bottomRight = br,
+                            bottomEdge = edge,
+                        )
+                    } else if (trainerLayout) {
+                        val titleJob = async {
+                            runCatching {
+                                app.ocr.recognize(
+                                    com.scantrader.app.scan.CardFrameGeometry.trainerTitleStrip(cropped),
+                                    enhance = true,
+                                )
+                            }.getOrDefault(top)
+                        }
+                        val rulesJob = async {
+                            runCatching {
+                                app.ocr.recognize(
+                                    com.scantrader.app.scan.CardFrameGeometry.trainerRulesStrip(cropped),
+                                )
+                            }.getOrDefault("")
+                        }
+                        val bottomJob = async {
+                            runCatching {
+                                app.ocr.recognize(
+                                    com.scantrader.app.scan.CardFrameGeometry.trainerBottomLeftStrip(cropped),
+                                    enhance = true,
+                                )
+                            }.getOrDefault(bl)
+                        }
+                        val titleText = titleJob.await().ifBlank { top }
+                        val rulesText = rulesJob.await()
+                        val bottomText = bottomJob.await().ifBlank { bl }
+                        com.scantrader.app.scan.ScanDebug.d("OCR trainer layout title+rules+bottom")
+                        HexOcrBundle(
+                            top = titleText,
+                            bl = bottomText,
+                            text = listOf(titleText, rulesText).filter { it.isNotBlank() }.joinToString("\n"),
+                            bottomFull = bottomText,
+                            bottomRight = br,
+                            bottomEdge = edge,
+                        )
+                    } else if (identityReady || nameAndCnStable || stripsEnough) {
+                        com.scantrader.app.scan.ScanDebug.d(
+                            when {
+                                identityReady -> "OCR fast-path identity ready"
+                                nameAndCnStable -> "OCR skip extra passes (name+cn stable)"
+                                else -> "OCR strips only"
+                            },
+                        )
+                        HexOcrBundle(top, bl, top, bl, br, edge)
+                    } else {
+                        val fullBitmap = if (autoMode) {
+                            downscaleForOcr(croppedFull, AUTO_FULL_MAX_SIDE)
+                        } else {
+                            cropped
+                        }
+                        val fullJob = async {
+                            runCatching {
+                                // Auto Pokémon: latin-only full pass; CJK only on manual.
+                                app.ocr.recognize(fullBitmap, cjk = isPokemon && !autoMode)
+                            }.getOrDefault("")
+                        }
+                        val bfJob = async {
+                            runCatching {
+                                app.ocr.recognize(
+                                    com.scantrader.app.scan.CardFrameGeometry.bottomStrip(fullBitmap),
+                                )
+                            }.getOrDefault("")
+                        }
+                        val fullBrJob = async {
+                            if (!isPokemon || br.isNotBlank()) {
+                                br
+                            } else {
+                                runCatching {
+                                    app.ocr.recognize(
+                                        com.scantrader.app.scan.CardFrameGeometry.bottomRightStrip(fullBitmap),
+                                        enhance = true,
+                                    )
+                                }.getOrDefault("")
+                            }
+                        }
+                        val beJob = async {
+                            if (!isPokemon || edge.isNotBlank()) {
+                                edge
+                            } else {
+                                runCatching {
+                                    app.ocr.recognize(
+                                        com.scantrader.app.scan.CardFrameGeometry.bottomEdgeStrip(fullBitmap),
+                                        enhance = true,
+                                    )
+                                }.getOrDefault("")
+                            }
+                        }
                         HexOcrBundle(
                             top = top,
                             bl = bl,
                             text = fullJob.await(),
                             bottomFull = bfJob.await(),
-                            bottomRight = brJob.await(),
+                            bottomRight = fullBrJob.await(),
                             bottomEdge = beJob.await(),
                         )
                     }
@@ -693,7 +965,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     if (bottomLeft.isNotBlank()) append("\n").append(bottomLeft)
                 }
             }
-            val parsed = com.scantrader.app.scan.OcrParser.parse(
+            var parsed = com.scantrader.app.scan.OcrParser.parse(
                 rawText = text,
                 game = game.value,
                 bottomPriorityText = bottomText,
@@ -705,6 +977,15 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "parsed name=${parsed.nameGuess} cn=${parsed.collectorNumber} " +
                     "set=${parsed.setCode} count=${parsed.setCardCount} ocrMs=$ocrMs",
             )
+            if (game.value == Game.MTG) {
+                val scrubbed = rejectedSets.scrub(parsed)
+                if (scrubbed.setCode != parsed.setCode) {
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "set discarded (not a printing of ${parsed.nameGuess}) set=${parsed.setCode}",
+                    )
+                    parsed = scrubbed
+                }
+            }
             if (topNameText.isNotBlank()) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "OCR top snippet=${topNameText.take(100).replace("\n", " | ")}",
@@ -733,35 +1014,105 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         "requireMatch=$requireMatch ocrMs=$ocrMs catalogMs=0 " +
                         "ms=${System.currentTimeMillis() - t0}",
                 )
+                logTiming("empty", ocrMs, 0, System.currentTimeMillis() - t0)
+                if (acceptedLock.key != null) return@withContext false
+                app.scanSession.resetResults()
+                app.scanSession.game = game.value
                 app.scanSession.errorMessage =
                     "Nessun testo letto. Inquadra tutta la carta, soprattutto il basso a sinistra (numero + set)."
                 return@withContext false
             }
 
+            val lockedKey = if (autoMode) acceptedLock.key else null
+            if (autoMode && lockedKey != null && acceptedLock.shouldIgnore(parsed)) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "frame ignored (candidate locked key=${acceptedLock.key}) " +
+                        "name=${parsed.nameGuess} cn=${parsed.collectorNumber}",
+                )
+                return@withContext false
+            }
+            if (autoMode && lockedKey != null && acceptedLock.key == null) {
+                cancelSpeculativeJob()
+                speculativeCatalog.clear()
+                catalogDebounce.reset()
+                com.scantrader.app.scan.ScanDebug.d(
+                    "candidate lock released name=${parsed.nameGuess} cn=${parsed.collectorNumber}",
+                )
+            }
+            if (autoMode) duplicateGuard.observe(parsed)
+            val debounceFrame = com.scantrader.app.data.catalog.CatalogQueryDebounce.Frame(
+                name = parsed.nameGuess,
+                collectorNumber = parsed.collectorNumber,
+                setCode = parsed.setCode,
+                setCardCount = parsed.setCardCount,
+                pokemon = isPokemon,
+            )
+            val speculativeStep = if (autoMode && isPokemon) speculativeCatalog.onOcr(parsed) else null
+            if (speculativeStep?.dropInFlight == true && speculativeStep.start != true) {
+                cancelSpeculativeJob()
+                com.scantrader.app.scan.ScanDebug.d(
+                    "speculative dropped (name=${parsed.nameGuess} cn=${parsed.collectorNumber})",
+                )
+            }
+            if (speculativeStep?.start == true) {
+                catalogDebounce.shouldQuery(debounceFrame)
+                startSpeculative(parsed)
+                autoHold = AutoHold.SPECULATIVE
+                app.scanSession.parsed = parsed
+                logTiming("speculative-start", ocrMs, 0, System.currentTimeMillis() - t0)
+                return@withContext false
+            }
+            app.scanSession.resetResults()
+            app.scanSession.game = game.value
+
             val idReady = com.scantrader.app.scan.OcrParser.identityReadyForFastPath(parsed)
-            val catalogIdentity = catalogIdentity(parsed)
             val cooling = autoMode && app.scryfall.coolingDown()
             if (cooling) {
                 catalogDebounce.invalidateLastQuery()
                 com.scantrader.app.scan.ScanDebug.d("Scryfall cooldown")
             }
-            val queryCatalog = when {
+            val tCat0 = System.currentTimeMillis()
+            val prefetched = if (speculativeStep?.accept == true) {
+                val hits = takeSpeculative().orEmpty()
+                val agreed = FrameNameGate.keep(hits, parsed)
+                if (hits.isNotEmpty() && agreed.isEmpty()) {
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "speculative dropped (name disagrees frame=${parsed.nameGuess} " +
+                            "top=${hits.firstOrNull()?.name})",
+                    )
+                    null
+                } else {
+                    agreed.takeIf { it.isNotEmpty() }
+                }
+            } else {
+                null
+            }
+            val debounceWants = when {
                 !autoMode -> true
                 cooling -> false
-                else -> catalogDebounce.shouldQuery(catalogIdentity)
+                else -> catalogDebounce.shouldQuery(debounceFrame)
             }
+            // Prefetched hits already are the lookup. An empty prefetch still falls through once.
+            val queryCatalog = prefetched == null &&
+                (debounceWants || speculativeStep?.accept == true)
+            // Majority name/cn/set over the recent frames. One FASE / asch read must not
+            // be what we send to TCGdex, and it must not reset the stability clock.
+            val voted = if (autoMode && !cooling) catalogDebounce.voted(parsed) else parsed
+            val matched = if (autoMode) FrameQuery.resolve(parsed, voted) else voted
+            val catalogIdentity = catalogIdentity(matched)
             val neuralOn = app.neuralPack.isInstalled(game.value)
             // No catalog yet and no neural pack: wait for a second identical id.
             // With a pack installed, the gallery still runs so a visual hit can autosave.
-            if (autoMode && !queryCatalog && !neuralOn) {
+            if (autoMode && !queryCatalog && prefetched == null && !neuralOn) {
                 autoHold = if (cooling) AutoHold.BUSY else AutoHold.UNSTABLE
-                app.scanSession.parsed = parsed
+                app.scanSession.parsed = matched
                 com.scantrader.app.scan.ScanDebug.d(
                     "catalog skipped (OCR not stable yet) id=$catalogIdentity",
                 )
+                logTiming("catalog-skipped", ocrMs, 0, System.currentTimeMillis() - t0)
                 return@withContext false
             }
-            if (autoMode && !queryCatalog) {
+            if (autoMode && !queryCatalog && prefetched == null) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "catalog held id=$catalogIdentity neural=true",
                 )
@@ -778,15 +1129,16 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     .getOrNull()
             }
 
-            val tCat0 = System.currentTimeMillis()
-            val fetched = try {
+            val fetched = if (prefetched != null) {
+                prefetched to emptyList<IdentifiedCard>()
+            } else try {
                 coroutineScope {
                 val ocrJob = async {
                     if (!queryCatalog) {
                         return@async emptyList()
                     }
                     try {
-                        app.catalog.identify(game.value, parsed)
+                        app.catalog.identify(game.value, matched)
                     } catch (busy: ScryfallBusyException) {
                         throw busy
                     } catch (t: Throwable) {
@@ -811,7 +1163,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                 runCatching {
                                     app.galleryMatcher.matchMtg(
                                         cropped,
-                                        parsed,
+                                        matched,
                                         printedLang = printedLang,
                                     )
                                 }
@@ -826,7 +1178,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                 com.scantrader.app.scan.ScanDebug.d("gallery skipped (Pokémon pack not installed)")
                                 emptyList()
                             } else {
-                                runCatching { app.galleryMatcher.matchPokemon(cropped, parsed) }
+                                runCatching { app.galleryMatcher.matchPokemon(cropped, matched) }
                                     .onFailure {
                                         com.scantrader.app.scan.ScanDebug.e("gallery.matchPokemon failed", it)
                                     }
@@ -841,7 +1193,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 if (!autoMode) throw busy
                 catalogDebounce.invalidateLastQuery()
                 autoHold = AutoHold.BUSY
-                app.scanSession.parsed = parsed
+                app.scanSession.parsed = matched
                 com.scantrader.app.scan.ScanDebug.d("catalog stopped (Scryfall 429)")
                 return@withContext false
             }
@@ -856,9 +1208,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             // Gallery hit with a conflicting title: do not wait out the stability loop.
             if (autoMode && catalogHits.isEmpty() && galleryHits.isNotEmpty()) {
                 val preview = com.scantrader.app.vision.MatchFusion
-                    .fuse(galleryHits, parsed)
+                    .fuse(galleryHits, matched)
                     .firstOrNull()
-                val previewGate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(preview, parsed)
+                val previewGate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(preview, matched)
                 if (!previewGate.accepted && previewGate.nameConflict &&
                     catalogDebounce.forceQuery(catalogIdentity)
                 ) {
@@ -866,11 +1218,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         "catalog now (nameConflict) id=$catalogIdentity",
                     )
                     catalogHits = try {
-                        app.catalog.identify(game.value, parsed)
+                        app.catalog.identify(game.value, matched)
                     } catch (busy: ScryfallBusyException) {
                         catalogDebounce.invalidateLastQuery()
                         autoHold = AutoHold.BUSY
-                        app.scanSession.parsed = parsed
+                        app.scanSession.parsed = matched
                         com.scantrader.app.scan.ScanDebug.d("catalog stopped (Scryfall 429)")
                         return@withContext false
                     } catch (t: Throwable) {
@@ -893,44 +1245,83 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 catalogHits
             }
             val merged = com.scantrader.app.vision.mergeHybridCandidates(fingerprintRanked, galleryHits)
-            val candidates = com.scantrader.app.vision.MatchFusion.fuse(merged, parsed)
+            val guarded = if (game.value == Game.MTG) {
+                rejectedSets.note(matched, merged)
+                val cleaned = SetPrintingGuard.discardUnknownSet(matched, merged)
+                if (cleaned.setCode != matched.setCode) {
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "set discarded (not a printing of ${matched.nameGuess}) set=${matched.setCode}",
+                    )
+                }
+                cleaned
+            } else {
+                matched
+            }
+            val forScore = if (guarded.setCode != matched.setCode) {
+                merged.map { it.copy(ocrScore = null) }
+            } else {
+                merged
+            }
+            val fused = com.scantrader.app.vision.MatchFusion.fuse(forScore, guarded)
                 .distinctBy {
                     it.scryfallId
                         ?: it.tcgdexId
                         ?: "${it.setCode}-${it.collectorNumber}-${it.name}"
                 }
                 .take(12)
+            val candidates = FrameNameGate.keep(fused, parsed)
+            if (candidates.size < fused.size) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "result dropped (name disagrees frame=${parsed.nameGuess} " +
+                        "top=${fused.firstOrNull()?.name})",
+                )
+            }
             val top = candidates.firstOrNull()
-            val gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(top, parsed)
-            val autoOk = gate.accepted
+            val gateParsed = if (FrameNameGate.confidentTitle(parsed.nameGuess) != null) {
+                guarded.copy(nameGuess = parsed.nameGuess)
+            } else {
+                guarded
+            }
+            // Score a dropped id hit so a name mismatch is nameConflict, not noTop.
+            val gateSubject = top ?: fused.firstOrNull()
+            var gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(
+                gateSubject,
+                gateParsed,
+                candidates,
+            )
+            if (requireMatch && top != null && !gate.accepted && stableTop.ready(top, gate)) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "stable top accept set=${top.setCode} cn=${top.collectorNumber}",
+                )
+                gate = gate.copy(accepted = true, reason = "stableTop")
+            } else if (top == null || gate.nameConflict || !gate.nameOk) {
+                stableTop.reset()
+            }
+            val autoOk = gate.accepted && top != null
             val topKey = top?.let { autoCardKey(it) }
             val blockedSameCard = requireMatch &&
                 autoOk &&
                 topKey != null &&
-                topKey == lastAcceptedCardKey
-            // Unlock only after a few frames where the locked card is gone / different.
-            if (requireMatch && lastAcceptedCardKey != null) {
-                val stillSame = topKey != null && topKey == lastAcceptedCardKey
-                if (stillSame) {
-                    sameCardClearFrames = 0
-                } else {
-                    sameCardClearFrames += 1
-                    if (sameCardClearFrames >= SAME_CARD_CLEAR_FRAMES) {
-                        clearSameCardLock()
-                    }
-                }
-            }
-            val acceptAuto = autoOk && !blockedSameCard
-            if (requireMatch && acceptAuto) {
-                top?.imageUrl?.takeIf { it.isNotBlank() }?.let { url ->
-                    coil.Coil.imageLoader(app).enqueue(
-                        coil.request.ImageRequest.Builder(app).data(url).build(),
-                    )
-                }
+                topKey == acceptedLock.key
+            val duplicateBlocked = requireMatch &&
+                autoOk &&
+                topKey != null &&
+                !duplicateGuard.allowAutoSave(topKey)
+            val acceptAuto = autoOk && !blockedSameCard && !duplicateBlocked
+            if (duplicateBlocked) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "autosave: skipped (same card still in frame key=$topKey)",
+                )
             }
             if (requireMatch && acceptAuto && topKey != null) {
-                lastAcceptedCardKey = topKey
-                sameCardClearFrames = 0
+                acceptedLock.lock(
+                    key = topKey,
+                    collectorNumber = top.collectorNumber,
+                    name = FrameNameGate.confidentTitle(parsed.nameGuess)
+                        ?: matched.nameGuess
+                        ?: top.printedName
+                        ?: top.name,
+                )
             }
             candidates.take(3).forEachIndexed { i, c ->
                 com.scantrader.app.scan.ScanDebug.d(
@@ -951,14 +1342,27 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "autoOk=$autoOk sameBlock=$blockedSameCard requireMatch=$requireMatch " +
                     "ocrMs=$ocrMs catalogMs=$catalogMs ms=${System.currentTimeMillis() - t0}",
             )
+            logTiming(
+                stage = if (requireMatch && acceptAuto) "match" else "result",
+                ocrMs = ocrMs,
+                catalogMs = catalogMs,
+                totalMs = System.currentTimeMillis() - t0,
+            )
+            if (requireMatch && (duplicateBlocked || (candidates.isEmpty() && fused.isNotEmpty()))) {
+                autoHold = AutoHold.UNSTABLE
+                return@withContext false
+            }
             app.scanSession.ocrText = buildString {
                 append(text)
+                if (topNameText.isNotBlank() && !text.contains(topNameText)) {
+                    append("\n").append(topNameText)
+                }
                 if (bottomText.isNotBlank()) {
                     append("\n--- bottom ---\n")
                     append(bottomText)
                 }
             }
-            app.scanSession.parsed = parsed
+            app.scanSession.parsed = matched
             app.scanSession.queryFingerprint = fingerprint
             app.scanSession.candidates = candidates
             app.scanSession.autoMatch = gate
@@ -972,6 +1376,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             } else {
                 app.scanSession.errorMessage = null
             }
+            if (requireMatch && acceptAuto && isPokemon) {
+                scheduleRulesOcr(croppedFull)
+            }
             if (requireMatch) acceptAuto else true
         }
     }
@@ -980,11 +1387,110 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         listOf(parsed.nameGuess, parsed.collectorNumber, parsed.setCode)
             .joinToString("|") { it.orEmpty().trim().lowercase() }
 
-    private enum class AutoHold { NONE, BUSY, UNSTABLE }
+    private enum class AutoHold { NONE, BUSY, UNSTABLE, SPECULATIVE }
 
     private fun clearSameCardLock() {
-        lastAcceptedCardKey = null
-        sameCardClearFrames = 0
+        acceptedLock.clear()
+        duplicateGuard.clear()
+        cancelSpeculative()
+        catalogDebounce.reset()
+        rejectedSets.clear()
+        stableTop.reset()
+    }
+
+    private fun skipUnstableFrame(bitmap: android.graphics.Bitmap, startedAt: Long): Boolean {
+        val luma = runCatching { FrameGate.sampleLuma(bitmap) }.getOrNull() ?: return false
+        val now = System.currentTimeMillis()
+        val previous = lastLuma
+        val since = if (lastLumaAtMs == 0L) 0L else now - lastLumaAtMs
+        val motion = if (previous != null && previous.size == luma.size) {
+            FrameGate.motionMeanAbs(previous, luma)
+        } else {
+            null
+        }
+        val blur = FrameGate.blurScore(luma, FrameGate.SAMPLE_WIDTH)
+        lastLuma = luma
+        lastLumaAtMs = now
+        val reason = FrameGate.skipReason(blur, motion, since) ?: return false
+        if (reason == "motion") duplicateGuard.noteSceneChanged()
+        autoHold = AutoHold.UNSTABLE
+        logTiming("skip-$reason", 0, 0, now - startedAt)
+        return true
+    }
+
+    private fun startSpeculative(parsed: ParsedCardText) {
+        val previous = speculativeDeferred
+        val gameNow = game.value
+        val deferred = viewModelScope.async(Dispatchers.IO) {
+            try {
+                app.catalog.identify(gameNow, parsed)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Throwable) {
+                com.scantrader.app.scan.ScanDebug.e("speculative identify failed", error)
+                emptyList()
+            }
+        }
+        speculativeDeferred = deferred
+        speculativeInFlight.set(true)
+        deferred.invokeOnCompletion {
+            if (speculativeDeferred === deferred) speculativeInFlight.set(false)
+        }
+        previous?.cancel()
+    }
+
+    private suspend fun takeSpeculative(): List<IdentifiedCard>? {
+        val deferred = speculativeDeferred ?: return null
+        speculativeDeferred = null
+        speculativeInFlight.set(false)
+        return try {
+            deferred.await()
+        } catch (cancel: CancellationException) {
+            if (!coroutineContext.isActive) throw cancel
+            null
+        }
+    }
+
+    private fun cancelSpeculativeJob() {
+        speculativeDeferred?.cancel()
+        speculativeDeferred = null
+        speculativeInFlight.set(false)
+    }
+
+    private fun cancelSpeculative() {
+        speculativeCatalog.clear()
+        cancelSpeculativeJob()
+        lastLuma = null
+        lastLumaAtMs = 0L
+    }
+
+    /** Attack / rules text for language keywords. Runs after the match is already shown. */
+    private fun scheduleRulesOcr(cardCrop: android.graphics.Bitmap) {
+        val source = downscaleForOcr(cardCrop, AUTO_FULL_MAX_SIDE)
+        val strip = com.scantrader.app.scan.CardFrameGeometry.trainerRulesStrip(source)
+        val gen = ++app.scanSession.ocrGeneration
+        app.scanSession.rulesPending = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val rules = runCatching { app.ocr.recognize(strip) }.getOrDefault("")
+                if (app.scanSession.ocrGeneration == gen && rules.isNotBlank()) {
+                    val existing = app.scanSession.ocrText
+                    if (!existing.contains(rules)) {
+                        app.scanSession.ocrText = existing + "\n" + rules
+                    }
+                }
+            } finally {
+                if (app.scanSession.ocrGeneration == gen) {
+                    app.scanSession.rulesPending = false
+                }
+            }
+        }
+    }
+
+    private fun logTiming(stage: String, ocrMs: Long, catalogMs: Long, totalMs: Long) {
+        com.scantrader.app.scan.ScanDebug.d(
+            "timing: stage=$stage ocrMs=$ocrMs catalogMs=$catalogMs totalMs=$totalMs",
+        )
     }
 
     private fun autoCardKey(card: IdentifiedCard): String = card.identityKey()
@@ -1011,7 +1517,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     companion object {
         /** Gap after an auto attempt finishes before accepting another frame. */
         private const val AUTO_COOLDOWN_MS = 280L
-        private const val AUTO_OCR_MAX_SIDE = 960
+        /** Collector strips. The title strip uses [AUTO_TITLE_MAX_SIDE] so long names survive. */
+        private const val AUTO_STRIP_MAX_SIDE = 480
+        /** Title band. 480px on the whole card was dropping "Down, Down to Goblin-town". */
+        private const val AUTO_TITLE_MAX_SIDE = 960
+        /** Full-card fallback and the deferred rules strip. */
+        private const val AUTO_FULL_MAX_SIDE = 640
         private const val MANUAL_OCR_MAX_SIDE = 1400
         /** Frames without the locked card before auto-scan may accept again. */
         private const val SAME_CARD_CLEAR_FRAMES = 3
@@ -1081,8 +1592,11 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     suspend fun detectCardLanguage(card: IdentifiedCard): CardLanguage? {
-        if (!app.prefs.currentDefaults().detectCardLanguage) return null
-        return runCatching { app.languageResolver.detect(card, parsed?.nameGuess) }.getOrNull()
+        val started = System.currentTimeMillis()
+        while (app.scanSession.rulesPending && System.currentTimeMillis() - started < RULES_WAIT_MS) {
+            delay(40)
+        }
+        return app.rememberDetectedLanguage(card)
     }
 
     /**
@@ -1158,8 +1672,59 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     companion object {
+        private const val RULES_WAIT_MS = 800L
+
         fun factory(app: ScanTraderApp) = factoryOf { ConfirmViewModel(app) }
     }
+}
+
+/**
+ * Runs printed-language detection for manual confirm and autoscan.
+ * A confident result is stored on the session so the confirm dropdown and
+ * timed auto-save both start on that language. Logcat: `ScanTrader lang:`.
+ */
+private suspend fun ScanTraderApp.rememberDetectedLanguage(card: IdentifiedCard?): CardLanguage? {
+    if (!prefs.currentDefaults().detectCardLanguage) {
+        com.scantrader.app.scan.ScanDebug.d("lang: off")
+        return null
+    }
+    val ocrName = scanSession.parsed?.nameGuess
+    val ocrText = scanSession.ocrText
+    val detection = try {
+        if (card != null) {
+            languageResolver.explain(card, ocrName, ocrText)
+        } else if (scanSession.game == Game.POKEMON) {
+            com.scantrader.app.data.catalog.CardLanguageDetector.explain(
+                ocrName = ocrName,
+                englishName = null,
+                printed = emptyMap(),
+                ocrText = ocrText,
+                pokemonSignals = true,
+            )
+        } else {
+            com.scantrader.app.data.catalog.CardLanguageDetector.Detection(null, "none")
+        }
+    } catch (cancel: CancellationException) {
+        throw cancel
+    } catch (error: Throwable) {
+        com.scantrader.app.scan.ScanDebug.w("lang: failed", error)
+        com.scantrader.app.data.catalog.CardLanguageDetector.Detection(null, "error")
+    }
+    val published = com.scantrader.app.data.catalog.CardLanguageDetector.retainConfident(
+        scanSession.language,
+        detection,
+    )
+    if (published.language != null && detection.language == null) {
+        val evidence = scanSession.languageEvidence?.takeIf { it.isNotBlank() } ?: "kept"
+        com.scantrader.app.scan.ScanDebug.d("lang: ${published.language.label} evidence=$evidence")
+        return published.language
+    }
+    com.scantrader.app.scan.ScanDebug.d(published.logLine())
+    if (detection.language != null) {
+        scanSession.language = detection.language
+        scanSession.languageEvidence = detection.evidence
+    }
+    return detection.language
 }
 
 inline fun <reified VM : ViewModel> factoryOf(crossinline create: () -> VM): ViewModelProvider.Factory =

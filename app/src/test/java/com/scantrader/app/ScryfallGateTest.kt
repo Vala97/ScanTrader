@@ -61,6 +61,8 @@ class ScryfallGateTest {
             }
 
             override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = error("unused")
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = error("unused")
         }
         val client = ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L }))
         val first = runCatching { client.search("lang:it !\"Pioppo\"") }
@@ -93,6 +95,8 @@ class ScryfallGateTest {
             }
 
             override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = error("unused")
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = error("unused")
         }
         val client = ScryfallClient(api, gate)
         val result = runCatching { client.search("cn:83") }

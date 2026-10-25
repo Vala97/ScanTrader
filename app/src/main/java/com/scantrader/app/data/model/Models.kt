@@ -23,6 +23,7 @@ enum class CardLanguage(val csvValue: String, val label: String) {
     JAPANESE("Japanese", "日本語"),
     KOREAN("Korean", "한국어"),
     CHINESE_S("Chinese", "简体中文"),
+    CHINESE_T("Chinese Traditional", "繁體中文"),
     ;
 
     /** Scryfall language code (`it`, `zhs`, …). */
@@ -36,6 +37,7 @@ enum class CardLanguage(val csvValue: String, val label: String) {
         JAPANESE -> "ja"
         KOREAN -> "ko"
         CHINESE_S -> "zhs"
+        CHINESE_T -> "zht"
     }
 
     /** CardTrader `mtg_language` (`jp`, `zh-CN`, …). */
@@ -43,6 +45,7 @@ enum class CardLanguage(val csvValue: String, val label: String) {
         JAPANESE -> "jp"
         KOREAN -> "kr"
         CHINESE_S -> "zh-CN"
+        CHINESE_T -> "zh-TW"
         else -> scryfallLang()
     }
 
@@ -57,6 +60,7 @@ enum class CardLanguage(val csvValue: String, val label: String) {
             "ja", "jp", "japanese" -> JAPANESE
             "ko", "kr", "korean" -> KOREAN
             "zhs", "zh", "zh-cn", "zh_cn", "chinese" -> CHINESE_S
+            "zht", "zh-tw", "zh_tw", "traditional" -> CHINESE_T
             else -> null
         }
     }
@@ -68,6 +72,11 @@ data class ParsedCardText(
     val setCode: String?,
     /** Denominator from Pokémon `124/182` — helps disambiguate the set. */
     val setCardCount: Int? = null,
+    /**
+     * Language glued to the set code (`ELDIT…` → `it`).
+     * Used to verify a set+collector hit against that printing's printed name.
+     */
+    val printedLang: String? = null,
 )
 
 data class IdentifiedCard(
@@ -105,8 +114,13 @@ data class IdentifiedCard(
     /** Scryfall/TCGdex code of [printedName], when it was resolved (`it`, `ja`, …). */
     val printedLang: String? = null,
 ) {
+    /** Pokémon has no foil price. Magic keeps the foil EUR when the copy is foil. */
     fun priceForExport(foil: Boolean): String? =
-        if (foil) priceEurFoil?.takeIf { it.isNotBlank() } ?: priceEur else priceEur
+        if (game == Game.POKEMON || !foil) priceEur else priceEurFoil?.takeIf { it.isNotBlank() } ?: priceEur
+
+    /** Drop holo amounts so they cannot be shown, saved, or exported for Pokémon. */
+    fun withoutPokemonFoil(): IdentifiedCard =
+        if (game != Game.POKEMON) this else copy(priceEurFoil = null, priceUsdFoil = null)
 
     fun confidenceLabel(): String? {
         val c = matchConfidence ?: return null

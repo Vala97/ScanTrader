@@ -16,15 +16,31 @@ import androidx.exifinterface.media.ExifInterface
 object CameraBitmaps {
     data class Upright(
         val bitmap: Bitmap,
+        /** Rotation actually applied. Portrait UI keeps 90°/270°. */
         val rotationDegrees: Int,
+        /** [androidx.camera.core.ImageInfo.getRotationDegrees] before the portrait lock. */
+        val reportedRotation: Int,
         val sourceSize: Size,
         val cropApplied: Boolean,
     )
 
+    /**
+     * Landscape sensor buffers become portrait at 90° or 270°. That is the
+     * rotation the upright scans used (`rot=90`, `bmp=574x1280`).
+     * 0° and 180° leave the buffer landscape: CameraX took them from the
+     * accelerometer while the phone was flat, not from the portrait preview.
+     */
+    fun rotationForPortrait(reportedDegrees: Int, sourceWidth: Int, sourceHeight: Int): Int {
+        val reported = Math.floorMod(reportedDegrees, 360)
+        if (sourceWidth <= sourceHeight) return reported
+        return if (reported == 90 || reported == 270) reported else 90
+    }
+
     fun fromImageProxy(proxy: ImageProxy): Upright {
-        val rotation = proxy.imageInfo.rotationDegrees
+        val reported = proxy.imageInfo.rotationDegrees
         val source = proxy.toBitmap()
         val sourceSize = Size(source.width, source.height)
+        val rotation = rotationForPortrait(reported, source.width, source.height)
         val upright = rotate(source, rotation)
         val rect = proxy.cropRect
         val fullBuffer = rect.left <= 0 &&
@@ -32,7 +48,7 @@ object CameraBitmaps {
             rect.right >= proxy.width &&
             rect.bottom >= proxy.height
         if (fullBuffer || rect.width() <= 1 || rect.height() <= 1) {
-            return Upright(upright, rotation, sourceSize, cropApplied = false)
+            return finish(upright, rotation, reported, sourceSize, cropApplied = false)
         }
         val mapped = mapCropRect(
             left = rect.left,
@@ -48,11 +64,11 @@ object CameraBitmaps {
         val w = mapped.width.coerceAtMost(upright.width - left).coerceAtLeast(1)
         val h = mapped.height.coerceAtMost(upright.height - top).coerceAtLeast(1)
         if (left == 0 && top == 0 && w == upright.width && h == upright.height) {
-            return Upright(upright, rotation, sourceSize, cropApplied = false)
+            return finish(upright, rotation, reported, sourceSize, cropApplied = false)
         }
         val cropped = Bitmap.createBitmap(upright, left, top, w, h)
         if (cropped !== upright) upright.recycle()
-        return Upright(cropped, rotation, sourceSize, cropApplied = true)
+        return finish(cropped, rotation, reported, sourceSize, cropApplied = true)
     }
 
     fun fromJpegFile(path: String): Bitmap? {
@@ -68,7 +84,32 @@ object CameraBitmaps {
             ExifInterface.ORIENTATION_ROTATE_270 -> 270
             else -> 0
         }
-        return rotate(bitmap, degrees)
+        return ensurePortrait(rotate(bitmap, degrees))
+    }
+
+    /** A landscape analysis or still buffer is stood up before the card crop. */
+    fun ensurePortrait(source: Bitmap): Bitmap {
+        if (source.width <= source.height) return source
+        return rotate(source, 90)
+    }
+
+    fun rotateDegrees(source: Bitmap, degrees: Int, recycleSource: Boolean = true): Bitmap {
+        if (degrees % 360 == 0) return source
+        val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
+        val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+        if (recycleSource && rotated !== source) source.recycle()
+        return rotated
+    }
+
+    private fun finish(
+        bitmap: Bitmap,
+        rotation: Int,
+        reported: Int,
+        sourceSize: Size,
+        cropApplied: Boolean,
+    ): Upright {
+        val portrait = ensurePortrait(bitmap)
+        return Upright(portrait, rotation, reported, sourceSize, cropApplied)
     }
 
     private fun rotate(source: Bitmap, degrees: Int): Bitmap {

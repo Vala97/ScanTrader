@@ -53,14 +53,24 @@ class ScryfallClient(
         return read(key) { api.search(query, unique) }
     }
 
-    /** Single closest card. Null when Scryfall has no fuzzy match (cached). */
-    suspend fun namedFuzzy(name: String): ScryfallCard? {
-        val key = "fuzzy:${gate.normalize(name)}"
+    /**
+     * Single closest card. Null when Scryfall has no fuzzy match (cached).
+     * [set] limits the match (`fuzzy=Goblir&set=hob`).
+     */
+    suspend fun namedFuzzy(name: String, set: String? = null): ScryfallCard? {
+        val setKey = set?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+        val key = if (setKey == null) {
+            "fuzzy:${gate.normalize(name)}"
+        } else {
+            "fuzzy:${gate.normalize(name)}:set:$setKey"
+        }
         return when (val hit = gate.cached(key)) {
             is ScryfallGate.Cached.Value -> hit.payload as ScryfallCard
             ScryfallGate.Cached.Empty -> null
             null -> try {
-                val card = guarded { api.namedFuzzy(name) }
+                val card = guarded {
+                    if (setKey == null) api.namedFuzzy(name) else api.namedFuzzyInSet(name, setKey)
+                }
                 gate.store(key, ScryfallGate.Cached.Value(card))
                 card
             } catch (e: HttpException) {

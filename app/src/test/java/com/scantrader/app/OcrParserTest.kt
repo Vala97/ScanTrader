@@ -3,6 +3,7 @@ package com.scantrader.app
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.scan.OcrParser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -586,6 +587,46 @@ class OcrParserTest {
     }
 
     @Test
+    fun italianKilowattrelSurvivesStageNoiseAndMangledSet() {
+        val top = """
+            A!
+            FASEJ
+            Kilowattrel ai Kissara
+            Sievolve da Wattrel di Kissara
+        """.trimIndent()
+        val bottom = "O ASCH | 072/217 *"
+        val parsed = OcrParser.parse(
+            rawText = top,
+            game = Game.POKEMON,
+            bottomPriorityText = bottom,
+            namePriorityText = top,
+        )
+        assertEquals("Kilowattrel di Kissara", parsed.nameGuess)
+        assertEquals("72", parsed.collectorNumber)
+        assertEquals("asc", parsed.setCode)
+        assertEquals(217, parsed.setCardCount)
+    }
+
+    @Test
+    fun stageLineIsNotTheTitleAndDascIsAsc() {
+        val top = """
+            FASEl
+            Kilowattrel di Kissara2
+            Sievoheda Wattrel di Kissara
+        """.trimIndent()
+        val bottom = "DASC 072/217"
+        val parsed = OcrParser.parse(top, Game.POKEMON, bottom, top)
+        assertEquals("Kilowattrel di Kissara", parsed.nameGuess)
+        assertEquals("72", parsed.collectorNumber)
+        assertEquals("asc", parsed.setCode)
+        assertEquals(217, parsed.setCardCount)
+        assertTrue(OcrParser.setCodeCandidates("asch").contains("asc"))
+        assertTrue(OcrParser.setCodeCandidates("dasc").contains("asc"))
+        assertTrue(OcrParser.setCodeCandidates("oasc").contains("asc"))
+        assertTrue(OcrParser.setCodeCandidates("asca").contains("asc"))
+    }
+
+    @Test
     fun ignoresPokemonHpOnTheTopRight() {
         val ps = OcrParser.parse("Pikachu PS 120", Game.POKEMON, "025/165")
         assertEquals("Pikachu", ps.nameGuess)
@@ -593,5 +634,241 @@ class OcrParserTest {
         assertEquals("Charmander", hp.nameGuess)
         val above = OcrParser.parse("PS 70\nNoibat", Game.POKEMON, "106/217")
         assertEquals("Noibat", above.nameGuess)
+    }
+
+    @Test
+    fun italianSupporterMaxusIgnoresAiutoAndReadsTheBottomNumber() {
+        // scan_log8: category word AIUtO was parsed as the title, so auto-scan scored confLow.
+        val top = "AIUtO\nMaxus del Team Rocket"
+        val bottom = "deb\nM. GOSSAN\nODRI 176/182\nc2025 Po"
+        val parsed = OcrParser.parse(
+            rawText = top,
+            game = Game.POKEMON,
+            bottomPriorityText = bottom,
+            namePriorityText = top,
+        )
+        assertEquals("Maxus del Team Rocket", parsed.nameGuess)
+        assertEquals("176", parsed.collectorNumber)
+        assertEquals("dri", parsed.setCode)
+        assertEquals(182, parsed.setCardCount)
+        assertTrue(OcrParser.looksLikeTrainerLayout(top))
+        assertTrue(!OcrParser.identityReadyForFastPath(parsed, top))
+        assertEquals("maxus del team rocket", OcrParser.trainerStabilityName(parsed.nameGuess))
+        assertEquals(null, OcrParser.trainerStabilityName("AIUtO"))
+        assertEquals(null, OcrParser.trainerStabilityName("Maxus"))
+    }
+
+    @Test
+    fun titleOnlyTrainerKeepsTheFullDelTeamRocketName() {
+        val top = "Maxus del Team Rocket"
+        val bottom = "deb\nIM. GOSSAN\nO DRIn 176/182\n2025 Pe"
+        val parsed = OcrParser.parse(top, Game.POKEMON, bottom, top)
+        assertEquals("Maxus del Team Rocket", parsed.nameGuess)
+        assertEquals("176", parsed.collectorNumber)
+        assertEquals(182, parsed.setCardCount)
+    }
+
+    @Test
+    fun italianCherubiReads30thCelebrationFromGluedBottom() {
+        // scan_log9: 30th Celebration (30C) 006/128. OCR glues the set onto the number
+        // (`D30C006/128`, `o06/128`) and the illustrator "Se"/"So" sits beside it.
+        val top = "BASE\nCherubi"
+        val full = """
+            BASE
+            Cherubi
+            debolezza x2
+            Ill. Kurata So
+            N. 0420 Pokémon Ciliegia Altezza: 0,4 m Peso: 3,3 kg
+            Lancia una moneta. Se esce testa, durante il prossimo turno
+        """.trimIndent()
+        val glued = OcrParser.parse(
+            rawText = full,
+            game = Game.POKEMON,
+            bottomPriorityText = "debolezza x2 resistenza\nIll. Kurata So\nD30C006/128",
+            namePriorityText = top,
+        )
+        assertEquals("Cherubi", glued.nameGuess)
+        assertEquals("6", glued.collectorNumber)
+        assertEquals(128, glued.setCardCount)
+        assertEquals("30c", glued.setCode)
+
+        val separated = OcrParser.parse(
+            rawText = top,
+            game = Game.POKEMON,
+            bottomPriorityText = "debolezza x2 resistenza\nKarute Se\nD 30C\no06/128",
+            namePriorityText = top,
+        )
+        assertEquals("Cherubi", separated.nameGuess)
+        assertEquals("6", separated.collectorNumber)
+        assertEquals(128, separated.setCardCount)
+        assertEquals("30c", separated.setCode)
+
+        val illustrator = OcrParser.parse(
+            rawText = top,
+            game = Game.POKEMON,
+            bottomPriorityText = "Karute Se | 006/128",
+            namePriorityText = top,
+        )
+        assertEquals("6", illustrator.collectorNumber)
+        assertEquals(128, illustrator.setCardCount)
+        assertNull(illustrator.setCode)
+    }
+
+    @Test
+    fun hobbitRaveningWargReadsPaddedCollectorAndIgnoresCopyright() {
+        val padded = OcrParser.parse(
+            rawText = "Ravening Warg",
+            game = Game.MTG,
+            bottomPriorityText = """
+                CO08O
+                all sides.
+                HOBEN ADRIAN R DRIGLIZ PEREZ
+                CMEE
+                ng,
+                2/2
+                &2026 Waards of tht Coast
+            """.trimIndent(),
+            namePriorityText = "Ravening Warg",
+        )
+        assertEquals("Ravening Warg", padded.nameGuess)
+        assertEquals("80", padded.collectorNumber)
+        assertEquals("hob", padded.setCode)
+
+        val glued = OcrParser.parse(
+            rawText = "Ravening Warg",
+            game = Game.MTG,
+            bottomPriorityText = """
+                COO8O
+                HOBEN ADRIAN RODRIGUEZ PEREZ
+                2/2
+                wat 036 Waarda of the Coast
+            """.trimIndent(),
+            namePriorityText = "Ravening Warg",
+        )
+        assertEquals("80", glued.collectorNumber)
+        assertEquals("hob", glued.setCode)
+
+        val copyrightOnly = OcrParser.parse(
+            rawText = "Ravening Warg",
+            game = Game.MTG,
+            bottomPriorityText = """
+                HOBEN ADlAN RopaiGUIZ PEREZ
+                TMg,
+                2/2
+                CMEE
+                wat 036 Waarda of the Coast
+            """.trimIndent(),
+            namePriorityText = "Ravening Warg",
+        )
+        assertEquals("Ravening Warg", copyrightOnly.nameGuess)
+        assertEquals("hob", copyrightOnly.setCode)
+        assertNull(copyrightOnly.collectorNumber)
+
+        val year = OcrParser.parse(
+            rawText = "Ravening Warg",
+            game = Game.MTG,
+            bottomPriorityText = """
+                HOBEN ADRIAN RODRIGUEZ PEREZ
+                waC 2036 Taarda of he Coast
+            """.trimIndent(),
+            namePriorityText = "Ravening Warg",
+        )
+        assertEquals("hob", year.setCode)
+        assertNull(year.collectorNumber)
+    }
+
+    @Test
+    fun goblinTownLogDoesNotParseNcharAndReadsO65() {
+        val top = """
+            3*EN
+            O65
+            nchar
+            1 life.
+            1 life
+            Target
+            token
+            Goblir
+        """.trimIndent()
+        val full = """
+            3*EN ROVINA CAL
+            TH &O2026 Wizards of the
+            O65
+            nchantment - Saga
+            1 life
+            Target opponent loses
+            Goblin Army creature
+            Goblir
+        """.trimIndent()
+        val parsed = OcrParser.parse(
+            rawText = full,
+            game = Game.MTG,
+            bottomPriorityText = "zards of the\n26 Wizards of the",
+            namePriorityText = top,
+        )
+        assertTrue(
+            "name was ${parsed.nameGuess}",
+            parsed.nameGuess == "Goblir" || parsed.nameGuess == "Goblin",
+        )
+        assertEquals("65", parsed.collectorNumber)
+        assertFalse(OcrParser.mtgNameAttempts("nchar").contains("nchar"))
+        assertTrue(com.scantrader.app.scan.CardOrientation.implausibleTitle("nchar"))
+        assertTrue(com.scantrader.app.scan.CardOrientation.implausibleTitle("Target"))
+        assertTrue(com.scantrader.app.scan.CardOrientation.implausibleTitle("1 life."))
+        assertFalse(com.scantrader.app.scan.CardOrientation.implausibleTitle("Goblir"))
+        assertFalse(com.scantrader.app.scan.CardOrientation.implausibleTitle("Ravening Warg"))
+        assertFalse(
+            com.scantrader.app.scan.CardOrientation.implausibleTitle("Down, Down to Goblin-town"),
+        )
+        assertTrue(com.scantrader.app.scan.CardOrientation.regionMappingOff(top, "nchar"))
+        assertTrue(com.scantrader.app.scan.CardOrientation.regionMappingOff(top, "Goblir"))
+        assertFalse(
+            com.scantrader.app.scan.CardOrientation.regionMappingOff("Ravening Warg", "Ravening Warg"),
+        )
+
+        val withSet = OcrParser.parse(
+            rawText = full.replace("3*EN", "HOB*EN"),
+            game = Game.MTG,
+            bottomPriorityText = "zards of the",
+            namePriorityText = top.replace("3*EN", "HOB*EN"),
+        )
+        assertTrue(
+            "name was ${withSet.nameGuess}",
+            withSet.nameGuess == "Goblir" || withSet.nameGuess == "Goblin",
+        )
+        assertEquals("65", withSet.collectorNumber)
+        assertEquals("hob", withSet.setCode)
+
+        val simple = OcrParser.parse(
+            rawText = "HOB*EN\nO65\nGoblir",
+            game = Game.MTG,
+            bottomPriorityText = "zards of the",
+            namePriorityText = "HOB*EN\nO65\nGoblir",
+        )
+        assertEquals("hob", simple.setCode)
+        assertEquals("65", simple.collectorNumber)
+    }
+
+    @Test
+    fun eldItGluedToTheArtistReadsSetEldAndItalian() {
+        val glued = OcrParser.parse(
+            rawText = "Maestro di Spada Invaghi",
+            game = Game.MTG,
+            bottomPriorityText = "105/269 C\nELDITTAYLOR INGNARSSON",
+            namePriorityText = "Maestro di Spada Invaghi",
+        )
+        assertEquals("Maestro di Spada Invaghi", glued.nameGuess)
+        assertEquals("105", glued.collectorNumber)
+        assertEquals("eld", glued.setCode)
+        assertEquals("it", glued.printedLang)
+
+        val separated = OcrParser.parse(
+            rawText = "Maestro di Spada Invaghi",
+            game = Game.MTG,
+            bottomPriorityText = "105/269 C | ELD -ITTDR",
+            namePriorityText = "Maestro di Spada Invaghi",
+        )
+        assertEquals("105", separated.collectorNumber)
+        assertEquals("eld", separated.setCode)
+        assertEquals("it", separated.printedLang)
     }
 }

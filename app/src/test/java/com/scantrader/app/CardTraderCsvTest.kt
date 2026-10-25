@@ -70,7 +70,7 @@ class CardTraderCsvTest {
     fun splitsPokemonColumnsAndMapsDamagedToPoor() {
         val csv = CardTraderCsv.build(
             listOf(
-                pokemonEntry(priceEurFoil = "2.00"),
+                pokemonEntry(priceEur = "2.00", priceEurFoil = "9.00"),
                 pokemonEntry(
                     name = "Charizard",
                     collectorNumber = "4",
@@ -87,7 +87,8 @@ class CardTraderCsvTest {
                 "name,expansion_code,collector_number,quantity,language,condition,foil,tcgplayer_id,price_cents",
             ),
         )
-        assertTrue(csv.contains("Pikachu,base1,58,1,en,Slightly Played,true,12345,200"))
+        assertTrue(csv.contains("Pikachu,base1,58,1,en,Slightly Played,false,12345,200"))
+        assertFalse(csv.contains("900"))
         assertTrue(csv.contains("Charizard,base1,4,1,jp,Poor,false,12345,"))
     }
 
@@ -103,12 +104,25 @@ class CardTraderCsvTest {
         assertEquals("kr", CardTraderCsv.exportLanguage("Korean"))
         assertEquals("zh-CN", CardTraderCsv.exportLanguage("Chinese"))
         assertEquals("zh-CN", CardTraderCsv.exportLanguage("zh-cn"))
+        assertEquals("zh-TW", CardTraderCsv.exportLanguage("Chinese Traditional"))
+        assertEquals("zh-TW", CardTraderCsv.exportLanguage("zh-tw"))
         assertEquals("Near Mint", CardTraderCsv.exportCondition("Near Mint"))
         assertEquals("Slightly Played", CardTraderCsv.exportCondition("Slightly Played"))
         assertEquals("Moderately Played", CardTraderCsv.exportCondition("Moderately Played"))
         assertEquals("Heavily Played", CardTraderCsv.exportCondition("Heavily Played"))
         assertEquals("Poor", CardTraderCsv.exportCondition("Damaged"))
         assertEquals("Played", CardTraderCsv.exportCondition("Played"))
+    }
+
+    @Test
+    fun pokemonExportIgnoresTheHoloPrice() {
+        val entry = pokemonEntry(foil = true, priceEur = "1.25", priceEurFoil = "9.99")
+        assertEquals("125", CardTraderCsv.exportPriceCents(entry))
+        val csv = CardTraderCsv.build(listOf(entry), Game.POKEMON)
+        assertTrue(csv.contains("false,12345,125"))
+        assertFalse(csv.contains("999"))
+        val mtg = mtgEntry(foil = true, priceEur = "1.25", priceEurFoil = "9.99")
+        assertEquals("999", CardTraderCsv.exportPriceCents(mtg))
     }
 
     @Test

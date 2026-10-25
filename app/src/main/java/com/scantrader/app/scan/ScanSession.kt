@@ -43,9 +43,31 @@ class ScanSession {
     /** LensCatalog key: auto, cam:id, or zoom:ratio. Same lifetime as [zoomRatio]. */
     var lensKey: String? = null
 
+    /**
+     * First measured scanner view, in pixels. The card guide keeps this
+     * rectangle across confirm → scan so a new preview aspect cannot move it.
+     * Not cleared by [resetResults].
+     */
+    var guideViewWidth: Float = 0f
+    var guideViewHeight: Float = 0f
+
     /** Last language/condition chosen on confirm — reused until settings override. */
     var language: CardLanguage? = null
+
+    /** Evidence for the last confident [language]. A failed lookup must not replace it. */
+    var languageEvidence: String? = null
     var condition: CardCondition? = null
+
+    /**
+     * True while a background rules-strip OCR is still filling [ocrText].
+     * Confirm waits briefly so Italian keywords can win before language detection.
+     */
+    @Volatile
+    var rulesPending: Boolean = false
+
+    /** Bumped when results reset or a new rules OCR starts, so a stale job cannot append. */
+    @Volatile
+    var ocrGeneration: Int = 0
 
     fun resetResults() {
         ocrText = ""
@@ -55,5 +77,7 @@ class ScanSession {
         queryFingerprint = null
         autoMatch = null
         autoMatchCardKey = null
+        rulesPending = false
+        ocrGeneration++
     }
 }

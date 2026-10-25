@@ -62,7 +62,7 @@ object CardTraderCsv {
     }
 
     private fun row(entry: CardEntryEntity, game: Game): List<String> {
-        val foil = if (entry.foil) "true" else "false"
+        val foil = if (game == Game.POKEMON || !entry.foil) "false" else "true"
         val price = exportPriceCents(entry).orEmpty()
         val language = exportLanguage(entry.language)
         val condition = exportCondition(entry.condition)
@@ -94,11 +94,12 @@ object CardTraderCsv {
     }
 
     /**
-     * Foil rows use the foil EUR price when it is present.
+     * Magic foil rows use the foil EUR price when it is present.
+     * Pokémon always uses the non-foil EUR. A holo amount is never written.
      * A missing or non-positive price leaves the cell empty.
      */
     fun exportPriceCents(entry: CardEntryEntity): String? {
-        val raw = if (entry.foil) entry.priceEurFoil else entry.priceEur
+        val raw = if (entry.game == Game.POKEMON || !entry.foil) entry.priceEur else entry.priceEurFoil
         return priceToCents(raw)
     }
 
@@ -175,5 +176,8 @@ object CardTraderCsv {
         "zh_cn" to "zh-CN",
         "zh-tw" to "zh-TW",
         "zh_tw" to "zh-TW",
+        "zht" to "zh-TW",
+        "chinese traditional" to "zh-TW",
+        "繁體中文" to "zh-TW",
     )
 }

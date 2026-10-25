@@ -1,10 +1,12 @@
 package com.scantrader.app.vision
 
+import com.scantrader.app.data.catalog.CardIdentity
 import com.scantrader.app.data.catalog.PokemonCatalog
 import com.scantrader.app.data.catalog.PokemonSets
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
+import com.scantrader.app.scan.FrameNameGate
 import com.scantrader.app.scan.OcrParser
 
 /**
@@ -107,19 +109,19 @@ object MatchFusion {
         val signal = signalPhrase(decision.reason)
         val waitOn = autoSaveWaitSeconds > 0
         return when {
+            decision.strict && fromAutoScan && waitOn && autoSaveCancelled ->
+                ConfirmMatchNote(
+                    title = "Salvataggio automatico annullato",
+                    body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
+                        "Hai modificato la scheda: tocca Salva in collezione per aggiungere la carta.",
+                    tone = ConfirmMatchTone.CONFIRM,
+                )
             decision.strict && fromAutoScan && waitOn && !selectedMatchesGate -> ConfirmMatchNote(
                 title = "Conferma a mano",
                 body = "Il riconoscimento forte ($pct) riguarda un’altra stampa. " +
                     "Tocca Salva per aggiungere la carta scelta.",
                 tone = ConfirmMatchTone.BLOCKED,
             )
-            decision.strict && fromAutoScan && waitOn && selectedMatchesGate && autoSaveCancelled ->
-                ConfirmMatchNote(
-                    title = "Conferma a mano",
-                    body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
-                        "Hai modificato la scheda: tocca Salva per aggiungere la carta.",
-                    tone = ConfirmMatchTone.CONFIRM,
-                )
             decision.strict && fromAutoScan && waitOn && selectedMatchesGate -> ConfirmMatchNote(
                 title = "Salvataggio automatico",
                 body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
@@ -173,6 +175,8 @@ object MatchFusion {
             "name+cn" -> "nome e numero collezionista coincidono"
             "name+set" -> "nome e set coincidono"
             "nameExact" -> "il nome coincide in modo netto"
+            "name+gallery" -> "il nome coincide e questa è l'unica stampa"
+            "stableTop" -> "la stessa carta resta inquadrata per più letture"
             "name+visual" -> "nome e immagine coincidono"
             "cn+set+visual" -> "set, numero e immagine coincidono"
             "confLow" -> "la confidenza è sotto la soglia"
@@ -197,7 +201,11 @@ object MatchFusion {
     fun isConfidentAutoMatch(top: IdentifiedCard?, parsed: ParsedCardText? = null): Boolean =
         evaluateAutoMatch(top, parsed).accepted
 
-    fun evaluateAutoMatch(top: IdentifiedCard?, parsed: ParsedCardText? = null): AutoMatchDecision {
+    fun evaluateAutoMatch(
+        top: IdentifiedCard?,
+        parsed: ParsedCardText? = null,
+        candidates: List<IdentifiedCard> = emptyList(),
+    ): AutoMatchDecision {
         if (top == null) {
             return AutoMatchDecision(accepted = false, reason = "noTop")
         }
@@ -214,10 +222,24 @@ object MatchFusion {
             else -> false
         }
         if (strictOk) {
+            if (parsed != null &&
+                FrameNameGate.confidentTitle(parsed.nameGuess) != null &&
+                !FrameNameGate.agrees(top, parsed)
+            ) {
+                val name = parsed.nameGuess?.trim().orEmpty()
+                return AutoMatchDecision(
+                    accepted = false,
+                    reason = "nameConflict name=$name top=${top.name}",
+                    nameOk = false,
+                    nameConflict = true,
+                    confidence = confidence,
+                )
+            }
             return AutoMatchDecision(
                 accepted = true,
                 strict = true,
                 reason = "strict",
+                nameOk = parsed != null && FrameNameGate.agrees(top, parsed),
                 confidence = confidence,
             )
         }
@@ -230,8 +252,31 @@ object MatchFusion {
         }
         return when (top.game) {
             Game.POKEMON -> evaluatePokemonSoft(top, parsed, confidence, visual, ocr)
-            Game.MTG -> evaluateMtgSoft(top, parsed, confidence, visual, ocr)
+            Game.MTG -> evaluateMtgSoft(top, parsed, confidence, visual, ocr, candidates)
         }
+    }
+
+    /**
+     * OCR title equals the English name or a localized printed name, including one
+     * face of an adventure card. A partial token (`Goblir`) is not exact.
+     */
+    fun exactTitle(card: IdentifiedCard, ocrName: String?): Boolean {
+        val query = CardIdentity.normalizeName(ocrName)
+        if (query.isBlank()) return false
+        val titles = FrameNameGate.faceTitles(card.name) + FrameNameGate.faceTitles(card.printedName)
+        return titles.any { CardIdentity.normalizeName(it) == query }
+    }
+
+    /** Every exact-name candidate is the same set and collector. */
+    fun samePrinting(cards: List<IdentifiedCard>, ocrName: String?): Boolean {
+        val named = cards.filter { exactTitle(it, ocrName) }
+        if (named.isEmpty()) return false
+        return named.map { printingKey(it) }.toSet().size == 1
+    }
+
+    fun printingKey(card: IdentifiedCard): String {
+        val cn = card.collectorNumber.trim().trimStart('0').ifBlank { card.collectorNumber.trim() }
+        return card.setCode.trim().lowercase() + "|" + cn.lowercase()
     }
 
     private fun evaluatePokemonSoft(
@@ -321,6 +366,7 @@ object MatchFusion {
         confidence: Float,
         visual: Float?,
         ocr: Float,
+        candidates: List<IdentifiedCard>,
     ): AutoMatchDecision {
         if (confidence < MTG_AUTO_CONFIDENCE_MIN) {
             return AutoMatchDecision(
@@ -387,7 +433,14 @@ object MatchFusion {
                 confidence = confidence,
             )
         }
+        val exact = exactTitle(top, nameGuess)
+        // Gallery top of this same card. Below 0.55 the hit is not the gallery match.
+        val galleryHit = (visual ?: 0f) >= 0.55f
+        val onlyPrinting = candidates.isNotEmpty() && samePrinting(candidates, nameGuess)
         val softReason = when {
+            // Exact localized title, gallery agrees, and there is only one printing.
+            // A missing or wrong collector must not hold the card back.
+            exact && galleryHit && onlyPrinting -> "name+gallery"
             cnOk && setOk && ocr >= 0.55f -> "cn+set"
             cnOk && setOk && confidence >= 0.70f -> "cn+set"
             nameOk && cnOk && setOk -> "name+cn+set"
@@ -402,7 +455,7 @@ object MatchFusion {
         return AutoMatchDecision(
             accepted = accepted,
             reason = softReason,
-            nameOk = nameOk,
+            nameOk = nameOk || exact,
             nameConflict = false,
             cnOk = cnOk,
             setOk = setOk,

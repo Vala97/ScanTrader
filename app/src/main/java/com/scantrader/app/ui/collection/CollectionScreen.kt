@@ -128,15 +128,20 @@ fun CollectionScreen(
                                 Text(
                                     listOfNotNull(
                                         card.language,
-                                        if (card.foil) "Foil" else null,
+                                        if (card.foil && card.game != com.scantrader.app.data.model.Game.POKEMON) {
+                                            "Foil"
+                                        } else {
+                                            null
+                                        },
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                                val pokemon = card.game == com.scantrader.app.data.model.Game.POKEMON
                                 val avgPrice = com.scantrader.app.data.catalog.ListingAverage.display(
                                     eur = card.priceEur,
-                                    eurFoil = card.priceEurFoil,
+                                    eurFoil = if (pokemon) null else card.priceEurFoil,
                                     source = card.priceSource,
-                                    foil = card.foil,
+                                    foil = card.foil && !pokemon,
                                 )
                                 Text(
                                     text = avgPrice?.let { "Prezzo medio: $it" } ?: "Prezzo medio: n/d",
