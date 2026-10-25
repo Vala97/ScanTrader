@@ -67,6 +67,8 @@ class CardRepository(private val db: AppDatabase) {
                     priceCurrency = stored.priceCurrency ?: existing.priceCurrency,
                     priceSource = stored.priceSource ?: existing.priceSource,
                     imageUrl = stored.imageUrl ?: existing.imageUrl,
+                    catalogName = existing.catalogName ?: stored.catalogName,
+                    catalogScryfallId = existing.catalogScryfallId ?: stored.catalogScryfallId,
                 ),
             )
         } else {
@@ -79,6 +81,8 @@ class CardRepository(private val db: AppDatabase) {
                     setName = stored.setName,
                     collectorNumber = stored.collectorNumber,
                     scryfallId = stored.scryfallId,
+                    catalogName = stored.catalogName,
+                    catalogScryfallId = stored.catalogScryfallId,
                     tcgplayerId = stored.tcgplayerId,
                     imageUrl = stored.imageUrl,
                     quantity = quantity,
@@ -106,5 +110,9 @@ class CardRepository(private val db: AppDatabase) {
 
     suspend fun deleteCard(entry: CardEntryEntity) {
         db.cards().delete(entry)
+    }
+
+    suspend fun updateCard(entry: CardEntryEntity) {
+        db.cards().update(entry)
     }
 }

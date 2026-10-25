@@ -54,7 +54,9 @@ Colonne, in quest’ordine:
 - Magic: `scryfall_id,name,expansion_code,collector_number,quantity,language,condition,foil,price_cents`
 - Pokémon: `name,expansion_code,collector_number,quantity,language,condition,foil,tcgplayer_id,price_cents`
 
-`language` usa i codici della reference CardTrader (proprietà `mtg_language`): `en`, `it`, `fr`, `de`, `es`, `pt`, `jp`, `kr`, `zh-CN`. Giapponese è `jp`, coreano `kr`, cinese semplificato `zh-CN`. La stessa colonna vale per Pokémon: la reference non elenca un secondo vocabolario e gli ordini usano `pokemon_language` con gli stessi codici (`en`).
+`name` è il nome inglese del blueprint (Scryfall `name`, o il nome TCGdex in inglese), non il titolo stampato sulla carta. In app la carta resta col titolo letto, per esempio «Stendardiere del Lancio della Rana»; nel CSV diventa `Frogtosser Banneret`. Una bifronte usa il nome con `//` (`Smitten Swordmaster // Curry Favor`). `scryfall_id` è quello della stampa inglese, quello che CardTrader ha sul blueprint.
+
+`language` usa i codici della reference CardTrader (proprietà `mtg_language`): `en`, `it`, `fr`, `de`, `es`, `pt`, `jp`, `kr`, `zh-CN`. Giapponese è `jp`, coreano `kr`, cinese semplificato `zh-CN`. `it` è la lingua della copia, non del titolo: una carta italiana di Morningtide resta `it`. Un set solo inglese (Masters 25) può avvisare e rimettere la lingua di default, ma la riga viene importata. La stessa colonna vale per Pokémon: la reference non elenca un secondo vocabolario e gli ordini usano `pokemon_language` con gli stessi codici (`en`).
 
 `condition` resta `Near Mint`, `Slightly Played`, `Moderately Played`, `Heavily Played`. Damaged diventa `Poor` (valore documentato; esistono anche `Played` e, nel testo, Mint, che non è tra i `possible_values`).
 

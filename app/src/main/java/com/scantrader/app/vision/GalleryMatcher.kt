@@ -117,10 +117,24 @@ class GalleryMatcher(
             printedName = printed?.name,
             printedLang = printed?.lang,
         )
-        return card.toIdentified(
+        val identified = card.toIdentified(
             visualScore = score.coerceIn(0f, 1f),
             ocrScore = MatchFusion.ocrAgreement(stub, parsed),
-        ).copy(name = displayName, printedName = printed?.name, printedLang = printed?.lang)
+        ).copy(
+            name = displayName,
+            catalogName = card.name,
+            printedName = printed?.name,
+            printedLang = printed?.lang,
+        )
+        val lang = card.lang?.trim()?.lowercase()
+        if (lang.isNullOrEmpty() || lang == "en") return identified
+        val english = runCatching {
+            scryfall.cardBySetNumberLang(card.set, card.collectorNumber, "en")
+        }.getOrNull() ?: return identified
+        return identified.copy(
+            catalogName = english.name.takeIf { it.isNotBlank() } ?: identified.catalogName,
+            catalogScryfallId = english.id.takeIf { it.isNotBlank() && it != card.id },
+        )
     }
 
     /**
@@ -173,6 +187,7 @@ class GalleryMatcher(
             setName = card.set?.name.orEmpty(),
             collectorNumber = card.localId.ifBlank { id.substringAfter('-', "") },
             tcgdexId = card.id,
+            catalogName = card.name.takeIf { it.isNotBlank() },
             imageUrl = card.image?.let { "$it/low.webp" },
         )
         return stub.copy(
@@ -204,6 +219,7 @@ class GalleryMatcher(
             setName = setName.orEmpty(),
             collectorNumber = collectorNumber,
             scryfallId = id,
+            catalogName = name.takeIf { it.isNotBlank() },
             tcgplayerId = tcgplayerId?.toString(),
             imageUrl = bestImageUrl(),
             priceEur = prices?.eur?.takeIf { it.isNotBlank() },
@@ -275,6 +291,8 @@ fun mergeHybridCandidates(
             priceSource = existing.priceSource ?: card.priceSource,
             printedName = existing.printedName ?: card.printedName,
             printedLang = existing.printedLang ?: card.printedLang,
+            catalogName = existing.catalogName ?: card.catalogName,
+            catalogScryfallId = existing.catalogScryfallId ?: card.catalogScryfallId,
             tcgdexId = existing.tcgdexId ?: card.tcgdexId,
             scryfallId = existing.scryfallId ?: card.scryfallId,
         )

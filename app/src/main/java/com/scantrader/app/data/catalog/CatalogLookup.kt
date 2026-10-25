@@ -47,7 +47,7 @@ class CatalogLookup(
             if (number.isNullOrBlank()) break
             val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.orRethrowBusy()
                 ?: continue
-            if (mtgIdAgrees(card, name)) return listOf(card.toIdentified(ocrScore = 0.98f))
+            if (mtgIdAgrees(card, name)) return listOf(card.asIdentified(ocrScore = 0.98f))
             // English oracle name missed. Adventure faces keep the Italian title
             // on card_faces.printed_name (`Maestro di Spada Invaghito`).
             val localized = localizedIdHit(card, name, parsed.printedLang)
@@ -90,7 +90,7 @@ class CatalogLookup(
             for (set in sets) {
                 val inSet = runCatching { scryfall.namedFuzzy(safeName, set) }.orRethrowBusy()
                 if (inSet != null && mtgIdAgrees(inSet, safeName)) {
-                    return listOf(inSet.toIdentified(ocrScore = 0.84f))
+                    return listOf(inSet.asIdentified(ocrScore = 0.84f))
                 }
             }
             val stemmed = searchMtgStem(safeName, sets, number)
@@ -103,7 +103,7 @@ class CatalogLookup(
         }
         val cnOk = number.isNullOrBlank() || collectorEquals(fuzzy?.collectorNumber, number)
         if (fuzzy != null && cnOk && (sets.isEmpty() || mtgIdAgrees(fuzzy, safeName))) {
-            return listOf(fuzzy.toIdentified(ocrScore = 0.72f))
+            return listOf(fuzzy.asIdentified(ocrScore = 0.72f))
         }
         return lookupItalianPrintedName(safeName, number)
     }
@@ -121,13 +121,13 @@ class CatalogLookup(
         for (set in sets) {
             val exact = pickMtgPrinting(searchCards("set:$set !\"$safeName\""), set, number)
             if (exact != null && mtgIdAgrees(exact, safeName)) {
-                return listOf(exact.toIdentified(ocrScore = 0.96f))
+                return listOf(exact.asIdentified(ocrScore = 0.96f))
             }
         }
         for (set in sets) {
             val named = pickMtgPrinting(searchCards("set:$set name:\"$safeName\""), set, number)
             if (named != null && mtgIdAgrees(named, safeName)) {
-                return listOf(named.toIdentified(ocrScore = 0.9f))
+                return listOf(named.asIdentified(ocrScore = 0.9f))
             }
         }
         return emptyList()
@@ -147,7 +147,7 @@ class CatalogLookup(
         for (set in sets) {
             val agreed = searchCards("set:$set name:/$stem/").filter { mtgIdAgrees(it, safeName) }
             val picked = pickMtgPrinting(agreed, set, number) ?: continue
-            return listOf(picked.toIdentified(ocrScore = 0.8f))
+            return listOf(picked.asIdentified(ocrScore = 0.8f))
         }
         return emptyList()
     }
@@ -191,7 +191,7 @@ class CatalogLookup(
             }.orRethrowBusy() ?: continue
             if (!mtgIdAgrees(local, title)) continue
             val printed = local.localizedPrintedName()
-            return local.toIdentified(ocrScore = 0.98f).copy(
+            return local.asIdentified(ocrScore = 0.98f).copy(
                 name = printed ?: local.name,
                 printedName = printed,
                 printedLang = lang,
@@ -222,7 +222,7 @@ class CatalogLookup(
         val printed = searchCards("lang:it !\"$safeName\"")
         val italian = printed.firstOrNull() ?: return emptyList()
         if (number.isNullOrBlank() || collectorEquals(italian.collectorNumber, number)) {
-            return listOf(italian.toIdentified(ocrScore = 0.88f))
+            return listOf(italian.asIdentified(ocrScore = 0.88f))
         }
         val english = italian.name.replace("\"", "").trim()
         if (english.isNotBlank() && !english.equals(safeName, ignoreCase = true)) {
@@ -231,7 +231,7 @@ class CatalogLookup(
             if (print != null) {
                 val title = italian.printedName?.takeIf { it.isNotBlank() } ?: safeName
                 return listOf(
-                    print.toIdentified(ocrScore = 0.9f).copy(
+                    print.asIdentified(ocrScore = 0.9f).copy(
                         name = title,
                         printedName = title,
                         printedLang = "it",
@@ -239,7 +239,7 @@ class CatalogLookup(
                 )
             }
         }
-        return listOf(italian.toIdentified(ocrScore = 0.88f))
+        return listOf(italian.asIdentified(ocrScore = 0.88f))
     }
 
     private suspend fun searchCards(query: String): List<ScryfallCard> {
@@ -253,8 +253,12 @@ class CatalogLookup(
     private suspend fun searchOnce(query: String): List<IdentifiedCard> {
         val cards = searchCards(query)
         if (cards.isEmpty()) return emptyList()
-        val exact = query.contains("!\"")
-        return cards.take(4).map { it.toIdentified(ocrScore = if (exact) 0.88f else 0.7f) }
+        val score = if (query.contains("!\"")) 0.88f else 0.7f
+        val identified = ArrayList<IdentifiedCard>(minOf(cards.size, 4))
+        for (card in cards.take(4)) {
+            identified += card.asIdentified(ocrScore = score)
+        }
+        return identified
     }
 
     private fun <T> Result<T>.orRethrowBusy(): T? {
@@ -307,7 +311,12 @@ class CatalogLookup(
                     querySetIds = setIds.distinct(),
                     setCardCount = parsed.setCardCount,
                 )
-                card.toIdentified().copy(ocrScore = (raw / 160f).coerceIn(0.02f, 1f))
+                val englishName = cards.firstOrNull { it.id == card.id && cardLang(it) == "en" }?.name
+                card.toIdentified().copy(
+                    ocrScore = (raw / 160f).coerceIn(0.02f, 1f),
+                    catalogName = englishName?.takeIf { it.isNotBlank() }
+                        ?: card.name.takeIf { cardLang(card) == "en" },
+                )
             }
             .sortedByDescending { it.ocrScore ?: 0f }
         // Drop obvious junk when OCR name is a real title (avoid Malamar from "mal di testa").
@@ -443,11 +452,32 @@ class CatalogLookup(
         return listOf("zh-cn", "zh-tw", "ja", "it", "en").firstOrNull { path.contains("/$it/") } ?: "en"
     }
 
+    /**
+     * Display name stays the printed title. [IdentifiedCard.catalogName] keeps the
+     * English Scryfall name, and a non-English print also stores that printing's id.
+     */
+    private suspend fun ScryfallCard.asIdentified(ocrScore: Float? = null): IdentifiedCard =
+        toIdentified(ocrScore).withEnglishBlueprint(this)
+
+    private suspend fun IdentifiedCard.withEnglishBlueprint(source: ScryfallCard): IdentifiedCard {
+        val named = copy(catalogName = source.name.takeIf { it.isNotBlank() } ?: catalogName)
+        val lang = source.lang?.trim()?.lowercase(Locale.ROOT)
+        if (lang.isNullOrEmpty() || lang == "en") return named
+        val english = runCatching {
+            scryfall.cardBySetNumberLang(source.set, source.collectorNumber, "en")
+        }.orRethrowBusy() ?: return named
+        return named.copy(
+            catalogName = english.name.takeIf { it.isNotBlank() } ?: named.catalogName,
+            catalogScryfallId = english.id.takeIf { it.isNotBlank() && it != source.id },
+        )
+    }
+
     private fun ScryfallCard.toIdentified(ocrScore: Float? = null): IdentifiedCard =
         IdentifiedCard(
             game = Game.MTG,
             // Prefer printed (IT) name when Scryfall returns it — matches OCR titles.
-            name = printedName?.takeIf { it.isNotBlank() } ?: name,
+            name = localizedPrintedName() ?: name,
+            catalogName = name.takeIf { it.isNotBlank() },
             setCode = set,
             setName = setName.orEmpty(),
             collectorNumber = collectorNumber,
