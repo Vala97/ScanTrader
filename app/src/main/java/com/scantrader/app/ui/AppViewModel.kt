@@ -25,7 +25,10 @@ import com.scantrader.app.scan.FrameQuery
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
 import com.scantrader.app.scan.LensOption
+import com.scantrader.app.scan.RejectedSetCodes
+import com.scantrader.app.scan.SetPrintingGuard
 import com.scantrader.app.scan.SpeculativeCatalog
+import com.scantrader.app.scan.StableTopAccept
 import com.scantrader.app.scan.ZoomFraming
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
@@ -209,6 +212,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private val autoBusy = AtomicBoolean(false)
     private val autoHitPending = AtomicBoolean(false)
     private val catalogDebounce = CatalogQueryDebounce()
+    private val rejectedSets = RejectedSetCodes()
+    private val stableTop = StableTopAccept()
     private val speculativeCatalog = SpeculativeCatalog()
     private val speculativeInFlight = AtomicBoolean(false)
 
@@ -506,6 +511,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         acceptedLock.clear()
         cancelSpeculative()
         catalogDebounce.reset()
+        rejectedSets.clear()
+        stableTop.reset()
         if (autoScan.value) {
             autoStatus.value = if (duplicateGuard.holdingSameCard()) {
                 "Metti un’altra carta…"
@@ -958,7 +965,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     if (bottomLeft.isNotBlank()) append("\n").append(bottomLeft)
                 }
             }
-            val parsed = com.scantrader.app.scan.OcrParser.parse(
+            var parsed = com.scantrader.app.scan.OcrParser.parse(
                 rawText = text,
                 game = game.value,
                 bottomPriorityText = bottomText,
@@ -970,6 +977,15 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "parsed name=${parsed.nameGuess} cn=${parsed.collectorNumber} " +
                     "set=${parsed.setCode} count=${parsed.setCardCount} ocrMs=$ocrMs",
             )
+            if (game.value == Game.MTG) {
+                val scrubbed = rejectedSets.scrub(parsed)
+                if (scrubbed.setCode != parsed.setCode) {
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "set discarded (not a printing of ${parsed.nameGuess}) set=${parsed.setCode}",
+                    )
+                    parsed = scrubbed
+                }
+            }
             if (topNameText.isNotBlank()) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "OCR top snippet=${topNameText.take(100).replace("\n", " | ")}",
@@ -1229,7 +1245,24 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 catalogHits
             }
             val merged = com.scantrader.app.vision.mergeHybridCandidates(fingerprintRanked, galleryHits)
-            val fused = com.scantrader.app.vision.MatchFusion.fuse(merged, matched)
+            val guarded = if (game.value == Game.MTG) {
+                rejectedSets.note(matched, merged)
+                val cleaned = SetPrintingGuard.discardUnknownSet(matched, merged)
+                if (cleaned.setCode != matched.setCode) {
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "set discarded (not a printing of ${matched.nameGuess}) set=${matched.setCode}",
+                    )
+                }
+                cleaned
+            } else {
+                matched
+            }
+            val forScore = if (guarded.setCode != matched.setCode) {
+                merged.map { it.copy(ocrScore = null) }
+            } else {
+                merged
+            }
+            val fused = com.scantrader.app.vision.MatchFusion.fuse(forScore, guarded)
                 .distinctBy {
                     it.scryfallId
                         ?: it.tcgdexId
@@ -1245,13 +1278,25 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             val top = candidates.firstOrNull()
             val gateParsed = if (FrameNameGate.confidentTitle(parsed.nameGuess) != null) {
-                matched.copy(nameGuess = parsed.nameGuess)
+                guarded.copy(nameGuess = parsed.nameGuess)
             } else {
-                matched
+                guarded
             }
             // Score a dropped id hit so a name mismatch is nameConflict, not noTop.
             val gateSubject = top ?: fused.firstOrNull()
-            val gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(gateSubject, gateParsed)
+            var gate = com.scantrader.app.vision.MatchFusion.evaluateAutoMatch(
+                gateSubject,
+                gateParsed,
+                candidates,
+            )
+            if (requireMatch && top != null && !gate.accepted && stableTop.ready(top, gate)) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "stable top accept set=${top.setCode} cn=${top.collectorNumber}",
+                )
+                gate = gate.copy(accepted = true, reason = "stableTop")
+            } else if (top == null || gate.nameConflict || !gate.nameOk) {
+                stableTop.reset()
+            }
             val autoOk = gate.accepted && top != null
             val topKey = top?.let { autoCardKey(it) }
             val blockedSameCard = requireMatch &&
@@ -1349,6 +1394,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         duplicateGuard.clear()
         cancelSpeculative()
         catalogDebounce.reset()
+        rejectedSets.clear()
+        stableTop.reset()
     }
 
     private fun skipUnstableFrame(bitmap: android.graphics.Bitmap, startedAt: Long): Boolean {
