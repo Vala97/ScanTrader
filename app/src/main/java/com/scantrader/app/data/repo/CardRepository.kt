@@ -1,10 +1,12 @@
 package com.scantrader.app.data.repo
 
+import androidx.room.withTransaction
 import com.scantrader.app.data.db.AppDatabase
 import com.scantrader.app.data.db.CardEntryEntity
 import com.scantrader.app.data.db.CollectionEntity
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 
 class CardRepository(private val db: AppDatabase) {
@@ -35,7 +37,7 @@ class CardRepository(private val db: AppDatabase) {
         foil: Boolean,
     ) {
         val stored = card.withoutPokemonFoil()
-        val storedFoil = foil && card.game != com.scantrader.app.data.model.Game.POKEMON
+        val storedFoil = foil && card.game != Game.POKEMON
         val existing = db.cards().findDuplicate(
             collectionId = collectionId,
             game = stored.game,
@@ -53,13 +55,13 @@ class CardRepository(private val db: AppDatabase) {
                     quantity = existing.quantity + quantity,
                     foil = storedFoil,
                     priceEur = stored.priceEur ?: existing.priceEur,
-                    priceEurFoil = if (stored.game == com.scantrader.app.data.model.Game.POKEMON) {
+                    priceEurFoil = if (stored.game == Game.POKEMON) {
                         null
                     } else {
                         stored.priceEurFoil ?: existing.priceEurFoil
                     },
                     priceUsd = stored.priceUsd ?: existing.priceUsd,
-                    priceUsdFoil = if (stored.game == com.scantrader.app.data.model.Game.POKEMON) {
+                    priceUsdFoil = if (stored.game == Game.POKEMON) {
                         null
                     } else {
                         stored.priceUsdFoil ?: existing.priceUsdFoil
@@ -101,11 +103,64 @@ class CardRepository(private val db: AppDatabase) {
     }
 
     suspend fun updateQuantity(entry: CardEntryEntity, quantity: Int) {
-        if (quantity <= 0) db.cards().delete(entry) else db.cards().update(entry.copy(quantity = quantity))
+        updateTraits(entry, quantity, entry.language, entry.condition, entry.foil)
     }
 
     suspend fun updateCondition(entry: CardEntryEntity, condition: CardCondition) {
-        db.cards().update(entry.copy(condition = condition.csvValue))
+        updateTraits(entry, entry.quantity, entry.language, condition.csvValue, entry.foil)
+    }
+
+    suspend fun updateLanguage(entry: CardEntryEntity, language: CardLanguage) {
+        updateTraits(entry, entry.quantity, language.csvValue, entry.condition, entry.foil)
+    }
+
+    suspend fun updateFoil(entry: CardEntryEntity, foil: Boolean) {
+        updateTraits(entry, entry.quantity, entry.language, entry.condition, foil)
+    }
+
+    /**
+     * Quantity, language, condition, and foil share the duplicate key.
+     * A colliding row absorbs the quantity and the edited row is removed.
+     * Pokémon is stored non-foil. Quantity at or below zero deletes the row.
+     */
+    private suspend fun updateTraits(
+        entry: CardEntryEntity,
+        quantity: Int,
+        language: String,
+        condition: String,
+        foil: Boolean,
+    ) {
+        if (quantity <= 0) {
+            db.cards().delete(entry)
+            return
+        }
+        val storedFoil = foil && entry.game != Game.POKEMON
+        val duplicate = db.cards().findDuplicate(
+            collectionId = entry.collectionId,
+            game = entry.game,
+            name = entry.name,
+            setCode = entry.setCode,
+            collectorNumber = entry.collectorNumber,
+            language = language,
+            condition = condition,
+            foil = storedFoil,
+            scryfallId = entry.scryfallId,
+        )
+        if (duplicate != null && duplicate.id != entry.id) {
+            db.withTransaction {
+                db.cards().update(duplicate.copy(quantity = duplicate.quantity + quantity))
+                db.cards().delete(entry)
+            }
+        } else {
+            db.cards().update(
+                entry.copy(
+                    quantity = quantity,
+                    language = language,
+                    condition = condition,
+                    foil = storedFoil,
+                ),
+            )
+        }
     }
 
     suspend fun deleteCard(entry: CardEntryEntity) {
