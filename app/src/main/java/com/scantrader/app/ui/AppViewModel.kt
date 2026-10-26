@@ -12,6 +12,7 @@ import com.scantrader.app.data.db.CollectionWithCount
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
+import com.scantrader.app.ui.collection.CollectionSort
 import com.scantrader.app.data.catalog.CatalogQueryDebounce
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
@@ -78,6 +79,11 @@ class CollectionViewModel(
     val cards: StateFlow<List<CardEntryEntity>> =
         app.repository.cards(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val exporting = MutableStateFlow(false)
+    val sort = MutableStateFlow(CollectionSort.COLLECTOR_NUMBER)
+
+    fun setSort(value: CollectionSort) {
+        sort.value = value
+    }
 
     fun share(context: Context) {
         if (exporting.value || cards.value.isEmpty()) return
@@ -100,6 +106,14 @@ class CollectionViewModel(
 
     fun setCondition(entry: CardEntryEntity, condition: CardCondition) {
         viewModelScope.launch { app.repository.updateCondition(entry, condition) }
+    }
+
+    fun setLanguage(entry: CardEntryEntity, language: CardLanguage) {
+        viewModelScope.launch { app.repository.updateLanguage(entry, language) }
+    }
+
+    fun setFoil(entry: CardEntryEntity, foil: Boolean) {
+        viewModelScope.launch { app.repository.updateFoil(entry, foil) }
     }
 
     fun delete(entry: CardEntryEntity) {
