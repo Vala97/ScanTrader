@@ -5,6 +5,10 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Modificato
+- Icona dell’app: medaglione blu e oro (cristallo, teschio, due uccelli e i simboli elementali) al posto del robot. Icone legacy e adattiva, con il disegno nel 66% centrale così la maschera non taglia il medaglione, fondo `#233154` (bordi dell’immagine) e strato monocromatico. In **Informazioni** si vede la nuova icona. L’originale è in `docs/branding/app_logo.jpg`.
+- README allineato allo stato attuale: pack neurali, auto-scan con conferma, nomi in altre lingue, lettura del codice set, niente prezzo foil per Pokémon, CSV con nome inglese e `scryfall_id` inglese (va riesportato dopo l’aggiornamento), AGP 8.13.2 / Gradle 8.13 / JDK 17, nuova icona.
+
 ### Corretto
 - L’export CSV CardTrader scrive il nome inglese del blueprint (`Frogtosser Banneret`, `Smitten Swordmaster // Curry Favor`) e, se la stampa salvata non è inglese, lo `scryfall_id` di quella stampa. Il titolo in collezione resta quello stampato. `it` resta la lingua della copia. Le righe già salvate si risolvono al momento della condivisione, anche senza rete se il nome catalogo c’è già. Senza rete e senza nome catalogo si esporta il titolo salvato.
 
