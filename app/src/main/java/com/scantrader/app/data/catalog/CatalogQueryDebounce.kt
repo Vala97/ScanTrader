@@ -15,6 +15,10 @@ import com.scantrader.app.scan.OcrParser
  * OCR name/set jitter must not reset that clock. The query uses the majority
  * name, collector, and set from the recent frames so one bad read cannot win.
  * The same key is not queried again until [requeryAfterMs] has passed.
+ *
+ * Consecutive reads are compared with [agreementKey], which treats OCR look-alikes
+ * (I/l/1/|, O/0, apostrophe shapes) as the same. The name stored for the catalog
+ * stays the text that was read.
  */
 class CatalogQueryDebounce(
     private val stableFramesNeeded: Int = 2,
@@ -44,33 +48,45 @@ class CatalogQueryDebounce(
         identity.trim().lowercase().replace(Regex("""\s+"""), " ")
 
     /**
+     * Stability id. Case and spacing match [normalize]. I/l/1/| (and a few
+     * look-alike strokes), O/0, and apostrophe shapes match too.
+     * Fields stay split on `|`, so the separators themselves are not folded.
+     */
+    fun agreementKey(identity: String): String {
+        val normalized = normalize(identity)
+        if (normalized.isEmpty()) return ""
+        return normalized.split('|').joinToString("|") { foldOcrGlyphs(it) }
+    }
+
+    /**
      * True when the previous frames already settled on this exact id.
      * Does not count the current frame. Used to skip extra OCR passes.
      */
     fun seenThisBefore(identity: String): Boolean {
-        val key = normalize(identity)
+        val key = agreementKey(identity)
         return key.isNotBlank() && key == lastSeenRaw && seenCount >= 1
     }
 
     fun shouldQuery(identity: String): Boolean {
         val key = normalize(identity)
-        noteExact(key)
+        val agreed = agreementKey(key)
+        noteExact(agreed)
         val frame = parseIdentity(key)
         if (!hasSignal(frame)) {
             clearRegion()
             return false
         }
-        return observe(frame, key)
+        return observe(frame, agreed)
     }
 
     fun shouldQuery(frame: Frame): Boolean {
-        val key = exactKey(frame)
-        noteExact(key)
+        val agreed = agreementKey(exactKey(frame))
+        noteExact(agreed)
         if (!hasSignal(frame)) {
             clearRegion()
             return false
         }
-        return observe(frame, key)
+        return observe(frame, agreed)
     }
 
     /**
@@ -79,7 +95,7 @@ class CatalogQueryDebounce(
      * The same id still waits [requeryAfterMs].
      */
     fun forceQuery(identity: String): Boolean {
-        val key = normalize(identity)
+        val key = agreementKey(identity)
         if (key.isBlank()) return false
         val t = now()
         if (key == lastQueriedKey && t - lastQueryAtMs < requeryAfterMs) return false
@@ -179,10 +195,29 @@ class CatalogQueryDebounce(
     }
 
     private fun exactKey(frame: Frame): String =
-        normalize(
-            listOf(frame.name, frame.collectorNumber, frame.setCode)
-                .joinToString("|") { it.orEmpty() },
-        )
+        listOf(frame.name, frame.collectorNumber, frame.setCode)
+            .joinToString("|") { it.orEmpty() }
+
+    /**
+     * Glyphs ML Kit swaps on a title. Applied per field so `|` stays the
+     * separator. S/5, B/8, and Z/2 are left alone: those merge real numbers.
+     */
+    private fun foldOcrGlyphs(field: String): String = buildString(field.length) {
+        for (ch in field) {
+            append(
+                when (ch) {
+                    'i', 'l', '1', '|', '!',
+                    '\u00A6', '\u01C0', '\u0131', '\u03B9', '\u2223', '\u2502',
+                    -> 'i'
+                    'o', '0', '\u03BF', '\u25CB', '\u3007' -> 'o'
+                    '\'', '`',
+                    '\u00B4', '\u2018', '\u2019', '\u201B', '\u2032', '\u02BC', '\u02BB', '\u02B9',
+                    -> '\''
+                    else -> ch
+                },
+            )
+        }
+    }
 
     private fun parseIdentity(key: String): Frame {
         val parts = key.split("|")
