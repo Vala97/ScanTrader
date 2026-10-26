@@ -5,14 +5,14 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Update
-import com.scantrader.app.data.model.Game
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface CollectionDao {
     @Query(
         """
-        SELECT c.id, c.name, c.createdAt, COUNT(e.id) AS cardCount
+        SELECT c.id, c.name, c.createdAt,
+               CAST(COALESCE(SUM(e.quantity), 0) AS INTEGER) AS cardCount
         FROM collections c
         LEFT JOIN card_entries e ON e.collectionId = c.id
         GROUP BY c.id
@@ -45,29 +45,11 @@ interface CardEntryDao {
     @Query(
         """
         SELECT * FROM card_entries
-        WHERE collectionId = :collectionId
-          AND game = :game
-          AND name = :name
-          AND setCode = :setCode
-          AND collectorNumber = :collectorNumber
-          AND language = :language
-          AND `condition` = :condition
-          AND foil = :foil
-          AND IFNULL(scryfallId, '') = IFNULL(:scryfallId, '')
+        WHERE collectionId = :collectionId AND copyKey = :copyKey
         LIMIT 1
         """,
     )
-    suspend fun findDuplicate(
-        collectionId: Long,
-        game: Game,
-        name: String,
-        setCode: String,
-        collectorNumber: String,
-        language: String,
-        condition: String,
-        foil: Boolean,
-        scryfallId: String?,
-    ): CardEntryEntity?
+    suspend fun findByCopyKey(collectionId: Long, copyKey: String): CardEntryEntity?
 
     @Insert
     suspend fun insert(entity: CardEntryEntity): Long

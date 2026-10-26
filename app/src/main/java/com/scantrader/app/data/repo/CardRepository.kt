@@ -1,13 +1,18 @@
 package com.scantrader.app.data.repo
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
 import com.scantrader.app.data.db.AppDatabase
 import com.scantrader.app.data.db.CardEntryEntity
 import com.scantrader.app.data.db.CollectionEntity
+import com.scantrader.app.data.db.StockKey
+import com.scantrader.app.data.db.StockMerge
+import com.scantrader.app.data.db.stamped
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
+import com.scantrader.app.scan.CardFinish
 
 class CardRepository(private val db: AppDatabase) {
     fun collections() = db.collections().observeCollections()
@@ -37,69 +42,66 @@ class CardRepository(private val db: AppDatabase) {
         foil: Boolean,
     ) {
         val stored = card.withoutPokemonFoil()
-        val storedFoil = foil && card.game != Game.POKEMON
-        val existing = db.cards().findDuplicate(
+        val incoming = CardEntryEntity(
             collectionId = collectionId,
             game = stored.game,
             name = stored.name,
             setCode = stored.setCode,
+            setName = stored.setName,
             collectorNumber = stored.collectorNumber,
+            scryfallId = stored.scryfallId,
+            catalogName = stored.catalogName,
+            catalogScryfallId = stored.catalogScryfallId,
+            tcgplayerId = stored.tcgplayerId,
+            tcgdexId = stored.tcgdexId,
+            imageUrl = stored.imageUrl,
+            quantity = quantity,
             language = language.csvValue,
             condition = condition.csvValue,
-            foil = storedFoil,
-            scryfallId = stored.scryfallId,
-        )
+            foil = foil && stored.game != Game.POKEMON,
+            priceEur = stored.priceEur,
+            priceEurFoil = stored.priceEurFoil,
+            priceUsd = stored.priceUsd,
+            priceUsdFoil = stored.priceUsdFoil,
+            priceCurrency = stored.priceCurrency,
+            priceSource = stored.priceSource,
+            variant = CardFinish.variantOf(stored.finish),
+        ).stamped()
+        val existing = db.cards().findByCopyKey(collectionId, incoming.copyKey)
+            ?: legacySetRow(incoming)
         if (existing != null) {
-            db.cards().update(
-                existing.copy(
-                    quantity = existing.quantity + quantity,
-                    foil = storedFoil,
-                    priceEur = stored.priceEur ?: existing.priceEur,
-                    priceEurFoil = if (stored.game == Game.POKEMON) {
-                        null
-                    } else {
-                        stored.priceEurFoil ?: existing.priceEurFoil
-                    },
-                    priceUsd = stored.priceUsd ?: existing.priceUsd,
-                    priceUsdFoil = if (stored.game == Game.POKEMON) {
-                        null
-                    } else {
-                        stored.priceUsdFoil ?: existing.priceUsdFoil
-                    },
-                    priceCurrency = stored.priceCurrency ?: existing.priceCurrency,
-                    priceSource = stored.priceSource ?: existing.priceSource,
-                    imageUrl = stored.imageUrl ?: existing.imageUrl,
-                    catalogName = existing.catalogName ?: stored.catalogName,
-                    catalogScryfallId = existing.catalogScryfallId ?: stored.catalogScryfallId,
-                ),
-            )
+            absorb(existing, incoming)
         } else {
-            db.cards().insert(
-                CardEntryEntity(
-                    collectionId = collectionId,
-                    game = stored.game,
-                    name = stored.name,
-                    setCode = stored.setCode,
-                    setName = stored.setName,
-                    collectorNumber = stored.collectorNumber,
-                    scryfallId = stored.scryfallId,
-                    catalogName = stored.catalogName,
-                    catalogScryfallId = stored.catalogScryfallId,
-                    tcgplayerId = stored.tcgplayerId,
-                    imageUrl = stored.imageUrl,
-                    quantity = quantity,
-                    language = language.csvValue,
-                    condition = condition.csvValue,
-                    foil = storedFoil,
-                    priceEur = stored.priceEur,
-                    priceEurFoil = stored.priceEurFoil,
-                    priceUsd = stored.priceUsd,
-                    priceUsdFoil = stored.priceUsdFoil,
-                    priceCurrency = stored.priceCurrency,
-                    priceSource = stored.priceSource,
-                ),
-            )
+            try {
+                db.cards().insert(incoming)
+            } catch (e: SQLiteConstraintException) {
+                val raced = db.cards().findByCopyKey(collectionId, incoming.copyKey) ?: throw e
+                absorb(raced, incoming)
+            }
         }
+    }
+
+    /**
+     * A row saved before printing ids were stored still uses set + collector number.
+     * The next save of that print, which now has an id, absorbs it.
+     * Trait edits do not use this bridge: changing foil must not land on another row.
+     */
+    private suspend fun legacySetRow(incoming: CardEntryEntity): CardEntryEntity? {
+        val hasId = !incoming.catalogScryfallId.isNullOrBlank() ||
+            !incoming.scryfallId.isNullOrBlank() ||
+            !incoming.tcgdexId.isNullOrBlank()
+        if (!hasId) return null
+        val setKey = StockKey.withoutPrintingId(incoming)
+        if (setKey == incoming.copyKey) return null
+        return db.cards().findByCopyKey(incoming.collectionId, setKey)
+    }
+
+    private suspend fun absorb(existing: CardEntryEntity, incoming: CardEntryEntity) {
+        val newer = incoming.copy(
+            id = 0L,
+            createdAt = maxOf(incoming.createdAt, existing.createdAt + 1L),
+        )
+        db.cards().update(StockMerge.merge(listOf(existing, newer)))
     }
 
     suspend fun updateQuantity(entry: CardEntryEntity, quantity: Int) {
@@ -119,9 +121,9 @@ class CardRepository(private val db: AppDatabase) {
     }
 
     /**
-     * Quantity, language, condition, and foil share the duplicate key.
-     * A colliding row absorbs the quantity and the edited row is removed.
-     * Pokémon is stored non-foil. Quantity at or below zero deletes the row.
+     * Quantity, language, condition, and foil share the stock key.
+     * A colliding row absorbs this one. Pokémon is stored non-foil.
+     * Quantity at or below zero deletes the row.
      */
     private suspend fun updateTraits(
         entry: CardEntryEntity,
@@ -134,32 +136,29 @@ class CardRepository(private val db: AppDatabase) {
             db.cards().delete(entry)
             return
         }
-        val storedFoil = foil && entry.game != Game.POKEMON
-        val duplicate = db.cards().findDuplicate(
-            collectionId = entry.collectionId,
-            game = entry.game,
-            name = entry.name,
-            setCode = entry.setCode,
-            collectorNumber = entry.collectorNumber,
+        val pokemon = entry.game == Game.POKEMON
+        val edited = entry.copy(
+            quantity = quantity,
             language = language,
             condition = condition,
-            foil = storedFoil,
-            scryfallId = entry.scryfallId,
-        )
+            foil = foil && !pokemon,
+            priceEurFoil = if (pokemon) null else entry.priceEurFoil,
+            priceUsdFoil = if (pokemon) null else entry.priceUsdFoil,
+        ).stamped()
+        val duplicate = db.cards().findByCopyKey(entry.collectionId, edited.copyKey)
         if (duplicate != null && duplicate.id != entry.id) {
-            db.withTransaction {
-                db.cards().update(duplicate.copy(quantity = duplicate.quantity + quantity))
-                db.cards().delete(entry)
-            }
-        } else {
-            db.cards().update(
-                entry.copy(
-                    quantity = quantity,
-                    language = language,
-                    condition = condition,
-                    foil = storedFoil,
+            val merged = StockMerge.merge(
+                listOf(
+                    duplicate,
+                    edited.copy(id = 0L, createdAt = maxOf(edited.createdAt, duplicate.createdAt + 1L)),
                 ),
             )
+            db.withTransaction {
+                db.cards().delete(entry)
+                db.cards().update(merged)
+            }
+        } else {
+            db.cards().update(edited)
         }
     }
 
@@ -167,7 +166,27 @@ class CardRepository(private val db: AppDatabase) {
         db.cards().delete(entry)
     }
 
+    /**
+     * Blueprint fill can add [CardEntryEntity.catalogScryfallId] and move the row
+     * onto another stock line. The other line absorbs it so the unique key holds.
+     */
     suspend fun updateCard(entry: CardEntryEntity) {
-        db.cards().update(entry)
+        val pokemon = entry.game == Game.POKEMON
+        val stamped = entry.copy(
+            foil = entry.foil && !pokemon,
+            priceEurFoil = if (pokemon) null else entry.priceEurFoil,
+            priceUsdFoil = if (pokemon) null else entry.priceUsdFoil,
+        ).stamped()
+        val duplicate = db.cards().findByCopyKey(stamped.collectionId, stamped.copyKey)
+        if (duplicate != null && duplicate.id != stamped.id && stamped.id != 0L) {
+            val merged = StockMerge.merge(listOf(duplicate, stamped))
+            db.withTransaction {
+                if (merged.id != stamped.id) db.cards().delete(stamped)
+                if (merged.id != duplicate.id) db.cards().delete(duplicate)
+                db.cards().update(merged)
+            }
+        } else {
+            db.cards().update(stamped)
+        }
     }
 }

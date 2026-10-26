@@ -23,4 +23,28 @@ object CardFinish {
             ?.let { parts += "promo:" + it.joinToString("+") }
         return parts.joinToString("|").ifBlank { null }
     }
+
+    /**
+     * Finish token with foil / non-foil removed. Foil stays a separate flag.
+     * `foil+nonfoil` is null. `etched+foil|frame:showcase` is `etched|frame:showcase`.
+     */
+    fun variantOf(finish: String?): String? {
+        if (finish.isNullOrBlank()) return null
+        val parts = finish.split('|').mapNotNull { part ->
+            val trimmed = part.trim().lowercase()
+            if (trimmed.isEmpty()) return@mapNotNull null
+            if (trimmed.startsWith("frame:") || trimmed.startsWith("promo:")) {
+                trimmed.takeIf { it.length > trimmed.substringBefore(':').length + 1 }
+            } else {
+                trimmed.split('+')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && it != "foil" && it != "nonfoil" }
+                    .distinct()
+                    .sorted()
+                    .joinToString("+")
+                    .takeIf { it.isNotEmpty() }
+            }
+        }
+        return parts.joinToString("|").ifBlank { null }
+    }
 }
