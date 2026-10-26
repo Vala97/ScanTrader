@@ -772,6 +772,47 @@ class MatchFusionTest {
         assertFalse(softHit.strict)
         assertFalse(MatchFusion.allowsAutoSave(softHit))
 
+        val winter = IdentifiedCard(
+            game = Game.MTG,
+            name = "Winter, Team Player",
+            printedName = "Winter, Giocatore di Squadra",
+            setCode = "fra",
+            setName = "Forgotten Realms",
+            collectorNumber = "256",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+        )
+        val truncated = ParsedCardText(
+            nameGuess = "Winter, Giocatore di Squadr",
+            collectorNumber = "256",
+            setCode = "fra",
+        )
+        assertTrue(FrameNameGate.agrees(winter, truncated))
+        val truncatedHit = MatchFusion.evaluateAutoMatch(winter, truncated)
+        assertTrue(truncatedHit.accepted)
+        assertTrue(truncatedHit.strict)
+        assertTrue(truncatedHit.nameOk)
+        assertTrue(MatchFusion.allowsAutoSave(truncatedHit))
+
+        val fullTitle = truncated.copy(nameGuess = "Winter, Giocatore di Squadra")
+        val fullHit = MatchFusion.evaluateAutoMatch(winter, fullTitle)
+        assertTrue(fullHit.accepted)
+        assertTrue(fullHit.strict)
+        assertTrue(MatchFusion.allowsAutoSave(fullHit))
+
+        val otherWinter = winter.copy(
+            name = "Winter, Recluso Tormentato",
+            printedName = "Winter, Recluso Tormentato",
+            collectorNumber = "240",
+        )
+        val wrongWinter = MatchFusion.evaluateAutoMatch(
+            otherWinter,
+            truncated.copy(collectorNumber = "240"),
+        )
+        assertFalse(wrongWinter.accepted)
+        assertFalse(MatchFusion.allowsAutoSave(wrongWinter))
+
         val named = nameless.copy(nameGuess = "Kindred Judgment")
         val agreed = MatchFusion.evaluateAutoMatch(kindred, named)
         assertTrue(agreed.accepted)

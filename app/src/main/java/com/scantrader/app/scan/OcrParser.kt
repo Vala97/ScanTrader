@@ -955,44 +955,66 @@ object OcrParser {
     }
 
     /**
-     * Type line only. A real title may start with a word that is noise on
-     * another game (`Resistenza di Tam` is not the Pokémon weakness label).
+     * Words that make a type line (`Creatura`, `Terra Base`). A title may contain
+     * the same word (`Terra Promessa`, `La Creatura Perfetta`) and still be the name.
+     * Pokémon weakness labels (`resistenza`, `debolezza`) are not in this set.
      */
-    private val mtgTypeLineWords = setOf(
+    private val mtgTypeWords = setOf(
         "creature", "instant", "sorcery", "enchantment", "artifact", "land", "planeswalker",
-        "battle", "legendary", "basic", "token",
-        "creatura", "stregoneria", "incantesimo", "artefatto", "terra", "istantaneo", "leggendario",
+        "battle", "legendary", "basic", "token", "snow", "tribal", "kindred",
+        "creatura", "stregoneria", "incantesimo", "artefatto", "terra", "istantaneo",
+        "leggendario", "leggendaria", "base", "neve", "battaglia",
     )
 
-    /** Exact label, or a type line (`Creatura — Albero`). Not a longer title. */
-    private fun isMtgNonTitleLine(lower: String): Boolean {
-        if (lower in skipName) return true
-        return mtgTypeLineWords.any { word ->
-            lower.startsWith("$word ") ||
-                lower.startsWith("$word—") ||
-                lower.startsWith("$word —") ||
-                lower.startsWith("$word-")
-        }
+    /** A rules verb. One verb inside a title (`Destroy the Evidence`) is not a sentence. */
+    private val rulesVerb = Regex(
+        """(?i)\b(?:if|when|whenever|exile|discard|destroy|draw|return|choose|""" +
+            """scegli|metti|esilia|distruggi|quando|ogniqualvolta)\b""",
+    )
+
+    /** A rules noun that, next to a verb, marks a sentence rather than a title. */
+    private val rulesNoun = Regex(
+        """(?i)\b(?:target|creature|planeswalker|battlefield|permanent|spell|mana|""" +
+            """bersaglio|creatura|giocatore|avversario|magia|carta|danno)\b""",
+    )
+
+    /**
+     * `Scegli fino a una creatura bersaglio e metti un` is rules text.
+     * `Winter, Giocatore di Squadra` only shares a word with that text.
+     */
+    private fun isRulesSentence(line: String): Boolean {
+        val verbs = rulesVerb.findAll(line).count()
+        if (verbs == 0) return false
+        val nouns = rulesNoun.findAll(line).count()
+        return verbs >= 2 || (verbs >= 1 && nouns >= 1)
     }
 
-    /** MTG title lines — reject rules-text crumbs like `er. If` / `Exile target`. */
+    /** The line is a type line, not a card whose name happens to use a type word. */
+    private fun isMtgTypeLine(lower: String): Boolean {
+        val flat = lower.trim()
+        val words = flat.split(Regex("""\s+""")).filter { it.isNotBlank() }
+        if (words.isNotEmpty() && words.all { it in mtgTypeWords }) return true
+        val head = flat.split(Regex("""\s*[—–-]\s*"""), limit = 2).firstOrNull()?.trim().orEmpty()
+        if (head.isEmpty() || head == flat) return false
+        val headWords = head.split(Regex("""\s+""")).filter { it.isNotBlank() }
+        return headWords.isNotEmpty() && headWords.all { it in mtgTypeWords }
+    }
+
+    /**
+     * First real title in the strip. A line is dropped when it is a type line,
+     * a rules sentence, or a collector crumb — not because it contains a word
+     * that also appears in rules text.
+     */
     private fun extractMtgTitle(lines: List<String>): String? {
-        val noise = Regex(
-            """(?i)\b(?:if|when|whenever|exile|target|creature|planeswalker|battlefield|""" +
-                """return|under|control|mana|value|less|more|draw|discard|destroy|""" +
-                """permanent|spell|ability|wizards|mtgstory|beginning|end|step|phase|""" +
-                """scegli|bersaglio|metti|esilia|distruggi|quando|ogniqualvolta|""" +
-                """avversario|giocatore)\b""",
-        )
         val candidates = lines.filter { line ->
             val lower = line.lowercase().trim()
             val cleaned = cleanMtgNameGuess(line)
-            line.length in 3..48 &&
+            line.length in 3..60 &&
                 line.any { it.isLetter() } &&
-                !noise.containsMatchIn(line) &&
+                !isRulesSentence(line) &&
                 !lower.startsWith("er.") &&
                 !lower.startsWith("or ") &&
-                !isMtgNonTitleLine(lower) &&
+                !isMtgTypeLine(lower) &&
                 mtgBottomLine.find(line) == null &&
                 collectorFraction.find(line) == null &&
                 line.count { it.isLetter() } >= 3 &&

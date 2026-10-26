@@ -912,6 +912,59 @@ class OcrParserTest {
     }
 
     @Test
+    fun italianTitlesThatShareRulesWordsStayTitles() {
+        val bottom = "0256 • FRA • IT"
+        val rules = """
+            Convocazione (Le tue creature possono aiutarti
+            a lanciare questa magia. Ogni creatura che TAPpi
+            mentre lanci questa magia.)
+        """.trimIndent()
+        val titles = listOf(
+            "Winter, Giocatore di Squadra",
+            "Winter, Giocatore di Squadr",
+            "Bersaglio Facile",
+            "La Creatura Perfetta",
+            "Terra Promessa",
+            "Magia Inarrestabile",
+            "Resistenza di Tam",
+            "Danno Collaterale",
+            "La Carta Nascosta",
+        )
+        titles.forEach { title ->
+            val parsed = OcrParser.parse(
+                rawText = "$title\nCreatura Leggendaria — Guerriero\n$rules",
+                game = Game.MTG,
+                bottomPriorityText = bottom,
+                namePriorityText = title,
+            )
+            assertEquals(title, parsed.nameGuess)
+        }
+
+        val withTypeLine = OcrParser.parse(
+            rawText = rules,
+            game = Game.MTG,
+            bottomPriorityText = bottom,
+            namePriorityText = "Winter, Giocatore di Squadra\nCreatura Leggendaria — Guerriero Umano",
+        )
+        assertEquals("Winter, Giocatore di Squadra", withTypeLine.nameGuess)
+
+        val typeOnly = OcrParser.parse(
+            rawText = rules,
+            game = Game.MTG,
+            bottomPriorityText = bottom,
+            namePriorityText = "Creatura Leggendaria — Guerriero Umano",
+        )
+        assertNull(typeOnly.nameGuess)
+        val sorcery = OcrParser.parse(
+            rawText = rules,
+            game = Game.MTG,
+            bottomPriorityText = bottom,
+            namePriorityText = "Stregoneria",
+        )
+        assertNull(sorcery.nameGuess)
+    }
+
+    @Test
     fun adventureSplitAndPokemonNamesStayOnTheTitleStrip() {
         val adventure = OcrParser.parse(
             rawText = """

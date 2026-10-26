@@ -101,6 +101,7 @@ object FrameNameGate {
 
     /**
      * `Goblir` / `Goblin-town` against "Down, Down to Goblin-town".
+     * A truncated title token matches too (`Squadr` against `Squadra`).
      * A short rules fragment (`nchar`) does not match.
      */
     fun partialMtgTitle(cardName: String?, ocrName: String?): Boolean {
@@ -122,7 +123,8 @@ object FrameNameGate {
         if (left == right) return true
         val shorter = if (left.length <= right.length) left else right
         val longer = if (left.length <= right.length) right else left
-        if (shorter.length >= 5 && longer.contains(shorter)) return true
+        // `Squadr` is the tail of `Squadra`, not a different word.
+        if (shorter.length >= 4 && longer.startsWith(shorter)) return true
         return CardIdentity.similarity(left, right) >= 0.75
     }
 }
