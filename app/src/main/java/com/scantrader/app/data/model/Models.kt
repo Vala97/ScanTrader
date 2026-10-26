@@ -114,6 +114,17 @@ data class IdentifiedCard(
     /** Scryfall/TCGdex code of [printedName], when it was resolved (`it`, `ja`, …). */
     val printedLang: String? = null,
     /**
+     * Language of this catalog object (`en`, `it`, …). Distinct from [printedLang]:
+     * an English printing has no printed title but is still `en`.
+     */
+    val catalogLang: String? = null,
+    /**
+     * Finish / variant that is not already the collector number: Scryfall
+     * `finishes`, frame effects, and promo types (`nonfoil+foil`, `etched`,
+     * `frame:showcase`). Null when the catalog object did not say.
+     */
+    val finish: String? = null,
+    /**
      * English blueprint name for the CardTrader CSV (`Frogtosser Banneret`,
      * `Smitten Swordmaster // Curry Favor`). [name] stays the title shown in the app.
      */

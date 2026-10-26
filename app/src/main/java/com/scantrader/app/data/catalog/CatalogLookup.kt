@@ -35,6 +35,7 @@ class CatalogLookup(
         if (scryfall.coolingDown()) throw ScryfallBusyException()
         val setCandidates = OcrParser.setCodeCandidates(parsed.setCode)
             .filter { code -> code.any { it.isLetter() } && code.count { it.isDigit() } < 3 }
+            .filter { KnownSetCodes.isKnown(Game.MTG, it) }
             .take(2)
         val number = plausibleMtgCollector(parsed.collectorNumber)
         val nameAttempts = OcrParser.mtgNameAttempts(name)
@@ -273,7 +274,8 @@ class CatalogLookup(
         return left.isNotEmpty() && left == right
     }
 
-    private suspend fun lookupPokemon(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
+    private suspend fun lookupPokemon(parsedInput: ParsedCardText, name: String?): List<IdentifiedCard> {
+        val parsed = KnownSetCodes.scrub(Game.POKEMON, parsedInput)
         val number = OcrParser.collectorCandidates(parsed.collectorNumber).firstOrNull()
         val noisyName = OcrParser.looksLikeAbilityOrAttackName(name) ||
             (name != null && com.scantrader.app.data.catalog.CardIdentity.isStageNoise(name))
@@ -503,6 +505,8 @@ class CatalogLookup(
                 null
             },
             printedName = printedName?.takeIf { it.isNotBlank() },
+            catalogLang = lang?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() },
+            finish = com.scantrader.app.scan.CardFinish.from(finishes, frameEffects, promoTypes),
             ocrScore = ocrScore,
         )
 
@@ -516,6 +520,7 @@ class CatalogLookup(
             setName = set?.name.orEmpty(),
             collectorNumber = localId.ifBlank { id.substringAfter('-', "") },
             tcgdexId = id,
+            catalogLang = cardLang(this),
             imageUrl = image?.let { "$it/low.webp" },
             priceEur = formatEur(cm?.avg ?: cm?.trend),
             priceCurrency = if (cm?.avg != null || cm?.trend != null) "EUR" else null,

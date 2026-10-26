@@ -7,6 +7,7 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.vision.ImageFingerprint
 import com.scantrader.app.vision.MatchFusion
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class ScanSession {
     var game: Game = Game.MTG
@@ -21,7 +22,16 @@ class ScanSession {
     var targetCollectionId: Long? = null
     var ocrText: String = ""
     var parsed: ParsedCardText? = null
-    var candidates: List<IdentifiedCard> = emptyList()
+
+    /**
+     * Live list the confirm screen collects. [resetResults] clears it, so a lookup
+     * for the next card cannot keep showing the previous match.
+     */
+    val candidatesFlow = MutableStateFlow<List<IdentifiedCard>>(emptyList())
+    var candidates: List<IdentifiedCard>
+        get() = candidatesFlow.value
+        set(value) { candidatesFlow.value = value }
+
     var errorMessage: String? = null
     /** Gate for the top candidate of the last scan. Drives confirm auto-save. */
     var autoMatch: MatchFusion.AutoMatchDecision? = null

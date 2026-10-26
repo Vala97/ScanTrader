@@ -476,6 +476,67 @@ class CatalogLookupTest {
         assertTrue(hits.none { it.name.contains("Elrond") })
     }
 
+    @Test
+    fun unknownSetCodeIsNotQueried() = runBlocking {
+        val idCalls = mutableListOf<String>()
+        val queries = mutableListOf<String>()
+        val teoria = ScryfallCard(
+            id = "fra-34-it",
+            name = "Perfected Contemplation",
+            printedName = "Teoria Perfezionata",
+            set = "fra",
+            setName = "Final Fantasy",
+            collectorNumber = "34",
+            lang = "it",
+        )
+        val api = object : ScryfallApi {
+            override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard {
+                idCalls += "$set/$number"
+                throw notFound()
+            }
+
+            override suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard {
+                if (set == "fra" && number == "34" && lang == "en") {
+                    return teoria.copy(id = "fra-34", lang = "en", printedName = null, name = "Perfected Contemplation")
+                }
+                throw notFound()
+            }
+
+            override suspend fun cardById(id: String): ScryfallCard = error("unused")
+
+            override suspend fun search(query: String, unique: String): ScryfallSearchResponse {
+                queries += query
+                if (query.contains("set:div")) error("invalid set reached Scryfall: $query")
+                if (query.contains("cn:34") && query.contains("Teoria Perfezionata")) {
+                    return ScryfallSearchResponse(listOf(teoria))
+                }
+                throw notFound()
+            }
+
+            override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = throw notFound()
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard {
+                if (set.equals("div", ignoreCase = true)) error("invalid set reached Scryfall")
+                throw notFound()
+            }
+        }
+        val lookup = CatalogLookup(
+            ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L })),
+            emptyTcgdex(),
+        )
+        val hits = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Teoria Perfezionata", collectorNumber = "34", setCode = "div"),
+        )
+        assertEquals("Teoria Perfezionata", hits.single().name)
+        assertEquals("fra", hits.single().setCode)
+        assertEquals("34", hits.single().collectorNumber)
+        assertEquals("it", hits.single().catalogLang)
+        assertTrue(idCalls.none { it.startsWith("div/") })
+        assertTrue(queries.none { it.contains("set:div") })
+        assertTrue(queries.any { it.contains("cn:34") })
+    }
+
     private fun emptyTcgdex(): TcgdexApi = object : TcgdexApi {
         override suspend fun search(lang: String, name: String?, localId: String?): List<TcgdexCardBrief> =
             emptyList()

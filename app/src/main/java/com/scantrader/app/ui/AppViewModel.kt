@@ -18,8 +18,10 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.data.prefs.ScanDefaults
 import com.scantrader.app.network.scryfall.ScryfallBusyException
+import com.scantrader.app.data.catalog.KnownSetCodes
 import com.scantrader.app.scan.AcceptedCandidateLock
 import com.scantrader.app.scan.AutosaveDuplicateGuard
+import com.scantrader.app.scan.ConsecutivePrintingGuard
 import com.scantrader.app.scan.BackCamera
 import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.FrameGate
@@ -238,6 +240,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
      */
     private val acceptedLock = AcceptedCandidateLock(clearFramesNeeded = SAME_CARD_CLEAR_FRAMES)
     private val duplicateGuard = AutosaveDuplicateGuard()
+    private val consecutiveGuard = ConsecutivePrintingGuard()
+
+    /** Set when this frame's match is the printing we just accepted. */
+    @Volatile
+    private var repeatPrinting: Boolean = false
+
     private val lastAcceptedCardKey: String?
         get() = acceptedLock.key
 
@@ -596,6 +604,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             autoStatus.value = "Analisi in corso…"
             try {
                 autoHold = AutoHold.NONE
+                repeatPrinting = false
                 val matched = analyze(bitmap, requireMatch = true)
                 if (matched) {
                     autoHitPending.set(true)
@@ -604,12 +613,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 } else when (autoHold) {
                     AutoHold.BUSY -> autoStatus.value = "Scryfall occupato, riprovo…"
                     AutoHold.SPECULATIVE -> autoStatus.value = "Analisi in corso…"
-                    AutoHold.UNSTABLE -> autoStatus.value = if (duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
+                    AutoHold.UNSTABLE -> autoStatus.value = if (repeatPrinting || duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
                         "Metti un’altra carta…"
                     } else {
                         "Inquadra la carta…"
                     }
-                    AutoHold.NONE -> autoStatus.value = if (duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
+                    AutoHold.NONE -> autoStatus.value = if (repeatPrinting || duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
                         "Metti un’altra carta…"
                     } else {
                         "Inquadra meglio…"
@@ -1009,6 +1018,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "parsed name=${parsed.nameGuess} cn=${parsed.collectorNumber} " +
                     "set=${parsed.setCode} count=${parsed.setCardCount} ocrMs=$ocrMs",
             )
+            val knownSet = KnownSetCodes.scrub(game.value, parsed)
+            if (knownSet.setCode != parsed.setCode) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "set discarded (unknown set code) set=${parsed.setCode}",
+                )
+                parsed = knownSet
+            }
             if (game.value == Game.MTG) {
                 val scrubbed = rejectedSets.scrub(parsed)
                 if (scrubbed.setCode != parsed.setCode) {
@@ -1339,21 +1355,39 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 autoOk &&
                 topKey != null &&
                 !duplicateGuard.allowAutoSave(topKey)
-            val acceptAuto = autoOk && !blockedSameCard && !duplicateBlocked
+            val repeatCard = if (top != null && requireMatch && autoOk && consecutiveGuard.sameAsLast(top)) {
+                top
+            } else {
+                null
+            }
+            val consecutiveBlocked = repeatCard != null
+            val acceptAuto = autoOk && !blockedSameCard && !duplicateBlocked && !consecutiveBlocked
             if (duplicateBlocked) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "autosave: skipped (same card still in frame key=$topKey)",
                 )
             }
-            if (requireMatch && acceptAuto && topKey != null) {
-                acceptedLock.lock(
-                    key = topKey,
-                    collectorNumber = top.collectorNumber,
-                    name = FrameNameGate.confidentTitle(parsed.nameGuess)
-                        ?: matched.nameGuess
-                        ?: top.printedName
-                        ?: top.name,
+            if (repeatCard != null) {
+                repeatPrinting = true
+                com.scantrader.app.scan.ScanDebug.d(
+                    "autosave: skipped (same printing as last accepted " +
+                        "set=${repeatCard.setCode} cn=${repeatCard.collectorNumber} " +
+                        "lang=${repeatCard.catalogLang ?: repeatCard.printedLang} " +
+                        "finish=${repeatCard.finish ?: "standard"})",
                 )
+            }
+            if (requireMatch && acceptAuto) {
+                top?.let { acceptedCard ->
+                    acceptedLock.lock(
+                        key = autoCardKey(acceptedCard),
+                        collectorNumber = acceptedCard.collectorNumber,
+                        name = FrameNameGate.confidentTitle(parsed.nameGuess)
+                            ?: matched.nameGuess
+                            ?: acceptedCard.printedName
+                            ?: acceptedCard.name,
+                    )
+                    consecutiveGuard.noteAccepted(acceptedCard)
+                }
             }
             candidates.take(3).forEachIndexed { i, c ->
                 com.scantrader.app.scan.ScanDebug.d(
@@ -1380,8 +1414,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 catalogMs = catalogMs,
                 totalMs = System.currentTimeMillis() - t0,
             )
-            if (requireMatch && (duplicateBlocked || (candidates.isEmpty() && fused.isNotEmpty()))) {
+            if (requireMatch && (duplicateBlocked || consecutiveBlocked || (candidates.isEmpty() && fused.isNotEmpty()))) {
                 autoHold = AutoHold.UNSTABLE
+                // Do not publish this hit. resetResults already dropped the previous
+                // card, so the confirm screen cannot keep showing it as the new one.
                 return@withContext false
             }
             app.scanSession.ocrText = buildString {
@@ -1424,6 +1460,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private fun clearSameCardLock() {
         acceptedLock.clear()
         duplicateGuard.clear()
+        consecutiveGuard.clear()
         cancelSpeculative()
         catalogDebounce.reset()
         rejectedSets.clear()
@@ -1572,7 +1609,7 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
             SharingStarted.WhileSubscribed(5_000),
             ScanDefaults(CardLanguage.ENGLISH, CardCondition.NEAR_MINT),
         )
-    val candidates = MutableStateFlow(app.scanSession.candidates)
+    val candidates: StateFlow<List<IdentifiedCard>> = app.scanSession.candidatesFlow
     val searching = MutableStateFlow(false)
     val saving = MutableStateFlow(false)
     val parsed get() = app.scanSession.parsed
@@ -1591,7 +1628,7 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     fun reload() {
-        candidates.value = app.scanSession.candidates
+        app.scanSession.candidates = app.scanSession.candidates.toList()
     }
 
     fun search(query: String) {
@@ -1608,10 +1645,9 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
                     hits
                 }
                 val fused = com.scantrader.app.vision.MatchFusion.fuse(ranked, parsedText)
-                candidates.value = fused
                 app.scanSession.candidates = fused
             } catch (_: Throwable) {
-                candidates.value = emptyList()
+                app.scanSession.candidates = emptyList()
             } finally {
                 searching.value = false
             }

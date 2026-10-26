@@ -188,6 +188,7 @@ class GalleryMatcher(
             collectorNumber = card.localId.ifBlank { id.substringAfter('-', "") },
             tcgdexId = card.id,
             catalogName = card.name.takeIf { it.isNotBlank() },
+            catalogLang = "en",
             imageUrl = card.image?.let { "$it/low.webp" },
         )
         return stub.copy(
@@ -240,6 +241,8 @@ class GalleryMatcher(
             } else {
                 null
             },
+            catalogLang = lang?.trim()?.lowercase()?.takeIf { it.isNotBlank() },
+            finish = com.scantrader.app.scan.CardFinish.from(finishes, frameEffects, promoTypes),
             ocrScore = ocrScore,
             visualScore = visualScore,
         )
@@ -293,6 +296,8 @@ fun mergeHybridCandidates(
             printedLang = existing.printedLang ?: card.printedLang,
             catalogName = existing.catalogName ?: card.catalogName,
             catalogScryfallId = existing.catalogScryfallId ?: card.catalogScryfallId,
+            catalogLang = existing.catalogLang ?: card.catalogLang,
+            finish = existing.finish ?: card.finish,
             tcgdexId = existing.tcgdexId ?: card.tcgdexId,
             scryfallId = existing.scryfallId ?: card.scryfallId,
         )

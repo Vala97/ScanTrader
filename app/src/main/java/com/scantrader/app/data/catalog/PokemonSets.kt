@@ -83,6 +83,13 @@ object PokemonSets {
     fun isInternationalPrinted(code: String?): Boolean =
         code?.trim()?.lowercase() in internationalPrinted
 
+    /** TCGdex id this catalog already searches (`base1`, `sv10`, `30th`). */
+    fun isCatalogId(code: String?): Boolean {
+        val key = normalize(code) ?: return false
+        if (key in toTcgdex.values) return true
+        return byOfficialCount.values.any { key in it }
+    }
+
     /** TCGdex ids for a known printed code. Unknown codes are omitted. */
     fun recognizedIds(printedOrId: String?): List<String> {
         val key = normalize(printedOrId) ?: return emptyList()

@@ -166,6 +166,7 @@ fun ConfirmScreen(
 
     fun doSave() {
         val card = selected ?: return
+        if (viewModel.candidates.value.none { it.identityKey() == card.identityKey() }) return
         val target = collectionId ?: return
         cancelAutoSave(AutoSaveControl.Gesture.TAP)
         viewModel.save(card, target, quantity, language, condition, foil, onSaved)
@@ -208,16 +209,18 @@ fun ConfirmScreen(
             priced.priceCurrency != card.priceCurrency
         if (changed) selected = priced
     }
-    LaunchedEffect(candidates) {
-        val locked = viewModel.autoMatchCardKey
-        val preferred = candidates.firstOrNull { locked != null && it.identityKey() == locked }
-            ?: candidates.firstOrNull()
-        val lockedMismatch = locked != null &&
-            selected?.identityKey() != locked &&
-            preferred?.identityKey() == locked
-        if (selected == null || candidates.none { sameCard(it, selected) } || lockedMismatch) {
-            selected = preferred
-        }
+    val lockedNow = viewModel.autoMatchCardKey
+    val preferredNow = candidates.firstOrNull { lockedNow != null && it.identityKey() == lockedNow }
+        ?: candidates.firstOrNull()
+    val lockedMismatchNow = lockedNow != null &&
+        selected?.identityKey() != lockedNow &&
+        preferredNow?.identityKey() == lockedNow
+    // Follow the live list in this frame. A catalog lookup clears it, so the
+    // previous card cannot stay on screen until the next effect runs.
+    if ((selected == null || candidates.none { sameCard(it, selected) } || lockedMismatchNow) &&
+        selected != preferredNow
+    ) {
+        selected = preferredNow
     }
     LaunchedEffect(collections, viewModel.preferredCollectionId) {
         val preferred = viewModel.preferredCollectionId
@@ -252,7 +255,8 @@ fun ConfirmScreen(
             secondsLeftState.intValue = 0
             val card = selectedState.value
             val target = collectionIdState.value
-            if (card != null && card.identityKey() == key && target != null && !viewModel.saving.value) {
+            val stillShown = viewModel.candidates.value.any { it.identityKey() == key }
+            if (card != null && card.identityKey() == key && stillShown && target != null && !viewModel.saving.value) {
                 ScanDebug.d("autosave: saved")
                 viewModel.save(
                     card,
