@@ -21,6 +21,7 @@ import retrofit2.HttpException
 class CatalogLookup(
     private val scryfall: ScryfallClient,
     private val tcgdex: TcgdexApi,
+    private val localSets: LocalSetCatalog? = null,
 ) {
     suspend fun identify(game: Game, parsed: ParsedCardText, manualQuery: String? = null): List<IdentifiedCard> {
         val queryName = manualQuery?.trim()?.takeIf { it.isNotBlank() } ?: parsed.nameGuess
@@ -32,7 +33,6 @@ class CatalogLookup(
     }
 
     private suspend fun lookupMtg(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
-        if (scryfall.coolingDown()) throw ScryfallBusyException()
         val setCandidates = OcrParser.setCodeCandidates(parsed.setCode)
             .filter { code -> code.any { it.isLetter() } && code.count { it.isDigit() } < 3 }
             .filter { KnownSetCodes.isKnown(Game.MTG, it) }
@@ -40,7 +40,23 @@ class CatalogLookup(
         val number = plausibleMtgCollector(parsed.collectorNumber)
         val nameAttempts = OcrParser.mtgNameAttempts(name)
         if (nameAttempts.isEmpty() && number.isNullOrBlank()) return emptyList()
+        resolveMtgLocal(parsed, name, setCandidates, number, nameAttempts)?.let { hits ->
+            rememberSets(Game.MTG, hits)
+            return hits
+        }
+        if (scryfall.coolingDown()) throw ScryfallBusyException()
+        val hits = lookupMtgOnline(parsed, name, setCandidates, number, nameAttempts)
+        rememberSets(Game.MTG, hits)
+        return hits
+    }
 
+    private suspend fun lookupMtgOnline(
+        parsed: ParsedCardText,
+        name: String?,
+        setCandidates: List<String>,
+        number: String?,
+        nameAttempts: List<String>,
+    ): List<IdentifiedCard> {
         // Set + collector only when the returned title agrees with OCR.
         // hob/36 is Elrond when the card reads Ravening Warg — do not keep it.
         var preferNumber = number
@@ -66,6 +82,149 @@ class CatalogLookup(
             if (found.isNotEmpty()) return found
         }
         return emptyList()
+    }
+
+    /**
+     * Cached set index. Null means "not handled here" — the caller keeps the online path.
+     * A confident set+number or an exact title in a complete set is returned with the
+     * same scores as the Scryfall calls they replace. Fuzzy and stem stay online.
+     */
+    private fun resolveMtgLocal(
+        parsed: ParsedCardText,
+        name: String?,
+        setCandidates: List<String>,
+        number: String?,
+        nameAttempts: List<String>,
+    ): List<IdentifiedCard>? {
+        val local = localSets ?: return null
+        if (setCandidates.isEmpty()) return null
+        val started = System.currentTimeMillis()
+        val snapshots = ArrayList<MtgSetSnapshot>(setCandidates.size)
+        for (set in setCandidates) {
+            snapshots += local.mtgSnapshot(set) ?: return null
+        }
+        var preferNumber = number
+        if (!number.isNullOrBlank()) {
+            for (snap in snapshots) {
+                val card = snap.defaultPrint(number)
+                if (card == null) continue
+                if (mtgIdAgrees(card, name)) {
+                    local.logHit(snap.setCode, System.currentTimeMillis() - started)
+                    return listOf(card.asIdentifiedFromCache(snap.cards, 0.98f))
+                }
+                val localized = localizedFromCache(snap, card, name, parsed.printedLang)
+                if (localized != null) {
+                    local.logHit(snap.setCode, System.currentTimeMillis() - started)
+                    return listOf(localized)
+                }
+                preferNumber = null
+            }
+        }
+        for (searchName in nameAttempts) {
+            val found = nameFromCache(snapshots, searchName, preferNumber) ?: continue
+            local.logHit(found.setCode, System.currentTimeMillis() - started)
+            return listOf(found)
+        }
+        return null
+    }
+
+    private fun localizedFromCache(
+        snap: MtgSetSnapshot,
+        english: ScryfallCard,
+        ocrName: String?,
+        printedLang: String?,
+    ): IdentifiedCard? {
+        val title = OcrParser.cleanMtgNameGuess(ocrName) ?: return null
+        if (CardOrientation.implausibleTitle(title)) return null
+        if (FrameNameGate.confidentTitle(title) == null) return null
+        val langs = listOfNotNull(
+            printedLang?.takeIf { !it.equals("en", ignoreCase = true) },
+            "it",
+        ).map { it.lowercase(Locale.ROOT) }.distinct()
+        for (lang in langs) {
+            val local = snap.printsFor(english.collectorNumber).firstOrNull {
+                it.lang.equals(lang, ignoreCase = true)
+            } ?: continue
+            if (!mtgIdAgrees(local, title)) continue
+            val printed = local.localizedPrintedName()
+            return local.asIdentifiedFromCache(snap.cards, 0.98f).copy(
+                name = printed ?: local.name,
+                printedName = printed,
+                printedLang = lang,
+            )
+        }
+        return null
+    }
+
+    private fun nameFromCache(
+        snapshots: List<MtgSetSnapshot>,
+        searchName: String,
+        number: String?,
+    ): IdentifiedCard? {
+        if (snapshots.any { !it.complete }) return null
+        val safe = searchName.replace("\"", "").trim()
+        if (safe.isBlank()) return null
+        for (snap in snapshots) {
+            val hits = snap.cards.filter { card ->
+                (oracleEquals(card, safe) || printedEquals(card, safe)) && mtgIdAgrees(card, safe)
+            }
+            val picked = pickCachedName(hits, number) ?: continue
+            val printedOnly = printedEquals(picked, safe) && !oracleEquals(picked, safe)
+            val identified = picked.asIdentifiedFromCache(snap.cards, if (printedOnly) 0.88f else 0.96f)
+            if (!printedOnly) return identified
+            val printed = picked.localizedPrintedName()
+            return identified.copy(
+                name = printed ?: identified.name,
+                printedName = printed,
+                printedLang = picked.lang?.trim()?.lowercase(Locale.ROOT),
+            )
+        }
+        return null
+    }
+
+    private fun pickCachedName(hits: List<ScryfallCard>, number: String?): ScryfallCard? {
+        if (hits.isEmpty()) return null
+        val pool = if (number.isNullOrBlank()) {
+            val collectors = hits.map { it.collectorNumber.lowercase(Locale.ROOT) }.distinct()
+            if (collectors.size != 1) return null
+            hits
+        } else {
+            val numbered = hits.filter {
+                it.collectorNumber.equals(number, ignoreCase = true) || collectorEquals(it.collectorNumber, number)
+            }
+            if (numbered.isEmpty()) return null
+            numbered
+        }
+        return pool.firstOrNull { it.lang.isNullOrBlank() || it.lang.equals("en", ignoreCase = true) }
+            ?: pool.first()
+    }
+
+    private fun oracleEquals(card: ScryfallCard, query: String): Boolean {
+        if (card.name.equals(query, ignoreCase = true)) return true
+        return card.cardFaces.orEmpty().any { it.name?.equals(query, ignoreCase = true) == true }
+    }
+
+    private fun printedEquals(card: ScryfallCard, query: String): Boolean {
+        if (card.localizedPrintedName()?.equals(query, ignoreCase = true) == true) return true
+        return card.cardFaces.orEmpty().any { it.printedName?.equals(query, ignoreCase = true) == true }
+    }
+
+    private fun ScryfallCard.asIdentifiedFromCache(cards: List<ScryfallCard>, ocrScore: Float): IdentifiedCard {
+        val base = toIdentified(ocrScore)
+        val language = lang?.trim()?.lowercase(Locale.ROOT)
+        if (language.isNullOrEmpty() || language == "en") {
+            return base.copy(catalogName = name.takeIf { it.isNotBlank() } ?: base.catalogName)
+        }
+        val english = cards.firstOrNull { other ->
+            (other.lang.isNullOrBlank() || other.lang.equals("en", ignoreCase = true)) &&
+                other.set.equals(set, ignoreCase = true) &&
+                (other.collectorNumber.equals(collectorNumber, ignoreCase = true) ||
+                    collectorEquals(other.collectorNumber, collectorNumber))
+        }
+        return base.copy(
+            catalogName = english?.name?.takeIf { it.isNotBlank() } ?: base.catalogName,
+            catalogScryfallId = english?.id?.takeIf { it.isNotBlank() && it != id },
+        )
     }
 
     /**
@@ -284,6 +443,10 @@ class CatalogLookup(
         // A printed total is not a set. cn-only lookups need a resolved set id.
         val setKnown = PokemonSets.directIds(parsed.setCode, parsed.setCardCount).isNotEmpty()
         val langs = PokemonCatalog.languages(searchName, parsed.setCode)
+        resolvePokemonLocal(parsed, searchName, number, noisyName)?.let { hits ->
+            rememberSets(Game.POKEMON, hits)
+            return hits
+        }
         val cards = coroutineScope {
             langs.map { lang ->
                 async {
@@ -297,6 +460,63 @@ class CatalogLookup(
                 }
             }.awaitAll().flatten()
         }
+        val ranked = rankPokemon(cards, parsed, searchName, number, noisyName)
+        rememberSets(Game.POKEMON, ranked)
+        return ranked
+    }
+
+    /**
+     * Local Pokémon hit only when every set id the online lookup would try is cached.
+     * Numbered cards are scored with the same function. A miss falls through.
+     */
+    private fun resolvePokemonLocal(
+        parsed: ParsedCardText,
+        searchName: String?,
+        number: String?,
+        noisyName: Boolean,
+    ): List<IdentifiedCard>? {
+        val local = localSets ?: return null
+        val langs = PokemonCatalog.languages(searchName, parsed.setCode)
+        val setIds = langs.flatMap { resolvePokemonSetIds(it, parsed) }.distinct()
+        if (setIds.isEmpty()) return null
+        val started = System.currentTimeMillis()
+        val gathered = ArrayList<TcgdexCard>()
+        for (lang in langs) {
+            val ids = resolvePokemonSetIds(lang, parsed)
+            if (ids.isEmpty()) continue
+            for (id in ids) {
+                val snap = local.pokemonSnapshot(id, lang) ?: return null
+                gathered += if (number.isNullOrBlank()) {
+                    snap.cards
+                } else {
+                    snap.cards.filter { PokemonCatalog.numberMatches(number, it.localId) }
+                }
+            }
+        }
+        val pool = if (number.isNullOrBlank()) {
+            val named = gathered.filter { card ->
+                !searchName.isNullOrBlank() &&
+                    CardIdentity.normalizeName(card.name) == CardIdentity.normalizeName(searchName)
+            }
+            if (named.map { it.id }.distinct().size != 1) return null
+            named
+        } else {
+            if (gathered.isEmpty()) return null
+            gathered
+        }
+        val ranked = rankPokemon(pool, parsed, searchName, number, noisyName)
+        if (ranked.isEmpty()) return null
+        local.logHit(ranked.first().setCode, System.currentTimeMillis() - started)
+        return ranked
+    }
+
+    private fun rankPokemon(
+        cards: List<TcgdexCard>,
+        parsed: ParsedCardText,
+        searchName: String?,
+        number: String?,
+        noisyName: Boolean,
+    ): List<IdentifiedCard> {
         val scored = cards
             .distinctBy { "${it.image}-${it.id}" }
             .map { card ->
@@ -324,12 +544,34 @@ class CatalogLookup(
         // Drop obvious junk when OCR name is a real title (avoid Malamar from "mal di testa").
         // Skip this filter when name is ability noise — id match is enough.
         val filtered = if (!noisyName && !searchName.isNullOrBlank() && searchName.length >= 4) {
-            // A confident title must agree. An id hit for another species stays out.
             scored.filter { PokemonCatalog.nameMatches(it.name, searchName) }
         } else {
             scored
         }
         return filtered.take(12)
+    }
+
+    private fun rememberSets(game: Game, cards: List<IdentifiedCard>) {
+        val local = localSets ?: return
+        if (game == Game.MTG) {
+            cards.asSequence()
+                .map { it.setCode }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .take(3)
+                .forEach { local.prefetchMtg(it) }
+            return
+        }
+        cards.asSequence()
+            .filter { it.setCode.isNotBlank() }
+            .distinctBy { it.setCode to it.catalogLang }
+            .take(3)
+            .forEach { card -> local.prefetchPokemon(card.setCode, pokemonWarmLangs(card.catalogLang)) }
+    }
+
+    private fun pokemonWarmLangs(catalogLang: String?): List<String> = when (catalogLang?.lowercase(Locale.ROOT)) {
+        "ja", "zh-cn", "zh-tw" -> listOf(PokemonCatalog.JA, PokemonCatalog.ZH_TW, PokemonCatalog.ZH_CN)
+        else -> listOf(PokemonCatalog.EN, PokemonCatalog.IT)
     }
 
     private suspend fun searchPokemonLanguage(

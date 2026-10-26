@@ -24,6 +24,22 @@ interface TcgdexApi {
     ): TcgdexCard
 }
 
+/** One request returns every card in a set for that language (briefs, not full pricing). */
+interface TcgdexSetApi {
+    @GET("v2/{lang}/sets/{id}")
+    suspend fun set(
+        @Path("lang") lang: String,
+        @Path("id") id: String,
+    ): TcgdexSetDetails
+}
+
+data class TcgdexSetDetails(
+    val id: String = "",
+    val name: String = "",
+    val cardCount: TcgdexCardCount? = null,
+    val cards: List<TcgdexCardBrief> = emptyList(),
+)
+
 data class TcgdexCardBrief(
     val id: String,
     val localId: String = "",

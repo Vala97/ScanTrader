@@ -45,6 +45,22 @@ interface ScryfallApi {
     ): ScryfallCard
 }
 
+/** Paged set list. Separate from [ScryfallApi] so card lookups keep their own gate. */
+interface ScryfallSetApi {
+    @GET("cards/search")
+    suspend fun search(
+        @Query("q") query: String,
+        @Query("unique") unique: String = "prints",
+        @Query("include_multilingual") includeMultilingual: Boolean = true,
+        @Query("page") page: Int = 1,
+    ): ScryfallSetPage
+}
+
+data class ScryfallSetPage(
+    val data: List<ScryfallCard> = emptyList(),
+    @SerializedName("has_more") val hasMore: Boolean = false,
+)
+
 data class ScryfallSearchResponse(
     val data: List<ScryfallCard> = emptyList(),
 )
