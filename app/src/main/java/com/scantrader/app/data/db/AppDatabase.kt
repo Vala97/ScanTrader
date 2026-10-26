@@ -20,16 +20,17 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         /**
-         * Start versions Room may recreate when no migration path exists.
-         * 4 is absent: a missing or failed 4→5 upgrade must not wipe the file.
+         * Version 1 has no migration, so an ancient file may be recreated.
+         * Versions 2–5 are start or end versions of the migrations below. Room
+         * rejects a builder that also lists them here.
+         * Version 4 is absent: a missing 4→5 path cannot wipe the file. A
+         * migration that throws rolls back and leaves the previous file in place.
          */
-        val DESTRUCTIVE_FALLBACK_FROM: IntArray = intArrayOf(1, 2, 3)
+        val DESTRUCTIVE_FALLBACK_FROM: IntArray = intArrayOf(1)
 
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "scantrader.db")
                 .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
-                // Versions 1–3 may still be recreated when a path is missing.
-                // Version 4 must use MIGRATION_4_5. A failure there aborts and keeps the file.
                 .fallbackToDestructiveMigrationFrom(*DESTRUCTIVE_FALLBACK_FROM)
                 .build()
 

@@ -192,7 +192,9 @@ class StockMergeTest {
     @Test
     fun versionFourIsNotADestructiveFallback() {
         val versions = AppDatabase.DESTRUCTIVE_FALLBACK_FROM.toList()
-        assertEquals(listOf(1, 2, 3), versions)
+        assertEquals(listOf(1), versions)
+        assertFalse(versions.contains(2))
+        assertFalse(versions.contains(3))
         assertFalse(versions.contains(4))
         assertFalse(versions.contains(5))
     }
