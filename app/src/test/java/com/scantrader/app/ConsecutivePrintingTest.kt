@@ -59,6 +59,27 @@ class ConsecutivePrintingTest {
     }
 
     @Test
+    fun italianTitleOnTheEnglishPrintingIsNotTheEnglishCopy() {
+        val guard = ConsecutivePrintingGuard()
+        val italian = card("Blightsoil Druid", "mor", "59", "en").copy(
+            name = "Druido del Suolo Avvizzito",
+            printedLang = "it",
+            catalogName = "Blightsoil Druid",
+            scryfallId = "english-mor-59",
+        )
+        val english = card("Blightsoil Druid", "mor", "59", "en").copy(
+            catalogName = "Blightsoil Druid",
+            scryfallId = "english-mor-59",
+        )
+        assertFalse(guard.sameAsLast(italian))
+        guard.noteAccepted(italian)
+        assertTrue(guard.sameAsLast(italian.copy(name = "Blightsoil Druid")))
+        assertFalse(guard.sameAsLast(english))
+        guard.noteAccepted(english)
+        assertFalse(guard.sameAsLast(italian))
+    }
+
+    @Test
     fun finishTokenKeepsEtchedApartFromTheNormalPrinting() {
         assertEquals(
             "foil+nonfoil",

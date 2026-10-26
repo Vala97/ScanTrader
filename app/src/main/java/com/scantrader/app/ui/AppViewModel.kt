@@ -1346,7 +1346,18 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 stableTop.reset()
             }
             val autoOk = gate.accepted && top != null
-            val topKey = top?.let { autoCardKey(it) }
+            val ocrTitle = matched.nameGuess ?: parsed.nameGuess
+            val resolved = top?.let {
+                com.scantrader.app.data.catalog.CardLanguageDetector.resolveCopyLanguage(it, ocrTitle)
+            }
+            val copyTop = resolved?.card
+            if (resolved != null && resolved.detection.evidence.startsWith("title=")) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "${resolved.detection.logLine()} printed=${copyTop?.printedLang} " +
+                        "catalog=${copyTop?.catalogLang}",
+                )
+            }
+            val topKey = copyTop?.let { autoCardKey(it) }
             val blockedSameCard = requireMatch &&
                 autoOk &&
                 topKey != null &&
@@ -1355,8 +1366,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 autoOk &&
                 topKey != null &&
                 !duplicateGuard.allowAutoSave(topKey)
-            val repeatCard = if (top != null && requireMatch && autoOk && consecutiveGuard.sameAsLast(top)) {
-                top
+            val repeatCard = if (copyTop != null && requireMatch && autoOk && consecutiveGuard.sameAsLast(copyTop)) {
+                copyTop
             } else {
                 null
             }
@@ -1372,12 +1383,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 com.scantrader.app.scan.ScanDebug.d(
                     "autosave: skipped (same printing as last accepted " +
                         "set=${repeatCard.setCode} cn=${repeatCard.collectorNumber} " +
-                        "lang=${repeatCard.catalogLang ?: repeatCard.printedLang} " +
+                        "lang=${repeatCard.printedLang ?: repeatCard.catalogLang} " +
                         "finish=${repeatCard.finish ?: "standard"})",
                 )
             }
             if (requireMatch && acceptAuto) {
-                top?.let { acceptedCard ->
+                copyTop?.let { acceptedCard ->
                     acceptedLock.lock(
                         key = autoCardKey(acceptedCard),
                         collectorNumber = acceptedCard.collectorNumber,
@@ -1432,7 +1443,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             app.scanSession.parsed = matched
             app.scanSession.queryFingerprint = fingerprint
-            app.scanSession.candidates = candidates
+            app.scanSession.candidates = if (copyTop != null && copyTop != top) {
+                listOf(copyTop) + candidates.drop(1)
+            } else {
+                candidates
+            }
             app.scanSession.autoMatch = gate
             app.scanSession.autoMatchCardKey = topKey
             if (candidates.isEmpty() && text.isBlank() && bottomText.isBlank()) {
@@ -1783,8 +1798,10 @@ private suspend fun ScanTraderApp.rememberDetectedLanguage(card: IdentifiedCard?
         detection,
     )
     if (published.language != null && detection.language == null) {
-        val evidence = scanSession.languageEvidence?.takeIf { it.isNotBlank() } ?: "kept"
-        com.scantrader.app.scan.ScanDebug.d("lang: ${published.language.label} evidence=$evidence")
+        val evidence = scanSession.languageEvidence?.takeIf { it.isNotBlank() } ?: "none"
+        com.scantrader.app.scan.ScanDebug.d(
+            "lang: ${published.language.label} evidence=kept previous=$evidence",
+        )
         return published.language
     }
     com.scantrader.app.scan.ScanDebug.d(published.logLine())

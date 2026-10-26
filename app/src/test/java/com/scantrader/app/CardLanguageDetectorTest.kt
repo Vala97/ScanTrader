@@ -9,6 +9,82 @@ import org.junit.Test
 
 class CardLanguageDetectorTest {
     @Test
+    fun morningtideItalianTitleIsItalianWhenScryfallHasOnlyEnglish() {
+        val detection = CardLanguageDetector.explain(
+            ocrName = "Druido del Suolo Avvizzito",
+            englishName = "Blightsoil Druid",
+            printed = emptyMap(),
+        )
+        assertEquals(CardLanguage.ITALIAN, detection.language)
+        assertTrue(detection.evidence.contains("title=it"))
+        assertTrue(detection.evidence.contains("not-en"))
+        assertTrue(detection.evidence.contains("del"))
+        assertTrue(detection.evidence.contains("zz"))
+        assertEquals(
+            "lang: Italiano evidence=${detection.evidence}",
+            detection.logLine(),
+        )
+        val stamped = CardLanguageDetector.applyCopyLanguage(
+            com.scantrader.app.data.model.IdentifiedCard(
+                game = com.scantrader.app.data.model.Game.MTG,
+                name = "Blightsoil Druid",
+                setCode = "mor",
+                setName = "Morningtide",
+                collectorNumber = "59",
+                scryfallId = "english-mor-59",
+                catalogName = "Blightsoil Druid",
+                catalogLang = "en",
+                priceEur = "0.40",
+            ),
+            "Druido del Suolo Avvizzito",
+        )
+        assertEquals("it", stamped.printedLang)
+        assertEquals("Blightsoil Druid", stamped.catalogName)
+        assertEquals("Blightsoil Druid", stamped.name)
+        assertEquals("english-mor-59", stamped.scryfallId)
+        assertEquals("en", stamped.catalogLang)
+        assertEquals("0.40", stamped.priceEur)
+    }
+
+    @Test
+    fun delAloneDoesNotForceItalianAndDiacriticsStillCount() {
+        val onlyDel = CardLanguageDetector.explain(
+            ocrName = "Maestro del Sol",
+            englishName = "Sun Master",
+            printed = emptyMap(),
+        )
+        assertNull(onlyDel.language)
+
+        val french = CardLanguageDetector.explain(
+            ocrName = "Épée du Feu",
+            englishName = "Fire Sword",
+            printed = emptyMap(),
+        )
+        assertEquals(CardLanguage.FRENCH, french.language)
+        assertTrue(french.evidence.contains("title=fr"))
+        assertTrue(french.evidence.contains("accent"))
+
+        val spanish = CardLanguageDetector.explain(
+            ocrName = "Montaña del Sol",
+            englishName = "Sun Mountain",
+            printed = emptyMap(),
+        )
+        assertEquals(CardLanguage.SPANISH, spanish.language)
+        assertTrue(spanish.evidence.contains("title=es"))
+    }
+
+    @Test
+    fun englishOracleTitleStaysEnglish() {
+        val detection = CardLanguageDetector.explain(
+            ocrName = "Blightsoil Druid",
+            englishName = "Blightsoil Druid",
+            printed = emptyMap(),
+        )
+        assertEquals(CardLanguage.ENGLISH, detection.language)
+        assertTrue(detection.evidence.contains("name=en"))
+    }
+
+    @Test
     fun italianPrintedNameBeatsTheEnglishOracleName() {
         val detected = CardLanguageDetector.detect(
             ocrName = "Ostinazione Mortale",

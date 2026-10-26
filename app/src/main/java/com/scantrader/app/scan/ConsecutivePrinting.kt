@@ -20,8 +20,10 @@ data class PrintingIdentity(
         fun from(card: IdentifiedCard): PrintingIdentity? {
             val set = card.setCode.trim().lowercase().takeIf { it.isNotBlank() } ?: return null
             val cn = CardIdentity.normCollector(card.collectorNumber) ?: return null
-            val language = card.catalogLang?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-                ?: card.printedLang?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+            // The title printed on the card wins over the catalog object's language.
+            // Morningtide's Italian copy is still the English Scryfall printing.
+            val language = card.printedLang?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                ?: card.catalogLang?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
                 ?: return null
             val variant = card.finish?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "standard"
             return PrintingIdentity(card.game, set, cn, language, variant)
