@@ -59,7 +59,7 @@ fun AboutScreen(onBack: () -> Unit) {
             ElevatedCard(shape = MaterialTheme.shapes.extraLarge) {
                 Column(Modifier.padding(20.dp)) {
                     Image(
-                        painter = painterResource(R.mipmap.ic_launcher_foreground),
+                        painter = painterResource(R.drawable.app_logo),
                         contentDescription = "Icona di ScanTrader",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
