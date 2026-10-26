@@ -491,7 +491,8 @@ class OcrParserTest {
             bottomPriorityText = bottom,
             namePriorityText = "Pioppo Tagliaerhacce",
         )
-        assertEquals("Pioppo Tagliaerbacce", parsed.nameGuess)
+        // The rules line spells Tagliaerbacce. The title strip wins; body text is not the name.
+        assertEquals("Pioppo Tagliaerhacce", parsed.nameGuess)
         assertEquals("83", parsed.collectorNumber)
         assertNull(parsed.setCode)
         assertTrue(!OcrParser.identityReadyForFastPath(parsed))
@@ -870,5 +871,91 @@ class OcrParserTest {
         assertEquals("105", separated.collectorNumber)
         assertEquals("eld", separated.setCode)
         assertEquals("it", separated.printedLang)
+    }
+
+    @Test
+    fun nameComesFromTheTitleStripNotTheRulesText() {
+        val full = """
+            Resistenza di Tam
+            Stregoneria
+            Scegli fino a una creatura bersaglio e metti un
+            segnalino +1/+1 su di essa.
+        """.trimIndent()
+        val bottom = "0153 • FRA • IT"
+        val parsed = OcrParser.parse(
+            rawText = full,
+            game = Game.MTG,
+            bottomPriorityText = bottom,
+            namePriorityText = "Resistenza di Tam",
+        )
+        assertEquals("Resistenza di Tam", parsed.nameGuess)
+        assertEquals("153", parsed.collectorNumber)
+        assertEquals("fra", parsed.setCode)
+
+        val unreadTitle = OcrParser.parse(
+            rawText = full,
+            game = Game.MTG,
+            bottomPriorityText = bottom,
+            namePriorityText = "",
+        )
+        assertNull(unreadTitle.nameGuess)
+        assertEquals("153", unreadTitle.collectorNumber)
+        assertEquals("fra", unreadTitle.setCode)
+
+        val rulesLine = OcrParser.parse(
+            rawText = full,
+            game = Game.MTG,
+            bottomPriorityText = bottom,
+            namePriorityText = "Scegli fino a una creatura bersaglio e metti un",
+        )
+        assertNull(rulesLine.nameGuess)
+    }
+
+    @Test
+    fun adventureSplitAndPokemonNamesStayOnTheTitleStrip() {
+        val adventure = OcrParser.parse(
+            rawText = """
+                Conquistare il Favore
+                Istantaneo
+                Scarta una carta
+            """.trimIndent(),
+            game = Game.MTG,
+            bottomPriorityText = "105 • ELD • IT",
+            namePriorityText = "Maestro di Spada Invaghi",
+        )
+        assertEquals("Maestro di Spada Invaghi", adventure.nameGuess)
+
+        val split = OcrParser.parse(
+            rawText = "Deal 2 damage.\nDraw a card.",
+            game = Game.MTG,
+            bottomPriorityText = "128 • GRN • EN",
+            namePriorityText = "Fire\nIce",
+        )
+        assertEquals("Fire", split.nameGuess)
+
+        val dfc = OcrParser.parse(
+            rawText = "Reflection of Kiki-Jiki\nEnchantment",
+            game = Game.MTG,
+            bottomPriorityText = "058 • NEO • EN",
+            namePriorityText = "Fable of the Mirror-Breaker",
+        )
+        assertEquals("Fable of the Mirror-Breaker", dfc.nameGuess)
+
+        val pokemon = OcrParser.parse(
+            rawText = "Morso\nIl Pokémon attivo avversario è ora paralizzato.",
+            game = Game.POKEMON,
+            bottomPriorityText = "ASC 106/217",
+            namePriorityText = "Noibat",
+        )
+        assertEquals("Noibat", pokemon.nameGuess)
+
+        val unreadPokemon = OcrParser.parse(
+            rawText = "Noibat\nMorso\nparalizzato",
+            game = Game.POKEMON,
+            bottomPriorityText = "ASC 106/217",
+            namePriorityText = "",
+        )
+        assertNull(unreadPokemon.nameGuess)
+        assertEquals("106", unreadPokemon.collectorNumber)
     }
 }

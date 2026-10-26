@@ -741,6 +741,45 @@ class MatchFusionTest {
         )
     }
 
+    @Test
+    fun setAndCollectorWithoutAReadNameDoesNotAutoAccept() {
+        // Local index and online set+number hits share this score. fra 13 with no
+        // title must not autosave Kindred Judgment (cn was a truncated 130).
+        val nameless = ParsedCardText(
+            nameGuess = null,
+            collectorNumber = "13",
+            setCode = "fra",
+        )
+        val kindred = IdentifiedCard(
+            game = Game.MTG,
+            name = "Kindred Judgment",
+            setCode = "fra",
+            setName = "Forgotten Realms",
+            collectorNumber = "13",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+        )
+        val strictHit = MatchFusion.evaluateAutoMatch(kindred, nameless)
+        assertFalse(strictHit.accepted)
+        assertFalse(strictHit.strict)
+        assertFalse(strictHit.nameOk)
+        assertFalse(MatchFusion.allowsAutoSave(strictHit))
+
+        val online = kindred.copy(ocrScore = 0.78f, matchConfidence = 0.68f)
+        val softHit = MatchFusion.evaluateAutoMatch(online, nameless)
+        assertFalse(softHit.accepted)
+        assertFalse(softHit.strict)
+        assertFalse(MatchFusion.allowsAutoSave(softHit))
+
+        val named = nameless.copy(nameGuess = "Kindred Judgment")
+        val agreed = MatchFusion.evaluateAutoMatch(kindred, named)
+        assertTrue(agreed.accepted)
+        assertTrue(agreed.strict)
+        assertTrue(agreed.nameOk)
+        assertTrue(MatchFusion.allowsAutoSave(agreed))
+    }
+
     private fun card(
         name: String,
         set: String,

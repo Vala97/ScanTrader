@@ -192,9 +192,10 @@ object OcrParser {
     )
 
     /**
-     * @param rawText full-card OCR (fallback / context)
+     * @param rawText full-card OCR. Number/set context only when [namePriorityText] is set.
      * @param bottomPriorityText bottom strips — source of truth for number + set
-     * @param namePriorityText top name strip — preferred source for nameGuess (Pokémon)
+     * @param namePriorityText title strip. Non-null means the name comes only from
+     * this text (blank → no name). Null keeps the single-blob parse used by tests.
      */
     fun parse(
         rawText: String,
@@ -205,19 +206,13 @@ object OcrParser {
         if (game == Game.MTG) {
             return parseMtg(rawText, bottomPriorityText, namePriorityText)
         }
-        // Pokémon: bottom first, full card as weak fallback.
+        // Pokémon: bottom first, full card as weak fallback for the collector only.
         val bottomNormalized = bottomPriorityText
         val identityMerged = listOfNotNull(bottomPriorityText, rawText)
             .filter { it.isNotBlank() }
             .joinToString("\n")
         return ParsedCardText(
-            nameGuess = extractName(
-                primaryText = namePriorityText?.takeIf { it.isNotBlank() } ?: rawText,
-                fallbackText = rawText.takeIf {
-                    !namePriorityText.isNullOrBlank() && namePriorityText != rawText
-                },
-                game = game,
-            ),
+            nameGuess = nameFromRegions(rawText, namePriorityText, game),
             collectorNumber = extractCollector(identityMerged, bottomNormalized, game),
             setCode = extractSet(identityMerged, bottomNormalized, game),
             setCardCount = extractPokemonSetCount(identityMerged, bottomPriorityText, game),
@@ -243,16 +238,7 @@ object OcrParser {
             bottom ?: rawText
         }
         val prepared = prepareMtgBottom(source)
-        val name = correctMtgName(
-            extractName(
-                primaryText = namePriorityText?.takeIf { it.isNotBlank() } ?: rawText,
-                fallbackText = rawText.takeIf {
-                    !namePriorityText.isNullOrBlank() && namePriorityText != rawText
-                },
-                game = Game.MTG,
-            ),
-            rawText,
-        )
+        val name = nameFromRegions(rawText, namePriorityText, Game.MTG)
         val glued = gluedMtgSetLang(prepared)
         val hit = bestMtgBottom(prepared)
         if (hit != null) {
@@ -422,9 +408,9 @@ object OcrParser {
     }
 
     /**
-     * Top-line OCR often misses one letter (`Tagliaerhacce`) while the rules text
-     * has the real title. Prefer that window when the edit distance is small.
-     * Distance 0 keeps the top line (fast path, where the full text is the title).
+     * The name is the title strip. A caller that still passes one OCR blob (no
+     * separate title) may repair a one-letter miss from that same blob.
+     * Distance 0 keeps the line as read. Rules and flavor text are not a source.
      */
     fun correctMtgName(name: String?, fullText: String): String? {
         val base = cleanMtgNameGuess(name) ?: return null
@@ -694,6 +680,29 @@ object OcrParser {
         return null
     }
 
+    /**
+     * A separate title strip is the only name source. An empty or unreadable
+     * strip stays nameless: rules, flavor, and the rest of the card are not a title.
+     * Without a strip, the single OCR blob is still parsed from the top.
+     */
+    private fun nameFromRegions(
+        rawText: String,
+        namePriorityText: String?,
+        game: Game,
+    ): String? {
+        val titleOnly = namePriorityText != null
+        val extracted = extractName(
+            primaryText = if (titleOnly) namePriorityText.orEmpty() else rawText,
+            fallbackText = null,
+            game = game,
+        )
+        return if (game == Game.MTG) {
+            correctMtgName(extracted, if (titleOnly) namePriorityText.orEmpty() else rawText)
+        } else {
+            extracted
+        }
+    }
+
     private fun extractName(
         primaryText: String,
         fallbackText: String?,
@@ -945,12 +954,35 @@ object OcrParser {
         return !Regex("""[A-Za-z]{4,}""").containsMatchIn(rest)
     }
 
+    /**
+     * Type line only. A real title may start with a word that is noise on
+     * another game (`Resistenza di Tam` is not the Pokémon weakness label).
+     */
+    private val mtgTypeLineWords = setOf(
+        "creature", "instant", "sorcery", "enchantment", "artifact", "land", "planeswalker",
+        "battle", "legendary", "basic", "token",
+        "creatura", "stregoneria", "incantesimo", "artefatto", "terra", "istantaneo", "leggendario",
+    )
+
+    /** Exact label, or a type line (`Creatura — Albero`). Not a longer title. */
+    private fun isMtgNonTitleLine(lower: String): Boolean {
+        if (lower in skipName) return true
+        return mtgTypeLineWords.any { word ->
+            lower.startsWith("$word ") ||
+                lower.startsWith("$word—") ||
+                lower.startsWith("$word —") ||
+                lower.startsWith("$word-")
+        }
+    }
+
     /** MTG title lines — reject rules-text crumbs like `er. If` / `Exile target`. */
     private fun extractMtgTitle(lines: List<String>): String? {
         val noise = Regex(
             """(?i)\b(?:if|when|whenever|exile|target|creature|planeswalker|battlefield|""" +
                 """return|under|control|mana|value|less|more|draw|discard|destroy|""" +
-                """permanent|spell|ability|wizards|mtgstory|beginning|end|step|phase)\b""",
+                """permanent|spell|ability|wizards|mtgstory|beginning|end|step|phase|""" +
+                """scegli|bersaglio|metti|esilia|distruggi|quando|ogniqualvolta|""" +
+                """avversario|giocatore)\b""",
         )
         val candidates = lines.filter { line ->
             val lower = line.lowercase().trim()
@@ -960,7 +992,7 @@ object OcrParser {
                 !noise.containsMatchIn(line) &&
                 !lower.startsWith("er.") &&
                 !lower.startsWith("or ") &&
-                skipName.none { lower == it || lower.startsWith("$it ") } &&
+                !isMtgNonTitleLine(lower) &&
                 mtgBottomLine.find(line) == null &&
                 collectorFraction.find(line) == null &&
                 line.count { it.isLetter() } >= 3 &&

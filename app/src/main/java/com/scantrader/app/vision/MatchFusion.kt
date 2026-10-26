@@ -213,12 +213,17 @@ object MatchFusion {
             ?: return AutoMatchDecision(accepted = false, reason = "noConf")
         val visual = top.visualScore
         val ocr = top.ocrScore ?: 0f
+        // A missing title is not agreement. Set+number alone must not autosave.
+        val readAgrees = parsed?.let { frame ->
+            FrameNameGate.confidentTitle(frame.nameGuess) != null &&
+                FrameNameGate.agrees(top, frame)
+        } == true
         val strictOk = confidence >= AUTO_CONFIDENCE_MIN && when {
             visual != null && visual >= 0.88f && confidence >= 0.78f -> true
             visual != null && visual >= 0.80f && confidence >= AUTO_CONFIDENCE_MIN -> true
             visual != null && visual >= 0.72f && ocr >= 0.80f -> true
-            // Exact set+number OCR without usable art still allowed if very strong.
-            visual == null && ocr >= 0.95f && confidence >= 0.90f -> true
+            // Exact set+number without art, only when the title we read agrees.
+            visual == null && ocr >= 0.95f && confidence >= 0.90f && readAgrees -> true
             else -> false
         }
         if (strictOk) {
@@ -239,7 +244,7 @@ object MatchFusion {
                 accepted = true,
                 strict = true,
                 reason = "strict",
-                nameOk = parsed != null && FrameNameGate.agrees(top, parsed),
+                nameOk = readAgrees,
                 confidence = confidence,
             )
         }
@@ -441,14 +446,16 @@ object MatchFusion {
             // Exact localized title, gallery agrees, and there is only one printing.
             // A missing or wrong collector must not hold the card back.
             exact && galleryHit && onlyPrinting -> "name+gallery"
-            cnOk && setOk && ocr >= 0.55f -> "cn+set"
-            cnOk && setOk && confidence >= 0.70f -> "cn+set"
+            // Set+number (local index or online) needs a title that agrees.
+            // Without one, keep scanning instead of accepting the printing.
+            nameOk && cnOk && setOk && ocr >= 0.55f -> "cn+set"
+            nameOk && cnOk && setOk && confidence >= 0.70f -> "cn+set"
             nameOk && cnOk && setOk -> "name+cn+set"
             nameOk && cnOk && ocr >= 0.65f -> "name+cn"
             nameOk && setOk && confidence >= 0.58f && ocr >= 0.50f -> "name+set"
             nameOk && ocr >= 0.80f && confidence >= 0.55f -> "nameExact"
             nameOk && (visual ?: 0f) >= 0.55f && confidence >= 0.55f && ocr >= 0.50f -> "name+visual"
-            cnOk && setOk && (visual ?: 0f) >= 0.60f && ocr >= 0.50f -> "cn+set+visual"
+            nameOk && cnOk && setOk && (visual ?: 0f) >= 0.60f && ocr >= 0.50f -> "cn+set+visual"
             else -> "softFail"
         }
         val accepted = softReason != "softFail"

@@ -738,7 +738,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         rawText = top,
                         game = game.value,
                         bottomPriorityText = bottomSoFar(),
-                        namePriorityText = top.takeIf { it.isNotBlank() },
+                        namePriorityText = top,
                     )
                     // Auto: enhanced corners only while the collector is still missing.
                     if (autoMode && quick.collectorNumber.isNullOrBlank()) {
@@ -786,7 +786,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             rawText = top,
                             game = game.value,
                             bottomPriorityText = bottomSoFar(),
-                            namePriorityText = top.takeIf { it.isNotBlank() },
+                            namePriorityText = top,
                         )
                     }
                     // Collector line in the title band: rotation put the card's bottom at the top.
@@ -819,7 +819,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             rawText = newTop,
                             game = game.value,
                             bottomPriorityText = newBl,
-                            namePriorityText = newTop.takeIf { it.isNotBlank() },
+                            namePriorityText = newTop,
                         )
                         if (com.scantrader.app.scan.CardOrientation.rotatedPassWins(
                                 quick.nameGuess,
@@ -1010,7 +1010,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 rawText = text,
                 game = game.value,
                 bottomPriorityText = bottomText,
-                namePriorityText = topNameText.takeIf { it.isNotBlank() },
+                namePriorityText = topNameText,
             )
             com.scantrader.app.scan.ScanDebug.d(
                 "OCR fullChars=${text.length} topChars=${topNameText.length} " +
