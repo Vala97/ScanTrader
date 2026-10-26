@@ -41,6 +41,8 @@ adb push pokemon.stcat /sdcard/Download/pokemon.stcat
 
 Then import from Downloads in the app. Requires the Milo model (`milo.onnx`) — install the MTG neural pack once, or the import flow will download the model if missing.
 
+To ship the same file inside the app, rename it (suggested id `pokemon-en`) and follow [`tools/publish_stcat`](../publish_stcat/README.md). That script only writes `stcat-index.json` and prints the `gh` commands; it does not upload.
+
 ## License
 
 Milo ONNX is **AGPL-3.0** ([HanClinto/milo](https://huggingface.co/HanClinto/milo)). The generated gallery is a derived index; keep the pack opt-in like the MTG gallery. Card images come from TCGdex CDN for build only — do not redistribute the image cache.

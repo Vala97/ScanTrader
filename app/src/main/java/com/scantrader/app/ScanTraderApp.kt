@@ -29,6 +29,7 @@ import com.scantrader.app.scan.CardOcr
 import com.scantrader.app.scan.ScanSession
 import com.scantrader.app.vision.GalleryMatcher
 import com.scantrader.app.vision.NeuralPackManager
+import com.scantrader.app.vision.PokemonCatalogController
 import com.scantrader.app.vision.VisualRanker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +50,8 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
     lateinit var visualRanker: VisualRanker
         private set
     lateinit var neuralPack: NeuralPackManager
+        private set
+    lateinit var pokemonCatalogs: PokemonCatalogController
         private set
     lateinit var galleryMatcher: GalleryMatcher
         private set
@@ -105,6 +108,12 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         ocr = CardOcr()
         visualRanker = VisualRanker(http)
         neuralPack = NeuralPackManager(this, http)
+        pokemonCatalogs = PokemonCatalogController(
+            visionDir = File(filesDir, "vision"),
+            baseHttp = http,
+            scope = appScope,
+            onChanged = { neuralPack.ensurePokemonReady() },
+        )
         galleryMatcher = GalleryMatcher(neuralPack, scryfall, tcgdex)
         appScope.launch {
             val defaults = prefs.currentDefaults()

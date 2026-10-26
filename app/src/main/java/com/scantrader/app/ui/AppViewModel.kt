@@ -62,14 +62,18 @@ class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
             ScanDefaults(CardLanguage.ENGLISH, CardCondition.NEAR_MINT),
         )
     val neuralPackState = app.neuralPack.mtgState
+    val pokemonCatalogs = app.pokemonCatalogs.ui
 
     init {
         viewModelScope.launch { app.repository.ensureDefaultCollection() }
         viewModelScope.launch {
-            if (!app.prefs.currentDefaults().neuralPromptShown && app.neuralPack.isInstalled(Game.MTG)) {
+            val magicReady = app.neuralPack.isInstalled(Game.MTG)
+            val pokemonReady = app.pokemonCatalogs.hasLocalCatalog()
+            if (!app.prefs.currentDefaults().neuralPromptShown && magicReady && pokemonReady) {
                 app.prefs.setNeuralPromptShown(true)
             }
         }
+        app.pokemonCatalogs.refresh()
     }
 
     fun create(name: String) {
@@ -91,7 +95,10 @@ class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
     fun downloadNeuralPack() {
         viewModelScope.launch {
             app.prefs.setNeuralPromptShown(true)
-            app.neuralPack.downloadAndInstall()
+            if (!app.neuralPack.isInstalled(Game.MTG)) {
+                launch { app.neuralPack.downloadAndInstall() }
+            }
+            app.pokemonCatalogs.downloadMissing()
         }
     }
 
@@ -172,6 +179,7 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         )
     val neuralPackState = app.neuralPack.mtgState
     val pokemonPackState = app.neuralPack.pokemonState
+    val pokemonCatalogs = app.pokemonCatalogs.ui
     val lensOptions = MutableStateFlow(CameraDevices.lensOptions(app))
 
     fun refreshLenses() {
@@ -246,6 +254,18 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun loadNeuralPack() {
         viewModelScope.launch { app.neuralPack.ensureLoaded() }
+    }
+
+    fun refreshPokemonCatalogs() {
+        app.pokemonCatalogs.refresh()
+    }
+
+    fun downloadPokemonCatalog(id: String) {
+        app.pokemonCatalogs.download(id)
+    }
+
+    fun deletePokemonCatalog(id: String) {
+        app.pokemonCatalogs.delete(id)
     }
 
     companion object {

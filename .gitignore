@@ -19,3 +19,4 @@ keystore.properties
 tools/build_pokemon_stcat/cache/
 tools/build_pokemon_stcat/*.stcat
 tools/build_pokemon_stcat/*.stcat.part
+tools/publish_stcat/stcat-index.json

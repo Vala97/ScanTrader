@@ -53,6 +53,9 @@ import com.scantrader.app.ui.displayLabel
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
 import com.scantrader.app.vision.NeuralPackManager
 import com.scantrader.app.vision.NeuralPackState
+import com.scantrader.app.vision.PokemonCatalogController
+import com.scantrader.app.vision.PokemonCatalogIndex
+import com.scantrader.app.vision.PokemonCatalogRow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,6 +67,7 @@ fun SettingsScreen(
     val tokenSaved by viewModel.hasCardTraderToken.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
     val pokemonNeural by viewModel.pokemonPackState.collectAsStateWithLifecycle()
+    val pokemonCatalogs by viewModel.pokemonCatalogs.collectAsStateWithLifecycle()
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
 
     val importPokemon = rememberLauncherForActivityResult(
@@ -75,6 +79,7 @@ fun SettingsScreen(
     LaunchedEffect(Unit) {
         viewModel.loadNeuralPack()
         viewModel.refreshLenses()
+        viewModel.refreshPokemonCatalogs()
     }
 
     Scaffold(
@@ -280,6 +285,43 @@ fun SettingsScreen(
                 }
             }
 
+            SettingsSection(title = "Cataloghi Pokémon") {
+                Text(
+                    "Scarica i cataloghi dal rilascio GitHub. Restano sul telefono e funzionano offline. " +
+                        "L’importazione manuale di un .stcat resta in Riconoscimento Pokémon.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (pokemonCatalogs.checking) {
+                    Text("Controllo elenco…", style = MaterialTheme.typography.bodyMedium)
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                pokemonCatalogs.message?.let { banner ->
+                    Text(
+                        banner,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (banner == PokemonCatalogController.OFFLINE) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+                pokemonCatalogs.rows.forEach { row ->
+                    PokemonCatalogRowCard(
+                        row = row,
+                        onDownload = { viewModel.downloadPokemonCatalog(row.id) },
+                        onDelete = { viewModel.deletePokemonCatalog(row.id) },
+                    )
+                }
+                TextButton(
+                    onClick = viewModel::refreshPokemonCatalogs,
+                    enabled = !pokemonCatalogs.checking,
+                ) {
+                    Text("Controlla aggiornamenti")
+                }
+            }
+
             Text(
                 "Il CSV include il prezzo in centesimi (price_cents). Su CardTrader carica un file per gioco e scegli aggiungi allo stock.",
                 style = MaterialTheme.typography.bodySmall,
@@ -328,6 +370,76 @@ private fun CardTraderTokenField(
             TextButton(onClick = onClear) { Text("Rimuovi") }
         }
     }
+}
+
+@Composable
+private fun PokemonCatalogRowCard(
+    row: PokemonCatalogRow,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(row.name, style = MaterialTheme.typography.titleSmall)
+        val detail = catalogDetail(row)
+        if (detail.isNotEmpty()) {
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        val status = when {
+            row.downloading -> "Download in corso"
+            row.updateAvailable -> "Aggiornamento disponibile"
+            row.installed -> "Installato"
+            else -> "Non installato"
+        }
+        Text(status, style = MaterialTheme.typography.bodyMedium)
+        row.error?.let { error ->
+            Text(
+                error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (row.downloading) {
+            LinearProgressIndicator(
+                progress = { row.progress },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val canDownload = row.remoteVersion != null || row.remoteSize != null || !row.installed
+            if (!row.installed && canDownload) {
+                Button(onClick = onDownload, enabled = !row.downloading) { Text("Scarica") }
+            } else if (row.updateAvailable) {
+                Button(onClick = onDownload, enabled = !row.downloading) { Text("Aggiorna") }
+            }
+            if (row.installed) {
+                OutlinedButton(onClick = onDelete, enabled = !row.downloading) { Text("Elimina") }
+            }
+        }
+    }
+}
+
+private fun catalogDetail(row: PokemonCatalogRow): String {
+    val version = when {
+        row.updateAvailable && !row.installedVersion.isNullOrBlank() && !row.remoteVersion.isNullOrBlank() ->
+            "versione ${row.installedVersion} → ${row.remoteVersion}"
+        row.installed && !row.installedVersion.isNullOrBlank() -> "versione ${row.installedVersion}"
+        !row.remoteVersion.isNullOrBlank() -> "versione ${row.remoteVersion}"
+        else -> null
+    }
+    val bytes = when {
+        row.updateAvailable -> row.remoteSize ?: row.installedSize
+        row.installed -> row.installedSize ?: row.remoteSize
+        else -> row.remoteSize ?: row.installedSize
+    }
+    val size = bytes?.takeIf { it > 0L }?.let { PokemonCatalogIndex.formatBytes(it) }
+    return listOfNotNull(version, size).joinToString(" · ")
 }
 
 @Composable

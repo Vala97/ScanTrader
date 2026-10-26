@@ -61,11 +61,16 @@ fun HomeScreen(
     val collections by viewModel.collections.collectAsStateWithLifecycle()
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
+    val catalogs by viewModel.pokemonCatalogs.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<CollectionWithCount?>(null) }
     var renameError by remember { mutableStateOf<String?>(null) }
-    val showNeuralPrompt = NeuralPackPrompt.shouldShow(defaults.neuralPromptShown, neural)
+    val showNeuralPrompt = NeuralPackPrompt.shouldShow(
+        defaults.neuralPromptShown,
+        neural,
+        catalogs.anyInstalled,
+    )
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -217,13 +222,8 @@ fun HomeScreen(
         AlertDialog(
             onDismissRequest = viewModel::dismissNeuralPrompt,
             shape = RoundedCornerShape(28.dp),
-            title = { Text("Riconoscimento Magic") },
-            text = {
-                Text(
-                    "Per riconoscere meglio le carte Magic puoi scaricare il pack neurale aggiuntivo. " +
-                        "Resta sul telefono e funziona offline. Puoi scaricarlo anche dopo da Impostazioni.",
-                )
-            },
+            title = { Text(NeuralPackPrompt.TITLE) },
+            text = { Text(NeuralPackPrompt.body(catalogs.promptCatalogs)) },
             confirmButton = {
                 TextButton(onClick = viewModel::downloadNeuralPack) { Text("Scarica") }
             },
