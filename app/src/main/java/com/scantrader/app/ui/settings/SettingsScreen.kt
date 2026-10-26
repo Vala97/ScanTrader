@@ -127,8 +127,8 @@ fun SettingsScreen(
                     },
                 )
                 Text(
-                    "In auto-scan, se il riconoscimento supera la soglia forte (74%) e non tocchi la carta, " +
-                        "salva in collezione dopo N secondi. I match deboli restano in conferma.",
+                    "In auto-scan, se il riconoscimento supera la soglia scelta in Impostazioni scan " +
+                        "e non tocchi la carta, salva in collezione dopo N secondi. Sotto la soglia resta in conferma.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -148,6 +148,24 @@ fun SettingsScreen(
                     Switch(
                         checked = defaults.detectCardLanguage,
                         onCheckedChange = viewModel::setDetectCardLanguage,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Mostra informazioni aggiuntive (debug)")
+                        Text(
+                            "In conferma mostra il banner «Conferma a mano» e la percentuale di riconoscimento.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = defaults.showDebugInfo,
+                        onCheckedChange = viewModel::setShowDebugInfo,
                     )
                 }
                 CardTraderTokenField(

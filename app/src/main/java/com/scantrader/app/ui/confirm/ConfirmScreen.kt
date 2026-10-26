@@ -126,9 +126,10 @@ fun ConfirmScreen(
     val gatedKey = viewModel.autoMatchCardKey
     val selectedKey = selected?.identityKey()
     val selectedMatchesGate = gatedKey == null || selectedKey == null || gatedKey == selectedKey
+    val minConfidence = defaults.autoSaveConfidencePercent / 100f
     val autoSaveOffered = viewModel.fromAutoScan &&
         defaults.autoSaveWaitSeconds > 0 &&
-        MatchFusion.allowsAutoSave(autoMatch)
+        MatchFusion.allowsAutoSave(autoMatch, minConfidence)
     autoSaveOfferedState.value = autoSaveOffered
     val saveLabels = AutoSaveControl.present(
         offered = autoSaveOffered,
@@ -139,12 +140,16 @@ fun ConfirmScreen(
     )
     val autoSaveArmed = saveLabels.armed
     val matchNote = autoMatch?.let { decision ->
-        MatchFusion.confirmMatchNote(
-            decision = decision,
-            fromAutoScan = viewModel.fromAutoScan,
-            autoSaveWaitSeconds = defaults.autoSaveWaitSeconds,
-            selectedMatchesGate = selectedMatchesGate,
-            autoSaveCancelled = autoSaveCancelled,
+        MatchFusion.confirmNoteForDisplay(
+            MatchFusion.confirmMatchNote(
+                decision = decision,
+                fromAutoScan = viewModel.fromAutoScan,
+                autoSaveWaitSeconds = defaults.autoSaveWaitSeconds,
+                selectedMatchesGate = selectedMatchesGate,
+                autoSaveCancelled = autoSaveCancelled,
+                minConfidence = minConfidence,
+            ),
+            showDebug = defaults.showDebugInfo,
         )
     }
 
@@ -376,14 +381,16 @@ fun ConfirmScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        current.confidenceLabel()?.let { pct ->
-                            val visual = current.visualScore?.let { v -> " · arte ${(v * 100).toInt()}%" }.orEmpty()
-                            Text(
-                                "Match $pct$visual",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.tertiary,
-                                fontWeight = FontWeight.Medium,
-                            )
+                        if (defaults.showDebugInfo) {
+                            current.confidenceLabel()?.let { pct ->
+                                val visual = current.visualScore?.let { v -> " · arte ${(v * 100).toInt()}%" }.orEmpty()
+                                Text(
+                                    "Match $pct$visual",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
                         }
                         Text(
                             text = priceLine?.let { "Prezzo medio: $it" } ?: "Prezzo medio: n/d",
@@ -561,12 +568,14 @@ fun ConfirmScreen(
                                     fontWeight = FontWeight.Medium,
                                 )
                             }
-                            card.confidenceLabel()?.let { pct ->
-                                Text(
-                                    "Match $pct",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.tertiary,
-                                )
+                            if (defaults.showDebugInfo) {
+                                card.confidenceLabel()?.let { pct ->
+                                    Text(
+                                        "Match $pct",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                    )
+                                }
                             }
                         }
                     }

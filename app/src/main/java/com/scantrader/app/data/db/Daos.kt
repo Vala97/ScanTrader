@@ -35,6 +35,12 @@ interface CollectionDao {
 
     @Query("DELETE FROM collections WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("UPDATE collections SET name = :name WHERE id = :id")
+    suspend fun rename(id: Long, name: String)
+
+    @Query("SELECT id FROM collections WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name)) LIMIT 1")
+    suspend fun idWithName(name: String): Long?
 }
 
 @Dao

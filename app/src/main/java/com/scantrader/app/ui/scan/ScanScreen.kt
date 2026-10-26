@@ -149,7 +149,7 @@ fun ScanScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val processing by viewModel.processing.collectAsStateWithLifecycle()
     val game by viewModel.game.collectAsStateWithLifecycle()
-    val session by viewModel.sessionMode.collectAsStateWithLifecycle()
+    val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val autoScan by viewModel.autoScan.collectAsStateWithLifecycle()
     val autoStatus by viewModel.autoStatus.collectAsStateWithLifecycle()
     val mtgPack by viewModel.mtgPackState.collectAsStateWithLifecycle()
@@ -545,7 +545,7 @@ fun ScanScreen(
                 }
                 Column(Modifier.weight(1f)) {
                     Text(
-                        if (session) "Scan sessione" else "Scan carta",
+                        "Scan carta",
                         color = FrameAccent,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 18.sp,
@@ -750,26 +750,21 @@ fun ScanScreen(
                                 )
                             }
 
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                ModeToggleCard(
-                                    title = "Sessione",
-                                    subtitle = "Più carte di fila",
-                                    checked = session,
-                                    onCheckedChange = viewModel::setSession,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                ModeToggleCard(
-                                    title = "Auto-scan",
-                                    subtitle = "Senza scatto",
-                                    checked = autoScan,
-                                    icon = Icons.Filled.CenterFocusStrong,
-                                    onCheckedChange = {
-                                        navigated.set(false)
-                                        viewModel.setAutoScan(it)
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
+                            ModeToggleCard(
+                                title = "Auto-scan",
+                                subtitle = "Senza scatto",
+                                checked = autoScan,
+                                icon = Icons.Filled.CenterFocusStrong,
+                                onCheckedChange = {
+                                    navigated.set(false)
+                                    viewModel.setAutoScan(it)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            ConfidenceSlider(
+                                percent = defaults.autoSaveConfidencePercent,
+                                onChange = viewModel::setAutoSaveConfidencePercent,
+                            )
                         }
                     }
                 }
@@ -922,6 +917,48 @@ private fun GameSegmentedControl(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ConfidenceSlider(
+    percent: Int,
+    onChange: (Int) -> Unit,
+) {
+    val safe = percent.coerceIn(
+        com.scantrader.app.data.prefs.AUTO_SAVE_CONFIDENCE_RANGE.first,
+        com.scantrader.app.data.prefs.AUTO_SAVE_CONFIDENCE_RANGE.last,
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("Soglia auto-salvataggio", color = FrameAccent, fontSize = 14.sp)
+            Text(
+                "$safe%",
+                color = Gold,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+            )
+        }
+        Slider(
+            value = safe.toFloat(),
+            onValueChange = { onChange(it.roundToInt()) },
+            valueRange = 50f..99f,
+            steps = 48,
+            colors = SliderDefaults.colors(
+                thumbColor = Gold,
+                activeTrackColor = Gold,
+                inactiveTrackColor = FrameAccent.copy(alpha = 0.25f),
+            ),
+        )
+        Text(
+            "Sotto la soglia la carta resta in conferma. Nome, set e stampa restano controllati.",
+            color = FrameAccent.copy(alpha = 0.65f),
+            fontSize = 11.sp,
+        )
     }
 }
 

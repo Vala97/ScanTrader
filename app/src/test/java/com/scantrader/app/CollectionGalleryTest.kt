@@ -66,6 +66,8 @@ class CollectionGalleryTest {
         )
         assertEquals(BigDecimal("4.00"), collectionPrice(foil))
         assertEquals(BigDecimal("1.25"), collectionPrice(pokemon))
+        assertEquals(BigDecimal("1.10"), collectionPrice(foil.copy(manualPriceEur = "1.10")))
+        assertEquals(BigDecimal("2.00"), collectionPrice(pokemon.copy(manualPriceEur = "2.00")))
     }
 
     private fun card(

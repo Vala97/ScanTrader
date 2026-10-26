@@ -4,6 +4,7 @@ import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
 import com.scantrader.app.data.db.AppDatabase
 import com.scantrader.app.data.db.CardEntryEntity
+import com.scantrader.app.data.db.CardPrice
 import com.scantrader.app.data.db.CollectionEntity
 import com.scantrader.app.data.db.StockKey
 import com.scantrader.app.data.db.StockMerge
@@ -13,6 +14,8 @@ import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.scan.CardFinish
+
+enum class RenameCollection { Saved, Empty, Duplicate }
 
 class CardRepository(private val db: AppDatabase) {
     fun collections() = db.collections().observeCollections()
@@ -28,6 +31,20 @@ class CardRepository(private val db: AppDatabase) {
 
     suspend fun createCollection(name: String): Long =
         db.collections().insert(CollectionEntity(name = name.trim().ifBlank { "Nuova collezione" }))
+
+    /**
+     * Changes only the collection name. Cards stay on the same id.
+     * A blank name is refused. Another collection with the same name, ignoring
+     * case and surrounding spaces, is refused.
+     */
+    suspend fun renameCollection(id: Long, name: String): RenameCollection {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return RenameCollection.Empty
+        val owner = db.collections().idWithName(trimmed)
+        if (owner != null && owner != id) return RenameCollection.Duplicate
+        db.collections().rename(id, trimmed)
+        return RenameCollection.Saved
+    }
 
     suspend fun deleteCollection(id: Long) {
         db.collections().deleteById(id)
@@ -118,6 +135,29 @@ class CardRepository(private val db: AppDatabase) {
 
     suspend fun updateFoil(entry: CardEntryEntity, foil: Boolean) {
         updateTraits(entry, entry.quantity, entry.language, entry.condition, foil)
+    }
+
+    /**
+     * Stores a typed euro price, or clears it when [raw] is null so the automatic
+     * amount is used again. Pokémon rows keep foil prices empty.
+     * Returns false when [raw] is not a positive amount.
+     */
+    suspend fun setManualPrice(entry: CardEntryEntity, raw: String?): Boolean {
+        val manual = if (raw == null) {
+            null
+        } else {
+            CardPrice.parseManual(raw) ?: return false
+        }
+        val pokemon = entry.game == Game.POKEMON
+        db.cards().update(
+            entry.copy(
+                manualPriceEur = manual,
+                foil = entry.foil && !pokemon,
+                priceEurFoil = if (pokemon) null else entry.priceEurFoil,
+                priceUsdFoil = if (pokemon) null else entry.priceUsdFoil,
+            ).stamped(),
+        )
+        return true
     }
 
     /**

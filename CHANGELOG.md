@@ -5,7 +5,15 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Aggiunto
+- Una collezione si rinomina dalla home (pressione lunga o matita) e dalla sua schermata. Le carte restano collegate: cambia solo il nome. Un nome vuoto o già usato da un’altra collezione non viene salvato.
+- In Impostazioni scan, «Soglia auto-salvataggio» va dal 50% al 99% (predefinito 74%). Sotto la soglia la carta resta in conferma. Restano le regole di prima: il nome viene solo dal titolo, un set e un numero senza nome non si salvano da soli, la stessa stampa non passa due volte di fila e i codici set sconosciuti si scartano.
+- In Impostazioni generali, «Mostra informazioni aggiuntive (debug)» è spento. Il banner «Conferma a mano» e la percentuale di match compaiono solo se è acceso. Il salvataggio automatico resta visibile.
+- Nella scheda carta si può scrivere un prezzo. Quel prezzo sostituisce quello automatico, anche nel CSV CardTrader, finché non si tocca «Ripristina prezzo automatico». Il Pokémon non ha un prezzo foil.
+- Al primo avvio un dialogo propone di scaricare il pack neurale Magic («Scarica» / «Non ora»). Compare una sola volta. Il download resta in Impostazioni.
+
 ### Modificato
+- Dalle impostazioni di scan è sparita l’opzione «Sessione». Lo scan resta quello di una carta alla volta.
 - Icona dell’app: medaglione blu e oro (cristallo, teschio, due uccelli e i simboli elementali) al posto del robot. Icone legacy e adattiva, con il disegno nel 66% centrale così la maschera non taglia il medaglione, fondo `#233154` (bordi dell’immagine) e strato monocromatico. In **Informazioni** si vede la nuova icona. L’originale è in `docs/branding/app_logo.jpg`.
 - README allineato allo stato attuale: pack neurali, auto-scan con conferma, nomi in altre lingue, lettura del codice set, niente prezzo foil per Pokémon, CSV con nome inglese e `scryfall_id` inglese (va riesportato dopo l’aggiornamento), AGP 8.13.2 / Gradle 8.13 / JDK 17, nuova icona.
 

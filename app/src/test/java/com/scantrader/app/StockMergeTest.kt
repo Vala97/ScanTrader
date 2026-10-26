@@ -197,6 +197,17 @@ class StockMergeTest {
         assertFalse(versions.contains(3))
         assertFalse(versions.contains(4))
         assertFalse(versions.contains(5))
+        assertFalse(versions.contains(6))
+    }
+
+    @Test
+    fun aNewerScanKeepsAnOlderManualPrice() {
+        val older = row(id = 1, createdAt = 1, priceEur = "1.00", scryfallId = "lea-161")
+            .copy(manualPriceEur = "3.50")
+        val newer = row(id = 2, createdAt = 5, priceEur = "1.40", scryfallId = "lea-161")
+        val merged = StockMerge.merge(listOf(older, newer))
+        assertEquals("1.40", merged.priceEur)
+        assertEquals("3.50", merged.manualPriceEur)
     }
 }
 

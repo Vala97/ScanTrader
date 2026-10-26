@@ -26,10 +26,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,11 +62,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.scantrader.app.data.catalog.ListingAverage
+import com.scantrader.app.data.db.CardPrice
 import com.scantrader.app.data.db.CardEntryEntity
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
+import com.scantrader.app.data.repo.RenameCollection
 import com.scantrader.app.ui.CollectionViewModel
+import com.scantrader.app.ui.home.RenameCollectionDialog
 import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
@@ -84,6 +89,8 @@ fun CollectionScreen(
     val title = collection?.name ?: "Collezione"
     var sortMenu by rememberSaveable { mutableStateOf(false) }
     var editingId by remember { mutableStateOf<Long?>(null) }
+    var renaming by rememberSaveable { mutableStateOf(false) }
+    var renameError by remember { mutableStateOf<String?>(null) }
     val sections = remember(cards, sort) { collectionSections(cards, sort) }
     val editing = cards.firstOrNull { it.id == editingId }
 
@@ -99,6 +106,12 @@ fun CollectionScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        renameError = null
+                        renaming = true
+                    }, enabled = collection != null) {
+                        Icon(Icons.Default.Edit, contentDescription = "Rinomina")
+                    }
                     Box {
                         IconButton(onClick = { sortMenu = true }) {
                             Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Ordina")
@@ -194,12 +207,38 @@ fun CollectionScreen(
                 onCondition = { viewModel.setCondition(editing, it) },
                 onLanguage = { viewModel.setLanguage(editing, it) },
                 onFoil = { viewModel.setFoil(editing, it) },
+                onManualPrice = { raw, onDone -> viewModel.setManualPrice(editing, raw, onDone) },
+                onRestorePrice = { viewModel.setManualPrice(editing, null) },
                 onDelete = {
                     viewModel.delete(editing)
                     editingId = null
                 },
             )
         }
+    }
+
+    if (renaming && collection != null) {
+        RenameCollectionDialog(
+            initialName = collection?.name.orEmpty(),
+            error = renameError,
+            onDismiss = {
+                renaming = false
+                renameError = null
+            },
+            onConfirm = { name ->
+                viewModel.rename(name) { result ->
+                    when (result) {
+                        RenameCollection.Saved -> {
+                            renaming = false
+                            renameError = null
+                        }
+                        RenameCollection.Empty -> renameError = "Inserisci un nome."
+                        RenameCollection.Duplicate ->
+                            renameError = "Esiste già una collezione con questo nome."
+                    }
+                }
+            },
+        )
     }
 }
 
@@ -311,6 +350,10 @@ private fun GalleryTile(
 }
 
 private fun tilePrice(card: CardEntryEntity): String? {
+    val manual = card.manualPriceEur?.takeIf { it.isNotBlank() }
+    if (manual != null) {
+        return ListingAverage.display(eur = manual, eurFoil = null, source = "Manuale", foil = false)
+    }
     val pokemon = card.game == Game.POKEMON
     return ListingAverage.display(
         eur = card.priceEur,
@@ -327,12 +370,20 @@ private fun CardEditSheet(
     onCondition: (CardCondition) -> Unit,
     onLanguage: (CardLanguage) -> Unit,
     onFoil: (Boolean) -> Unit,
+    onManualPrice: (String, (Boolean) -> Unit) -> Unit,
+    onRestorePrice: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val condition = CardCondition.entries.firstOrNull { it.csvValue == card.condition }
         ?: CardCondition.NEAR_MINT
     val language = CardLanguage.entries.firstOrNull { it.csvValue == card.language }
         ?: CardLanguage.ENGLISH
+    val automatic = CardPrice.automaticRaw(card)
+    var priceText by remember(card.id, card.manualPriceEur, automatic) {
+        mutableStateOf(card.manualPriceEur ?: automatic.orEmpty())
+    }
+    var priceError by remember(card.id) { mutableStateOf<String?>(null) }
+    val pokemon = card.game == Game.POKEMON
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -391,7 +442,7 @@ private fun CardEditSheet(
             onSelect = onLanguage,
             labelOf = { it.label },
         )
-        if (card.game != Game.POKEMON) {
+        if (!pokemon) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -399,6 +450,40 @@ private fun CardEditSheet(
             ) {
                 Text("Foil")
                 Switch(checked = card.foil, onCheckedChange = onFoil)
+            }
+        }
+        OutlinedTextField(
+            value = priceText,
+            onValueChange = {
+                priceText = it
+                priceError = null
+            },
+            label = { Text(if (!pokemon && card.foil) "Prezzo foil (EUR)" else "Prezzo (EUR)") },
+            singleLine = true,
+            isError = priceError != null,
+            supportingText = {
+                val hint = when {
+                    priceError != null -> priceError
+                    card.manualPriceEur != null -> "Prezzo manuale. L’automatico resta ${automatic ?: "n/d"}."
+                    else -> "Prezzo automatico. Un valore qui lo sostituisce anche nell’export."
+                }
+                Text(hint.orEmpty())
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        TextButton(
+            onClick = {
+                onManualPrice(priceText) { saved ->
+                    priceError = if (saved) null else "Inserisci un prezzo maggiore di zero."
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Salva prezzo")
+        }
+        if (card.manualPriceEur != null) {
+            TextButton(onClick = onRestorePrice, modifier = Modifier.fillMaxWidth()) {
+                Text("Ripristina prezzo automatico")
             }
         }
         TextButton(

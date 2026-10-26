@@ -1,6 +1,7 @@
 package com.scantrader.app.ui.home
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -16,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,10 +43,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.scantrader.app.data.db.CollectionWithCount
+import com.scantrader.app.data.repo.RenameCollection
 import com.scantrader.app.ui.HomeViewModel
+import com.scantrader.app.ui.NeuralPackPrompt
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
@@ -54,8 +59,13 @@ fun HomeScreen(
     onAbout: () -> Unit,
 ) {
     val collections by viewModel.collections.collectAsStateWithLifecycle()
+    val defaults by viewModel.defaults.collectAsStateWithLifecycle()
+    val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
+    var renaming by remember { mutableStateOf<CollectionWithCount?>(null) }
+    var renameError by remember { mutableStateOf<String?>(null) }
+    val showNeuralPrompt = NeuralPackPrompt.shouldShow(defaults.neuralPromptShown, neural)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -112,8 +122,14 @@ fun HomeScreen(
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { onOpenCollection(collection.id) }
-                                .padding(horizontal = 18.dp, vertical = 16.dp),
+                                .combinedClickable(
+                                    onClick = { onOpenCollection(collection.id) },
+                                    onLongClick = {
+                                        renameError = null
+                                        renaming = collection
+                                    },
+                                )
+                                .padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
@@ -124,6 +140,12 @@ fun HomeScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                            }
+                            IconButton(onClick = {
+                                renameError = null
+                                renaming = collection
+                            }) {
+                                Icon(Icons.Default.Edit, contentDescription = "Rinomina")
                             }
                             IconButton(onClick = { viewModel.delete(collection.id) }) {
                                 Icon(
@@ -166,4 +188,87 @@ fun HomeScreen(
             },
         )
     }
+
+    renaming?.let { collection ->
+        RenameCollectionDialog(
+            initialName = collection.name,
+            error = renameError,
+            onDismiss = {
+                renaming = null
+                renameError = null
+            },
+            onConfirm = { name ->
+                viewModel.rename(collection.id, name) { result ->
+                    when (result) {
+                        RenameCollection.Saved -> {
+                            renaming = null
+                            renameError = null
+                        }
+                        RenameCollection.Empty -> renameError = "Inserisci un nome."
+                        RenameCollection.Duplicate ->
+                            renameError = "Esiste già una collezione con questo nome."
+                    }
+                }
+            },
+        )
+    }
+
+    if (showNeuralPrompt) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissNeuralPrompt,
+            shape = RoundedCornerShape(28.dp),
+            title = { Text("Riconoscimento Magic") },
+            text = {
+                Text(
+                    "Per riconoscere meglio le carte Magic puoi scaricare il pack neurale aggiuntivo. " +
+                        "Resta sul telefono e funziona offline. Puoi scaricarlo anche dopo da Impostazioni.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::downloadNeuralPack) { Text("Scarica") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissNeuralPrompt) { Text("Non ora") }
+            },
+        )
+    }
+}
+
+@Composable
+fun RenameCollectionDialog(
+    initialName: String,
+    error: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(28.dp),
+        title = { Text("Rinomina collezione") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nome") },
+                    singleLine = true,
+                    isError = error != null,
+                )
+                if (error != null) {
+                    Text(
+                        error,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name) }) { Text("Salva") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Annulla") }
+        },
+    )
 }

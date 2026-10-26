@@ -1,6 +1,7 @@
 package com.scantrader.app
 
 import com.scantrader.app.data.db.CardEntryEntity
+import com.scantrader.app.data.db.CardPrice
 import com.scantrader.app.data.export.CardTraderCsv
 import com.scantrader.app.data.model.Game
 import org.junit.Assert.assertEquals
@@ -165,6 +166,21 @@ class CardTraderCsvTest {
         assertFalse(namedCsv.contains("Kilowattrel di Kissara"))
         val mtg = mtgEntry(foil = true, priceEur = "1.25", priceEurFoil = "9.99")
         assertEquals("999", CardTraderCsv.exportPriceCents(mtg))
+    }
+
+    @Test
+    fun manualPriceReplacesTheAutomaticExportAndPokemonStillIgnoresFoil() {
+        val mtg = mtgEntry(foil = true, priceEur = "1.25", priceEurFoil = "9.99")
+            .copy(manualPriceEur = "3.50")
+        assertEquals("350", CardTraderCsv.exportPriceCents(mtg))
+        assertEquals("999", CardTraderCsv.exportPriceCents(mtg.copy(manualPriceEur = null)))
+        val pokemon = pokemonEntry(foil = true, priceEur = "1.25", priceEurFoil = "9.99")
+            .copy(manualPriceEur = "2.00")
+        assertEquals("200", CardTraderCsv.exportPriceCents(pokemon))
+        assertEquals("125", CardTraderCsv.exportPriceCents(pokemon.copy(manualPriceEur = null)))
+        assertNull(CardPrice.parseManual(" "))
+        assertNull(CardPrice.parseManual("0"))
+        assertEquals("1.50", CardPrice.parseManual("1,5"))
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.scantrader.app.scan.FrameNameGate
 import com.scantrader.app.vision.MatchFusion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -819,6 +820,64 @@ class MatchFusionTest {
         assertTrue(agreed.strict)
         assertTrue(agreed.nameOk)
         assertTrue(MatchFusion.allowsAutoSave(agreed))
+    }
+
+    @Test
+    fun confidenceSliderGatesAutosaveAndKeepsTheSafetyRules() {
+        val strong = MatchFusion.score(
+            card("Lightning Bolt", "m21", "161", ocr = 0.90f, visual = 0.88f),
+            parsed,
+        )
+        val strict = MatchFusion.evaluateAutoMatch(strong, parsed)
+        assertTrue(strict.strict)
+        assertTrue(MatchFusion.allowsAutoSave(strict, 0.74f))
+        assertFalse(MatchFusion.allowsAutoSave(strict, 0.99f))
+        val raised = MatchFusion.confirmMatchNote(
+            decision = strict,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+            minConfidence = 0.99f,
+        )
+        assertEquals("Conferma a mano", raised.title)
+        assertNull(MatchFusion.confirmNoteForDisplay(raised, showDebug = false))
+        assertEquals(raised, MatchFusion.confirmNoteForDisplay(raised, showDebug = true))
+
+        val softParsed = ParsedCardText("Lightning Bolt", "181", "dft")
+        val partial = IdentifiedCard(
+            game = Game.MTG,
+            name = "Lightning Bolt",
+            setCode = "dft",
+            setName = "Aetherdrift",
+            collectorNumber = "181",
+            ocrScore = 0.78f,
+            visualScore = null,
+            matchConfidence = 0.68f,
+        )
+        val soft = MatchFusion.evaluateAutoMatch(partial, softParsed)
+        assertTrue(soft.accepted)
+        assertTrue(soft.nameOk)
+        assertFalse(soft.strict)
+        assertFalse(MatchFusion.allowsAutoSave(soft, 0.74f))
+        assertTrue(MatchFusion.allowsAutoSave(soft, 0.50f))
+
+        val nameless = MatchFusion.AutoMatchDecision(
+            accepted = true,
+            strict = false,
+            reason = "cn+set",
+            nameOk = false,
+            confidence = 0.90f,
+        )
+        assertFalse(MatchFusion.allowsAutoSave(nameless, 0.50f))
+        val conflict = nameless.copy(nameConflict = true, nameOk = false, reason = "cn+neural")
+        assertFalse(MatchFusion.allowsAutoSave(conflict, 0.50f))
+
+        val autoNote = MatchFusion.confirmMatchNote(
+            decision = strict,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+        )
+        assertEquals("Salvataggio automatico", autoNote.title)
+        assertEquals(autoNote, MatchFusion.confirmNoteForDisplay(autoNote, showDebug = false))
     }
 
     private fun card(

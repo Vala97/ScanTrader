@@ -1,7 +1,7 @@
 package com.scantrader.app.ui.collection
 
 import com.scantrader.app.data.db.CardEntryEntity
-import com.scantrader.app.data.model.Game
+import com.scantrader.app.data.db.CardPrice
 import java.math.BigDecimal
 
 enum class CollectionSort {
@@ -43,8 +43,7 @@ fun collectionSections(
 
 /** Euro amount used for price sorting. Same side as the price shown on the tile. */
 fun collectionPrice(card: CardEntryEntity): BigDecimal? {
-    val pokemon = card.game == Game.POKEMON
-    val raw = if (card.foil && !pokemon) card.priceEurFoil ?: card.priceEur else card.priceEur
+    val raw = CardPrice.effectiveRaw(card)
     if (raw.isNullOrBlank()) return null
     val parsed = raw.trim().replace(',', '.').toBigDecimalOrNull() ?: return null
     return parsed.takeIf { it > BigDecimal.ZERO }

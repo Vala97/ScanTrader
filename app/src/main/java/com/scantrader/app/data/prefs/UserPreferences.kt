@@ -30,6 +30,11 @@ class UserPreferences(private val context: Context) {
                 ?.takeIf { it in AUTO_SAVE_WAIT_OPTIONS }
                 ?: 0,
             detectCardLanguage = prefs[DETECT_LANGUAGE] ?: true,
+            autoSaveConfidencePercent = prefs[AUTO_SAVE_CONFIDENCE]
+                ?.takeIf { it in AUTO_SAVE_CONFIDENCE_RANGE }
+                ?: AUTO_SAVE_CONFIDENCE_DEFAULT,
+            showDebugInfo = prefs[SHOW_DEBUG_INFO] ?: false,
+            neuralPromptShown = prefs[NEURAL_PROMPT_SHOWN] ?: false,
         )
     }
 
@@ -66,6 +71,19 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { it[DETECT_LANGUAGE] = enabled }
     }
 
+    suspend fun setAutoSaveConfidencePercent(percent: Int) {
+        val safe = percent.takeIf { it in AUTO_SAVE_CONFIDENCE_RANGE } ?: return
+        context.dataStore.edit { it[AUTO_SAVE_CONFIDENCE] = safe }
+    }
+
+    suspend fun setShowDebugInfo(enabled: Boolean) {
+        context.dataStore.edit { it[SHOW_DEBUG_INFO] = enabled }
+    }
+
+    suspend fun setNeuralPromptShown(shown: Boolean) {
+        context.dataStore.edit { it[NEURAL_PROMPT_SHOWN] = shown }
+    }
+
     suspend fun currentDefaults(): ScanDefaults = defaults.first()
 
     private companion object {
@@ -76,11 +94,23 @@ class UserPreferences(private val context: Context) {
         val ZOOM_RATIO = floatPreferencesKey("scan_zoom_ratio")
         val AUTO_SAVE_WAIT_SECONDS = intPreferencesKey("auto_save_wait_seconds")
         val DETECT_LANGUAGE = booleanPreferencesKey("detect_card_language")
+        val AUTO_SAVE_CONFIDENCE = intPreferencesKey("auto_save_confidence_percent")
+        val SHOW_DEBUG_INFO = booleanPreferencesKey("show_debug_info")
+        val NEURAL_PROMPT_SHOWN = booleanPreferencesKey("neural_prompt_shown")
     }
 }
 
 /** Allowed auto-save wait values (0 = disabled). */
 val AUTO_SAVE_WAIT_OPTIONS = listOf(0, 2, 3, 5, 8, 10)
+
+/** Inclusive percent range for the autosave confidence slider. */
+val AUTO_SAVE_CONFIDENCE_RANGE = 50..99
+
+/**
+ * Current strict bar in [com.scantrader.app.vision.MatchFusion.AUTO_CONFIDENCE_MIN],
+ * as a whole percent. 0.74 is exactly 74.
+ */
+const val AUTO_SAVE_CONFIDENCE_DEFAULT = 74
 
 data class ScanDefaults(
     val language: CardLanguage,
@@ -91,4 +121,10 @@ data class ScanDefaults(
     val autoSaveWaitSeconds: Int = 0,
     /** When true, confirm preselects the language read on the card. */
     val detectCardLanguage: Boolean = true,
+    /** Autosave only when match confidence is at least this percent. */
+    val autoSaveConfidencePercent: Int = AUTO_SAVE_CONFIDENCE_DEFAULT,
+    /** Technical confirm copy, such as the «Conferma a mano» banner. */
+    val showDebugInfo: Boolean = false,
+    /** The first-launch neural-pack dialog has already been answered. */
+    val neuralPromptShown: Boolean = false,
 )

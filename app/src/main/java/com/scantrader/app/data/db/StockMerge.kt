@@ -47,6 +47,7 @@ object StockMerge {
             catalogName = pick(newestFirst) { it.catalogName },
             catalogScryfallId = pick(newestFirst) { it.catalogScryfallId },
             variant = pick(newestFirst) { it.variant },
+            manualPriceEur = pick(newestFirst) { it.manualPriceEur },
             createdAt = rows.maxOf { it.createdAt },
         )
         return merged.stamped()

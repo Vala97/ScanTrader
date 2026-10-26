@@ -18,7 +18,6 @@ class ScanSession {
      * screen's ViewModel is destroyed (leaving scan), not by [resetResults].
      */
     var gameChosen: Boolean = false
-    var sessionMode: Boolean = false
     var targetCollectionId: Long? = null
     var ocrText: String = ""
     var parsed: ParsedCardText? = null

@@ -17,6 +17,7 @@ import com.scantrader.app.data.catalog.CatalogQueryDebounce
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.data.prefs.ScanDefaults
+import com.scantrader.app.data.repo.RenameCollection
 import com.scantrader.app.network.scryfall.ScryfallBusyException
 import com.scantrader.app.data.catalog.KnownSetCodes
 import com.scantrader.app.scan.AcceptedCandidateLock
@@ -54,17 +55,44 @@ import kotlinx.coroutines.withContext
 class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
     val collections: StateFlow<List<CollectionWithCount>> =
         app.repository.collections().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val defaults: StateFlow<ScanDefaults> =
+        app.prefs.defaults.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            ScanDefaults(CardLanguage.ENGLISH, CardCondition.NEAR_MINT),
+        )
+    val neuralPackState = app.neuralPack.mtgState
 
     init {
         viewModelScope.launch { app.repository.ensureDefaultCollection() }
+        viewModelScope.launch {
+            if (!app.prefs.currentDefaults().neuralPromptShown && app.neuralPack.isInstalled(Game.MTG)) {
+                app.prefs.setNeuralPromptShown(true)
+            }
+        }
     }
 
     fun create(name: String) {
         viewModelScope.launch { app.repository.createCollection(name) }
     }
 
+    fun rename(id: Long, name: String, onDone: (RenameCollection) -> Unit) {
+        viewModelScope.launch { onDone(app.repository.renameCollection(id, name)) }
+    }
+
     fun delete(id: Long) {
         viewModelScope.launch { app.repository.deleteCollection(id) }
+    }
+
+    fun dismissNeuralPrompt() {
+        viewModelScope.launch { app.prefs.setNeuralPromptShown(true) }
+    }
+
+    fun downloadNeuralPack() {
+        viewModelScope.launch {
+            app.prefs.setNeuralPromptShown(true)
+            app.neuralPack.downloadAndInstall()
+        }
     }
 
     companion object {
@@ -122,6 +150,14 @@ class CollectionViewModel(
         viewModelScope.launch { app.repository.deleteCard(entry) }
     }
 
+    fun rename(name: String, onDone: (RenameCollection) -> Unit) {
+        viewModelScope.launch { onDone(app.repository.renameCollection(collectionId, name)) }
+    }
+
+    fun setManualPrice(entry: CardEntryEntity, raw: String?, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch { onDone(app.repository.setManualPrice(entry, raw)) }
+    }
+
     companion object {
         fun factory(app: ScanTraderApp, id: Long) = factoryOf { CollectionViewModel(app, id) }
     }
@@ -172,6 +208,10 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setDetectCardLanguage(enabled) }
     }
 
+    fun setShowDebugInfo(enabled: Boolean) {
+        viewModelScope.launch { app.prefs.setShowDebugInfo(enabled) }
+    }
+
     val hasCardTraderToken = MutableStateFlow(app.secrets.hasCardTraderToken())
 
     fun saveCardTraderToken(token: String) {
@@ -216,7 +256,12 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
 class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     val processing = MutableStateFlow(false)
     val game = MutableStateFlow(app.scanSession.game)
-    val sessionMode = MutableStateFlow(app.scanSession.sessionMode)
+    val defaults: StateFlow<ScanDefaults> =
+        app.prefs.defaults.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            ScanDefaults(CardLanguage.ENGLISH, CardCondition.NEAR_MINT),
+        )
     val autoScan = MutableStateFlow(app.scanSession.autoScan)
     val autoStatus = MutableStateFlow<String?>(null)
     val mtgPackState = app.neuralPack.mtgState
@@ -503,9 +548,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         }
     }
 
-    fun setSession(value: Boolean) {
-        sessionMode.value = value
-        app.scanSession.sessionMode = value
+    fun setAutoSaveConfidencePercent(percent: Int) {
+        viewModelScope.launch { app.prefs.setAutoSaveConfidencePercent(percent) }
     }
 
     fun setAutoScan(value: Boolean) {

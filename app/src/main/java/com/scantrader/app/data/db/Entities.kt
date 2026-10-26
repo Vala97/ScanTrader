@@ -66,6 +66,12 @@ data class CardEntryEntity(
      * Empty only before [CardStockMigration] fills it.
      */
     val copyKey: String = "",
+    /**
+     * Seller price typed in the collection. When set, it replaces the automatic
+     * EUR amount in the grid and in the CardTrader CSV. Null keeps [priceEur]
+     * or [priceEurFoil]. Pokémon never stores a foil price.
+     */
+    val manualPriceEur: String? = null,
 )
 
 data class CollectionWithCount(
