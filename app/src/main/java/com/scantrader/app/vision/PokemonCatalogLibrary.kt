@@ -10,6 +10,7 @@ data class InstalledStcat(
     val version: String,
     val sha256: String,
     val size: Long,
+    val cardCount: Int = 0,
 )
 
 /**
@@ -76,7 +77,7 @@ class PokemonCatalogLibrary(private val visionDir: File) {
             part.delete()
             error("File danneggiato (checksum)")
         }
-        try {
+        val loaded = try {
             EmbeddingCatalog.load(part)
         } catch (t: Throwable) {
             part.delete()
@@ -108,6 +109,7 @@ class PokemonCatalogLibrary(private val visionDir: File) {
                 version = entry.version,
                 sha256 = hash.lowercase(),
                 size = dest.length(),
+                cardCount = loaded.size,
             )
             meta.writeText(gson.toJson(stored), Charsets.UTF_8)
         } catch (t: Throwable) {
@@ -140,6 +142,7 @@ class PokemonCatalogLibrary(private val visionDir: File) {
             version = parsed.version?.trim().orEmpty(),
             sha256 = parsed.sha256?.trim().orEmpty(),
             size = parsed.size ?: file.length(),
+            cardCount = parsed.cardCount ?: 0,
         )
     }
 
@@ -149,6 +152,7 @@ class PokemonCatalogLibrary(private val visionDir: File) {
         val version: String? = null,
         val sha256: String? = null,
         val size: Long? = null,
+        val cardCount: Int? = null,
     )
 
     private fun copyIntoPlace(part: File, dest: File): Boolean {

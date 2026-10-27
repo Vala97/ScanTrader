@@ -246,6 +246,10 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         app.neuralPack.delete(Game.POKEMON)
     }
 
+    fun hasManualPokemonCatalog(): Boolean = app.neuralPack.hasManualPokemonCatalog()
+
+    fun manualPokemonCardCount(): Int? = app.neuralPack.manualPokemonCardCount()
+
     fun importPokemonPack(uri: android.net.Uri) {
         viewModelScope.launch {
             app.neuralPack.importPokemonCatalog(uri)

@@ -3,6 +3,7 @@ package com.scantrader.app
 import com.scantrader.app.vision.EmbeddingCatalog
 import com.scantrader.app.vision.PokemonCatalogIndex
 import com.scantrader.app.vision.PokemonCatalogLibrary
+import com.scantrader.app.vision.PokemonCatalogRow
 import com.scantrader.app.vision.StcatCatalogEntry
 import java.io.File
 import org.junit.Assert.assertEquals
@@ -107,6 +108,7 @@ class PokemonCatalogIndexTest {
             val dest = library.catalogFile("pokemon-en")
             val before = dest.readBytes()
             assertEquals("1.0", library.read("pokemon-en")?.version)
+            assertEquals(1, library.read("pokemon-en")?.cardCount)
             assertEquals(1, EmbeddingCatalog.load(dest).size)
 
             val garbage = "not-a-catalog".toByteArray()
@@ -143,6 +145,42 @@ class PokemonCatalogIndexTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun statusLineMatchesThePackWording() {
+        val ready = sampleRow().copy(
+            installed = true,
+            installedVersion = "2026.10.26",
+            installedSize = 13_000_000L,
+            cardCount = 1200,
+        )
+        assertEquals(
+            "Pronto · 1200 carte · versione 2026.10.26 · 12,4 MB",
+            ready.statusLine(),
+        )
+        val missing = sampleRow()
+        assertEquals(
+            "Non installato · versione 2026.10.26 · 12,4 MB",
+            missing.statusLine(),
+        )
+        val update = ready.copy(remoteVersion = "2026.11.1", updateAvailable = true)
+        assertTrue(update.statusLine().contains("versione 2026.10.26 → 2026.11.1"))
+        assertEquals("Download… (40%)", ready.copy(downloading = true, progress = 0.4f).statusLine())
+    }
+
+    private fun sampleRow() = PokemonCatalogRow(
+        id = "pokemon-en",
+        name = "Pokémon (inglese)",
+        remoteVersion = "2026.10.26",
+        remoteSize = 13_000_000L,
+        installedVersion = null,
+        installedSize = null,
+        installed = false,
+        updateAvailable = false,
+        downloading = false,
+        progress = 0f,
+        error = null,
+    )
 
     private fun tiny(id: String): EmbeddingCatalog {
         return EmbeddingCatalog.create(arrayOf(id), floatArrayOf(1f, 0f, 0f, 0f), 4)

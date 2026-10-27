@@ -26,7 +26,32 @@ data class PokemonCatalogRow(
     val downloading: Boolean,
     val progress: Float,
     val error: String?,
-)
+    val cardCount: Int = 0,
+) {
+    /** Same shape as the Magic pack line: «Pronto · N carte» or «Non installato», then version and size. */
+    fun statusLine(): String {
+        if (downloading) return "Download… (${(progress * 100).toInt()}%)"
+        val state = when {
+            installed && cardCount > 0 -> "Pronto · $cardCount carte"
+            installed -> "Pronto"
+            else -> "Non installato"
+        }
+        val version = when {
+            updateAvailable && !installedVersion.isNullOrBlank() && !remoteVersion.isNullOrBlank() ->
+                "versione $installedVersion → $remoteVersion"
+            installed && !installedVersion.isNullOrBlank() -> "versione $installedVersion"
+            !remoteVersion.isNullOrBlank() -> "versione $remoteVersion"
+            else -> null
+        }
+        val bytes = when {
+            updateAvailable -> remoteSize ?: installedSize
+            installed -> installedSize ?: remoteSize
+            else -> remoteSize ?: installedSize
+        }
+        val size = bytes?.takeIf { it > 0L }?.let { PokemonCatalogIndex.formatBytes(it) }
+        return listOfNotNull(state, version, size).joinToString(" · ")
+    }
+}
 
 data class PokemonCatalogUi(
     val rows: List<PokemonCatalogRow> = emptyList(),
@@ -270,6 +295,7 @@ class PokemonCatalogController(
                     downloading = progress.containsKey(entry.id),
                     progress = progress[entry.id] ?: 0f,
                     error = errors[entry.id],
+                    cardCount = local?.cardCount ?: 0,
                 )
             }
             for ((id, local) in installed) {
@@ -286,6 +312,7 @@ class PokemonCatalogController(
                     downloading = progress.containsKey(id),
                     progress = progress[id] ?: 0f,
                     error = errors[id],
+                    cardCount = local.cardCount,
                 )
             }
             PokemonCatalogUi(

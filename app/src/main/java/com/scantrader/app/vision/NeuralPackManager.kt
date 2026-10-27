@@ -36,6 +36,7 @@ class NeuralPackManager(
     private val modelFile = File(root, "milo.onnx")
     private val mtgCatalogFile = File(root, "mtg.stcat")
     private val pokemonCatalogFile = File(root, "pokemon.stcat")
+    private val pokemonCountFile = File(root, "pokemon.count")
     private val mutex = Mutex()
 
     private val _mtgState = MutableStateFlow(inspectGame(Game.MTG))
@@ -279,6 +280,7 @@ class NeuralPackManager(
                         tmp.copyTo(pokemonCatalogFile, overwrite = true)
                         tmp.delete()
                     }
+                    rememberManualCount(loaded.size)
                     if (!modelFile.exists()) {
                         _pokemonState.value = NeuralPackState.Downloading(0.3f, "Download modello…")
                         onProgress("Download modello Milo…")
@@ -313,6 +315,7 @@ class NeuralPackManager(
             try {
                 val loaded = EmbeddingCatalog.load(file)
                 loaded.save(pokemonCatalogFile)
+                rememberManualCount(loaded.size)
                 if (!modelFile.exists()) {
                     downloadTo(MODEL_URL, modelFile) {}
                 }
@@ -335,6 +338,7 @@ class NeuralPackManager(
             Game.POKEMON -> {
                 pokemonCatalog = null
                 pokemonCatalogFile.delete()
+                pokemonCountFile.delete()
                 _pokemonState.value = if (pokemonCatalogFiles().isEmpty()) {
                     NeuralPackState.NotInstalled
                 } else {
@@ -350,6 +354,17 @@ class NeuralPackManager(
     }
 
     fun delete() = delete(Game.MTG)
+
+    fun hasManualPokemonCatalog(): Boolean = pokemonCatalogFile.exists()
+
+    fun manualPokemonCardCount(): Int? {
+        if (!pokemonCatalogFile.exists() || !pokemonCountFile.exists()) return null
+        return pokemonCountFile.readText().trim().toIntOrNull()?.takeIf { it > 0 }
+    }
+
+    private fun rememberManualCount(count: Int) {
+        if (count > 0) pokemonCountFile.writeText(count.toString())
+    }
 
     private fun catalogFile(game: Game): File = when (game) {
         Game.MTG -> mtgCatalogFile
@@ -418,8 +433,6 @@ class NeuralPackManager(
         const val CATALOG_NPZ_URL =
             "$HF/catalogs/milo1-scryfall-mtg-2026-07-09.npz"
         const val APPROX_SIZE_LABEL = "~60 MB"
-        const val POKEMON_PACK_HINT =
-            "Importa un .stcat generato con tools/build_pokemon_stcat (AGPL Milo)."
     }
 }
 

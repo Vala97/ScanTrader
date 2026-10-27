@@ -54,7 +54,6 @@ import com.scantrader.app.ui.theme.scanTraderAppBarColors
 import com.scantrader.app.vision.NeuralPackManager
 import com.scantrader.app.vision.NeuralPackState
 import com.scantrader.app.vision.PokemonCatalogController
-import com.scantrader.app.vision.PokemonCatalogIndex
 import com.scantrader.app.vision.PokemonCatalogRow
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -190,7 +189,7 @@ fun SettingsScreen(
 
             SettingsSection(title = "Riconoscimento MTG") {
                 Text(
-                    "Pack neurale on-device (~${NeuralPackManager.APPROX_SIZE_LABEL}). " +
+                    "Pack neurale on-device (${NeuralPackManager.APPROX_SIZE_LABEL}). " +
                         "Utile quando l’OCR è debole; dopo il download resta offline.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -236,59 +235,8 @@ fun SettingsScreen(
 
             SettingsSection(title = "Riconoscimento Pokémon") {
                 Text(
-                    NeuralPackManager.POKEMON_PACK_HINT +
-                        " Gallery reverse-image on-device; l’OCR resta per i reprint.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    neuralStatusLabel(pokemonNeural),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                if (pokemonNeural is NeuralPackState.Downloading) {
-                    LinearProgressIndicator(
-                        progress = { (pokemonNeural as NeuralPackState.Downloading).progress },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val busy = pokemonNeural is NeuralPackState.Downloading ||
-                        pokemonNeural is NeuralPackState.Loading
-                    Button(
-                        onClick = {
-                            importPokemon.launch(
-                                arrayOf("application/octet-stream", "*/*"),
-                            )
-                        },
-                        enabled = !busy,
-                    ) {
-                        Text(
-                            when (pokemonNeural) {
-                                is NeuralPackState.Ready -> "Reimporta .stcat"
-                                is NeuralPackState.Downloading -> "Import…"
-                                else -> "Importa .stcat"
-                            },
-                        )
-                    }
-                    if (pokemonNeural is NeuralPackState.Ready ||
-                        pokemonNeural is NeuralPackState.InstalledNotLoaded ||
-                        pokemonNeural is NeuralPackState.Error
-                    ) {
-                        OutlinedButton(onClick = viewModel::deletePokemonPack, enabled = !busy) {
-                            Text("Rimuovi")
-                        }
-                    }
-                }
-            }
-
-            SettingsSection(title = "Cataloghi Pokémon") {
-                Text(
-                    "Scarica i cataloghi dal rilascio GitHub. Restano sul telefono e funzionano offline. " +
-                        "L’importazione manuale di un .stcat resta in Riconoscimento Pokémon.",
+                    "Pack neurale on-device (AGPL-3.0). " +
+                        "Utile quando l’OCR è debole; dopo il download resta offline.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -307,6 +255,33 @@ fun SettingsScreen(
                         },
                     )
                 }
+                val manualInstalled = viewModel.hasManualPokemonCatalog()
+                val catalogBusy = pokemonCatalogs.rows.any { it.downloading }
+                val manualCount = viewModel.manualPokemonCardCount()
+                    ?: if (pokemonCatalogs.rows.none { it.installed }) {
+                        (pokemonNeural as? NeuralPackState.Ready)?.cardCount
+                    } else {
+                        null
+                    }
+                if (pokemonNeural is NeuralPackState.Downloading && !catalogBusy) {
+                    Text(
+                        manualPokemonStatus(pokemonNeural, manualCount),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    LinearProgressIndicator(
+                        progress = { (pokemonNeural as NeuralPackState.Downloading).progress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else if (manualInstalled) {
+                    Text("Importato", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        manualPokemonStatus(pokemonNeural, manualCount),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedButton(onClick = viewModel::deletePokemonPack) {
+                        Text("Rimuovi")
+                    }
+                }
                 pokemonCatalogs.rows.forEach { row ->
                     PokemonCatalogRowCard(
                         row = row,
@@ -319,6 +294,18 @@ fun SettingsScreen(
                     enabled = !pokemonCatalogs.checking,
                 ) {
                     Text("Controlla aggiornamenti")
+                }
+                if (defaults.showDebugInfo) {
+                    val importBusy = pokemonNeural is NeuralPackState.Downloading ||
+                        pokemonNeural is NeuralPackState.Loading
+                    TextButton(
+                        onClick = {
+                            importPokemon.launch(arrayOf("application/octet-stream", "*/*"))
+                        },
+                        enabled = !importBusy,
+                    ) {
+                        Text("Importa .stcat", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
 
@@ -378,23 +365,9 @@ private fun PokemonCatalogRowCard(
     onDownload: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(row.name, style = MaterialTheme.typography.titleSmall)
-        val detail = catalogDetail(row)
-        if (detail.isNotEmpty()) {
-            Text(
-                detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        val status = when {
-            row.downloading -> "Download in corso"
-            row.updateAvailable -> "Aggiornamento disponibile"
-            row.installed -> "Installato"
-            else -> "Non installato"
-        }
-        Text(status, style = MaterialTheme.typography.bodyMedium)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(row.name, style = MaterialTheme.typography.bodyMedium)
+        Text(row.statusLine(), style = MaterialTheme.typography.bodyMedium)
         row.error?.let { error ->
             Text(
                 error,
@@ -412,35 +385,30 @@ private fun PokemonCatalogRowCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val canDownload = row.remoteVersion != null || row.remoteSize != null || !row.installed
-            if (!row.installed && canDownload) {
+            if (!row.installed) {
                 Button(onClick = onDownload, enabled = !row.downloading) { Text("Scarica") }
             } else if (row.updateAvailable) {
                 Button(onClick = onDownload, enabled = !row.downloading) { Text("Aggiorna") }
             }
             if (row.installed) {
-                OutlinedButton(onClick = onDelete, enabled = !row.downloading) { Text("Elimina") }
+                OutlinedButton(onClick = onDelete, enabled = !row.downloading) { Text("Rimuovi") }
             }
         }
     }
 }
 
-private fun catalogDetail(row: PokemonCatalogRow): String {
-    val version = when {
-        row.updateAvailable && !row.installedVersion.isNullOrBlank() && !row.remoteVersion.isNullOrBlank() ->
-            "versione ${row.installedVersion} → ${row.remoteVersion}"
-        row.installed && !row.installedVersion.isNullOrBlank() -> "versione ${row.installedVersion}"
-        !row.remoteVersion.isNullOrBlank() -> "versione ${row.remoteVersion}"
-        else -> null
-    }
-    val bytes = when {
-        row.updateAvailable -> row.remoteSize ?: row.installedSize
-        row.installed -> row.installedSize ?: row.remoteSize
-        else -> row.remoteSize ?: row.installedSize
-    }
-    val size = bytes?.takeIf { it > 0L }?.let { PokemonCatalogIndex.formatBytes(it) }
-    return listOfNotNull(version, size).joinToString(" · ")
+private fun manualPokemonStatus(state: NeuralPackState, cardCount: Int?): String = when (state) {
+    is NeuralPackState.Downloading -> "${state.label} (${(state.progress * 100).toInt()}%)"
+    is NeuralPackState.Loading -> "Caricamento…"
+    is NeuralPackState.Error -> "Errore: ${state.message}"
+    is NeuralPackState.Ready -> readyCount(cardCount ?: state.cardCount)
+    NeuralPackState.InstalledNotLoaded,
+    NeuralPackState.NotInstalled,
+    -> readyCount(cardCount)
 }
+
+private fun readyCount(cardCount: Int?): String =
+    if (cardCount != null && cardCount > 0) "Pronto · $cardCount carte" else "Pronto"
 
 @Composable
 private fun SettingsSection(

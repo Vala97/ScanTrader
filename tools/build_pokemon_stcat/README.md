@@ -33,7 +33,7 @@ Outputs:
 
 ## Install on device
 
-**Settings → Riconoscimento Pokémon → Importa .stcat**, or:
+**Settings → Riconoscimento Pokémon → Importa .stcat** (shown only when «Mostra informazioni aggiuntive (debug)» is on), or:
 
 ```bat
 adb push pokemon.stcat /sdcard/Download/pokemon.stcat
