@@ -12,14 +12,25 @@ import com.scantrader.app.data.db.CollectionWithCount
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
+import com.scantrader.app.ui.collection.CollectionBrowseState
+import com.scantrader.app.ui.collection.CollectionBrowser
 import com.scantrader.app.ui.collection.CollectionSort
+import com.scantrader.app.ui.collection.browseCollection
+import com.scantrader.app.ui.collection.collectionConditionChoices
+import com.scantrader.app.ui.collection.collectionLanguageChoices
+import com.scantrader.app.ui.collection.collectionSearchDelay
+import com.scantrader.app.ui.collection.collectionSetChoices
+import com.scantrader.app.ui.onboarding.Onboarding
 import com.scantrader.app.data.catalog.CatalogQueryDebounce
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.data.prefs.ScanDefaults
+import com.scantrader.app.data.repo.RenameCollection
 import com.scantrader.app.network.scryfall.ScryfallBusyException
+import com.scantrader.app.data.catalog.KnownSetCodes
 import com.scantrader.app.scan.AcceptedCandidateLock
 import com.scantrader.app.scan.AutosaveDuplicateGuard
+import com.scantrader.app.scan.ConsecutivePrintingGuard
 import com.scantrader.app.scan.BackCamera
 import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.FrameGate
@@ -37,6 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -45,6 +57,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -52,13 +69,34 @@ import kotlinx.coroutines.withContext
 class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
     val collections: StateFlow<List<CollectionWithCount>> =
         app.repository.collections().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val showOnboarding: StateFlow<Boolean> = app.prefs.defaults
+        .map { Onboarding.shouldShow(it.onboardingCompleted, it.neuralPromptShown) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    private val onboardingLaunchConsumed = AtomicBoolean(false)
 
     init {
         viewModelScope.launch { app.repository.ensureDefaultCollection() }
+        viewModelScope.launch {
+            val current = app.prefs.currentDefaults()
+            if (current.neuralPromptShown && !current.onboardingCompleted) {
+                app.prefs.setOnboardingCompleted(true)
+            }
+        }
+        app.pokemonCatalogs.refresh()
+    }
+
+    /** True only the first time this process should open the introduction. */
+    fun consumeOnboardingLaunch(): Boolean {
+        if (!showOnboarding.value) return false
+        return onboardingLaunchConsumed.compareAndSet(false, true)
     }
 
     fun create(name: String) {
         viewModelScope.launch { app.repository.createCollection(name) }
+    }
+
+    fun rename(id: Long, name: String, onDone: (RenameCollection) -> Unit) {
+        viewModelScope.launch { onDone(app.repository.renameCollection(id, name)) }
     }
 
     fun delete(id: Long) {
@@ -70,6 +108,7 @@ class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 }
 
+@OptIn(FlowPreview::class)
 class CollectionViewModel(
     private val app: ScanTraderApp,
     private val collectionId: Long,
@@ -79,11 +118,57 @@ class CollectionViewModel(
     val cards: StateFlow<List<CardEntryEntity>> =
         app.repository.cards(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val exporting = MutableStateFlow(false)
-    val sort = MutableStateFlow(CollectionSort.COLLECTOR_NUMBER)
+    private val controls = MutableStateFlow(CollectionBrowseState())
+    private val touched = AtomicBoolean(false)
+    private val restored = MutableStateFlow(false)
+    private val debouncedQuery = controls
+        .map { it.query }
+        .distinctUntilChanged()
+        .debounce { collectionSearchDelay(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+    val browser: StateFlow<CollectionBrowser> = combine(cards, controls, debouncedQuery) { all, ctrl, query ->
+        CollectionBrowser(
+            controls = ctrl,
+            result = browseCollection(all, ctrl.copy(query = query)),
+            sets = collectionSetChoices(all),
+            languages = collectionLanguageChoices(all),
+            conditions = collectionConditionChoices(all),
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CollectionBrowser())
 
-    fun setSort(value: CollectionSort) {
-        sort.value = value
+    init {
+        viewModelScope.launch {
+            val saved = app.prefs.collectionBrowse(collectionId)
+            if (!touched.get()) controls.value = saved
+            restored.value = true
+        }
+        viewModelScope.launch {
+            restored.first { it }
+            controls.debounce(200).collect { app.prefs.setCollectionBrowse(collectionId, it) }
+        }
     }
+
+    fun setQuery(text: String) = edit { it.copy(query = text) }
+
+    fun toggleSet(value: String) = edit { it.copy(sets = toggle(it.sets, value)) }
+
+    fun toggleLanguage(value: String) = edit { it.copy(languages = toggle(it.languages, value)) }
+
+    fun toggleCondition(value: String) = edit { it.copy(conditions = toggle(it.conditions, value)) }
+
+    fun toggleFoil(foil: Boolean) = edit { it.copy(foil = if (it.foil == foil) null else foil) }
+
+    fun setSort(value: CollectionSort) = edit { it.copy(sort = value) }
+
+    fun clearBrowse() = edit { CollectionBrowseState() }
+
+    private fun edit(transform: (CollectionBrowseState) -> CollectionBrowseState) {
+        touched.set(true)
+        controls.value = transform(controls.value)
+    }
+
+    private fun toggle(values: Set<String>, value: String): Set<String> =
+        if (value in values) values - value else values + value
 
     fun share(context: Context) {
         if (exporting.value || cards.value.isEmpty()) return
@@ -120,6 +205,14 @@ class CollectionViewModel(
         viewModelScope.launch { app.repository.deleteCard(entry) }
     }
 
+    fun rename(name: String, onDone: (RenameCollection) -> Unit) {
+        viewModelScope.launch { onDone(app.repository.renameCollection(collectionId, name)) }
+    }
+
+    fun setManualPrice(entry: CardEntryEntity, raw: String?, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch { onDone(app.repository.setManualPrice(entry, raw)) }
+    }
+
     companion object {
         fun factory(app: ScanTraderApp, id: Long) = factoryOf { CollectionViewModel(app, id) }
     }
@@ -134,6 +227,7 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         )
     val neuralPackState = app.neuralPack.mtgState
     val pokemonPackState = app.neuralPack.pokemonState
+    val pokemonCatalogs = app.pokemonCatalogs.ui
     val lensOptions = MutableStateFlow(CameraDevices.lensOptions(app))
 
     fun refreshLenses() {
@@ -170,6 +264,10 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setDetectCardLanguage(enabled) }
     }
 
+    fun setShowDebugInfo(enabled: Boolean) {
+        viewModelScope.launch { app.prefs.setShowDebugInfo(enabled) }
+    }
+
     val hasCardTraderToken = MutableStateFlow(app.secrets.hasCardTraderToken())
 
     fun saveCardTraderToken(token: String) {
@@ -196,6 +294,10 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         app.neuralPack.delete(Game.POKEMON)
     }
 
+    fun hasManualPokemonCatalog(): Boolean = app.neuralPack.hasManualPokemonCatalog()
+
+    fun manualPokemonCardCount(): Int? = app.neuralPack.manualPokemonCardCount()
+
     fun importPokemonPack(uri: android.net.Uri) {
         viewModelScope.launch {
             app.neuralPack.importPokemonCatalog(uri)
@@ -206,6 +308,18 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.neuralPack.ensureLoaded() }
     }
 
+    fun refreshPokemonCatalogs() {
+        app.pokemonCatalogs.refresh()
+    }
+
+    fun downloadPokemonCatalog(id: String) {
+        app.pokemonCatalogs.download(id)
+    }
+
+    fun deletePokemonCatalog(id: String) {
+        app.pokemonCatalogs.delete(id)
+    }
+
     companion object {
         fun factory(app: ScanTraderApp) = factoryOf { SettingsViewModel(app) }
     }
@@ -214,7 +328,12 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
 class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     val processing = MutableStateFlow(false)
     val game = MutableStateFlow(app.scanSession.game)
-    val sessionMode = MutableStateFlow(app.scanSession.sessionMode)
+    val defaults: StateFlow<ScanDefaults> =
+        app.prefs.defaults.stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            ScanDefaults(CardLanguage.ENGLISH, CardCondition.NEAR_MINT),
+        )
     val autoScan = MutableStateFlow(app.scanSession.autoScan)
     val autoStatus = MutableStateFlow<String?>(null)
     val mtgPackState = app.neuralPack.mtgState
@@ -238,6 +357,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
      */
     private val acceptedLock = AcceptedCandidateLock(clearFramesNeeded = SAME_CARD_CLEAR_FRAMES)
     private val duplicateGuard = AutosaveDuplicateGuard()
+    private val consecutiveGuard = ConsecutivePrintingGuard()
+
+    /** Set when this frame's match is the printing we just accepted. */
+    @Volatile
+    private var repeatPrinting: Boolean = false
+
     private val lastAcceptedCardKey: String?
         get() = acceptedLock.key
 
@@ -495,9 +620,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         }
     }
 
-    fun setSession(value: Boolean) {
-        sessionMode.value = value
-        app.scanSession.sessionMode = value
+    fun setAutoSaveConfidencePercent(percent: Int) {
+        viewModelScope.launch { app.prefs.setAutoSaveConfidencePercent(percent) }
     }
 
     fun setAutoScan(value: Boolean) {
@@ -596,6 +720,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             autoStatus.value = "Analisi in corso…"
             try {
                 autoHold = AutoHold.NONE
+                repeatPrinting = false
                 val matched = analyze(bitmap, requireMatch = true)
                 if (matched) {
                     autoHitPending.set(true)
@@ -604,12 +729,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 } else when (autoHold) {
                     AutoHold.BUSY -> autoStatus.value = "Scryfall occupato, riprovo…"
                     AutoHold.SPECULATIVE -> autoStatus.value = "Analisi in corso…"
-                    AutoHold.UNSTABLE -> autoStatus.value = if (duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
+                    AutoHold.UNSTABLE -> autoStatus.value = if (repeatPrinting || duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
                         "Metti un’altra carta…"
                     } else {
                         "Inquadra la carta…"
                     }
-                    AutoHold.NONE -> autoStatus.value = if (duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
+                    AutoHold.NONE -> autoStatus.value = if (repeatPrinting || duplicateGuard.holdingSameCard() || lastAcceptedCardKey != null) {
                         "Metti un’altra carta…"
                     } else {
                         "Inquadra meglio…"
@@ -729,7 +854,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         rawText = top,
                         game = game.value,
                         bottomPriorityText = bottomSoFar(),
-                        namePriorityText = top.takeIf { it.isNotBlank() },
+                        namePriorityText = top,
                     )
                     // Auto: enhanced corners only while the collector is still missing.
                     if (autoMode && quick.collectorNumber.isNullOrBlank()) {
@@ -777,7 +902,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             rawText = top,
                             game = game.value,
                             bottomPriorityText = bottomSoFar(),
-                            namePriorityText = top.takeIf { it.isNotBlank() },
+                            namePriorityText = top,
                         )
                     }
                     // Collector line in the title band: rotation put the card's bottom at the top.
@@ -810,7 +935,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             rawText = newTop,
                             game = game.value,
                             bottomPriorityText = newBl,
-                            namePriorityText = newTop.takeIf { it.isNotBlank() },
+                            namePriorityText = newTop,
                         )
                         if (com.scantrader.app.scan.CardOrientation.rotatedPassWins(
                                 quick.nameGuess,
@@ -1001,7 +1126,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 rawText = text,
                 game = game.value,
                 bottomPriorityText = bottomText,
-                namePriorityText = topNameText.takeIf { it.isNotBlank() },
+                namePriorityText = topNameText,
             )
             com.scantrader.app.scan.ScanDebug.d(
                 "OCR fullChars=${text.length} topChars=${topNameText.length} " +
@@ -1009,6 +1134,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "parsed name=${parsed.nameGuess} cn=${parsed.collectorNumber} " +
                     "set=${parsed.setCode} count=${parsed.setCardCount} ocrMs=$ocrMs",
             )
+            val knownSet = KnownSetCodes.scrub(game.value, parsed)
+            if (knownSet.setCode != parsed.setCode) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "set discarded (unknown set code) set=${parsed.setCode}",
+                )
+                parsed = knownSet
+            }
             if (game.value == Game.MTG) {
                 val scrubbed = rejectedSets.scrub(parsed)
                 if (scrubbed.setCode != parsed.setCode) {
@@ -1330,7 +1462,18 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 stableTop.reset()
             }
             val autoOk = gate.accepted && top != null
-            val topKey = top?.let { autoCardKey(it) }
+            val ocrTitle = matched.nameGuess ?: parsed.nameGuess
+            val resolved = top?.let {
+                com.scantrader.app.data.catalog.CardLanguageDetector.resolveCopyLanguage(it, ocrTitle)
+            }
+            val copyTop = resolved?.card
+            if (resolved != null && resolved.detection.evidence.startsWith("title=")) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "${resolved.detection.logLine()} printed=${copyTop?.printedLang} " +
+                        "catalog=${copyTop?.catalogLang}",
+                )
+            }
+            val topKey = copyTop?.let { autoCardKey(it) }
             val blockedSameCard = requireMatch &&
                 autoOk &&
                 topKey != null &&
@@ -1339,21 +1482,39 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 autoOk &&
                 topKey != null &&
                 !duplicateGuard.allowAutoSave(topKey)
-            val acceptAuto = autoOk && !blockedSameCard && !duplicateBlocked
+            val repeatCard = if (copyTop != null && requireMatch && autoOk && consecutiveGuard.sameAsLast(copyTop)) {
+                copyTop
+            } else {
+                null
+            }
+            val consecutiveBlocked = repeatCard != null
+            val acceptAuto = autoOk && !blockedSameCard && !duplicateBlocked && !consecutiveBlocked
             if (duplicateBlocked) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "autosave: skipped (same card still in frame key=$topKey)",
                 )
             }
-            if (requireMatch && acceptAuto && topKey != null) {
-                acceptedLock.lock(
-                    key = topKey,
-                    collectorNumber = top.collectorNumber,
-                    name = FrameNameGate.confidentTitle(parsed.nameGuess)
-                        ?: matched.nameGuess
-                        ?: top.printedName
-                        ?: top.name,
+            if (repeatCard != null) {
+                repeatPrinting = true
+                com.scantrader.app.scan.ScanDebug.d(
+                    "autosave: skipped (same printing as last accepted " +
+                        "set=${repeatCard.setCode} cn=${repeatCard.collectorNumber} " +
+                        "lang=${repeatCard.printedLang ?: repeatCard.catalogLang} " +
+                        "finish=${repeatCard.finish ?: "standard"})",
                 )
+            }
+            if (requireMatch && acceptAuto) {
+                copyTop?.let { acceptedCard ->
+                    acceptedLock.lock(
+                        key = autoCardKey(acceptedCard),
+                        collectorNumber = acceptedCard.collectorNumber,
+                        name = FrameNameGate.confidentTitle(parsed.nameGuess)
+                            ?: matched.nameGuess
+                            ?: acceptedCard.printedName
+                            ?: acceptedCard.name,
+                    )
+                    consecutiveGuard.noteAccepted(acceptedCard)
+                }
             }
             candidates.take(3).forEachIndexed { i, c ->
                 com.scantrader.app.scan.ScanDebug.d(
@@ -1380,8 +1541,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 catalogMs = catalogMs,
                 totalMs = System.currentTimeMillis() - t0,
             )
-            if (requireMatch && (duplicateBlocked || (candidates.isEmpty() && fused.isNotEmpty()))) {
+            if (requireMatch && (duplicateBlocked || consecutiveBlocked || (candidates.isEmpty() && fused.isNotEmpty()))) {
                 autoHold = AutoHold.UNSTABLE
+                // Do not publish this hit. resetResults already dropped the previous
+                // card, so the confirm screen cannot keep showing it as the new one.
                 return@withContext false
             }
             app.scanSession.ocrText = buildString {
@@ -1396,7 +1559,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             app.scanSession.parsed = matched
             app.scanSession.queryFingerprint = fingerprint
-            app.scanSession.candidates = candidates
+            app.scanSession.candidates = if (copyTop != null && copyTop != top) {
+                listOf(copyTop) + candidates.drop(1)
+            } else {
+                candidates
+            }
             app.scanSession.autoMatch = gate
             app.scanSession.autoMatchCardKey = topKey
             if (candidates.isEmpty() && text.isBlank() && bottomText.isBlank()) {
@@ -1424,6 +1591,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private fun clearSameCardLock() {
         acceptedLock.clear()
         duplicateGuard.clear()
+        consecutiveGuard.clear()
         cancelSpeculative()
         catalogDebounce.reset()
         rejectedSets.clear()
@@ -1572,7 +1740,7 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
             SharingStarted.WhileSubscribed(5_000),
             ScanDefaults(CardLanguage.ENGLISH, CardCondition.NEAR_MINT),
         )
-    val candidates = MutableStateFlow(app.scanSession.candidates)
+    val candidates: StateFlow<List<IdentifiedCard>> = app.scanSession.candidatesFlow
     val searching = MutableStateFlow(false)
     val saving = MutableStateFlow(false)
     val parsed get() = app.scanSession.parsed
@@ -1591,7 +1759,7 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     fun reload() {
-        candidates.value = app.scanSession.candidates
+        app.scanSession.candidates = app.scanSession.candidates.toList()
     }
 
     fun search(query: String) {
@@ -1608,10 +1776,9 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
                     hits
                 }
                 val fused = com.scantrader.app.vision.MatchFusion.fuse(ranked, parsedText)
-                candidates.value = fused
                 app.scanSession.candidates = fused
             } catch (_: Throwable) {
-                candidates.value = emptyList()
+                app.scanSession.candidates = emptyList()
             } finally {
                 searching.value = false
             }
@@ -1747,8 +1914,10 @@ private suspend fun ScanTraderApp.rememberDetectedLanguage(card: IdentifiedCard?
         detection,
     )
     if (published.language != null && detection.language == null) {
-        val evidence = scanSession.languageEvidence?.takeIf { it.isNotBlank() } ?: "kept"
-        com.scantrader.app.scan.ScanDebug.d("lang: ${published.language.label} evidence=$evidence")
+        val evidence = scanSession.languageEvidence?.takeIf { it.isNotBlank() } ?: "none"
+        com.scantrader.app.scan.ScanDebug.d(
+            "lang: ${published.language.label} evidence=kept previous=$evidence",
+        )
         return published.language
     }
     com.scantrader.app.scan.ScanDebug.d(published.logLine())

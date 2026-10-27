@@ -1,6 +1,8 @@
 package com.scantrader.app.data.catalog
 
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.data.model.Game
+import com.scantrader.app.data.model.IdentifiedCard
 import java.text.Normalizer
 import java.util.Locale
 
@@ -70,6 +72,9 @@ object CardLanguageDetector {
             proven != null -> proven.language
             else -> null
         }
+        if (language == null && !pokemonSignals) {
+            inferPrintedLanguage(ocrName, englishName)?.let { return it }
+        }
         val evidence = buildList {
             val labels = when {
                 language != null && cardText?.language == language -> cardText.labels
@@ -138,6 +143,88 @@ object CardLanguageDetector {
         if (titles.size == 1 && titles.first() == ocr) return false
         return titles.any { it != ocr }
     }
+
+    /**
+     * The physical copy's language, written onto [IdentifiedCard.printedLang].
+     * The English catalog name, id, and price stay on the card: Morningtide has
+     * no Italian Scryfall object, but the title printed on the card is still Italian.
+     */
+    fun applyCopyLanguage(card: IdentifiedCard, ocrName: String?): IdentifiedCard =
+        resolveCopyLanguage(card, ocrName).card
+
+    data class CopyLanguage(val card: IdentifiedCard, val detection: Detection)
+
+    fun resolveCopyLanguage(card: IdentifiedCard, ocrName: String?): CopyLanguage {
+        if (card.game != Game.MTG) return CopyLanguage(card, Detection(null, "none"))
+        val english = card.catalogName?.takeIf { it.isNotBlank() }
+            ?: card.name.takeUnless { it.equals(card.printedName, ignoreCase = true) }
+        val printed = linkedMapOf<CardLanguage, String>()
+        val known = card.printedLang?.let { CardLanguage.fromCatalogCode(it) }
+        if (known != null && known != CardLanguage.ENGLISH && !card.printedName.isNullOrBlank()) {
+            printed[known] = card.printedName
+        }
+        val detection = explain(ocrName, english, printed)
+        val code = detection.language?.scryfallLang() ?: return CopyLanguage(card, detection)
+        if (code.equals(card.printedLang, ignoreCase = true)) return CopyLanguage(card, detection)
+        if (!card.printedLang.isNullOrBlank() && detection.language == CardLanguage.ENGLISH) {
+            return CopyLanguage(card, detection)
+        }
+        return CopyLanguage(card.copy(printedLang = code), detection)
+    }
+
+    /**
+     * OCR title vs the English oracle name when Scryfall has no localized printing.
+     * `Druido del Suolo Avvizzito` is not `Blightsoil Druid`. A title word that is
+     * also a rules word is not enough; Italian needs a real function word, and
+     * `del` only counts together with Italian spelling (`avvizzito`).
+     */
+    private fun inferPrintedLanguage(ocrName: String?, englishName: String?): Detection? {
+        val ocr = normalize(ocrName) ?: return null
+        if (englishName.isNullOrBlank()) return null
+        if (score(ocr, englishName) >= MIN_SCORE) return null
+        val raw = ocrName.orEmpty().lowercase(Locale.ROOT)
+        val folded = fold(raw)
+        val scores = mutableMapOf<CardLanguage, Int>()
+        val cues = mutableMapOf<CardLanguage, MutableList<String>>()
+        for (cue in titleCues) {
+            val haystack = if (cue.folded) folded else raw
+            if (!cue.pattern.containsMatchIn(haystack)) continue
+            scores[cue.language] = (scores[cue.language] ?: 0) + cue.weight
+            val found = cues.getOrPut(cue.language) { mutableListOf() }
+            if (cue.label !in found) found += cue.label
+        }
+        val best = scores.maxByOrNull { it.value } ?: return null
+        val runner = scores.filterKeys { it != best.key }.maxOfOrNull { it.value } ?: 0
+        if (best.value < 5 || (runner > 0 && best.value - runner < 2)) return null
+        val labels = cues[best.key].orEmpty().joinToString("+")
+        return Detection(
+            best.key,
+            "title=${best.key.scryfallLang()} not-en cue=$labels",
+        )
+    }
+
+    private data class TitleCue(
+        val language: CardLanguage,
+        val pattern: Regex,
+        val weight: Int,
+        val label: String,
+        /** Diacritics are stripped by [fold], so those cues read the original title. */
+        val folded: Boolean = true,
+    )
+
+    private val titleCues = listOf(
+        TitleCue(CardLanguage.ITALIAN, Regex("""\b(?:della|dello|delle|degli|dei|di)\b"""), 5, "di"),
+        TitleCue(CardLanguage.ITALIAN, Regex("""\b(?:del|dell)\b"""), 3, "del"),
+        TitleCue(CardLanguage.ITALIAN, Regex("""\p{L}zz\p{L}"""), 3, "zz"),
+        TitleCue(CardLanguage.GERMAN, Regex("""\b(?:der|die|das|von|und|aus|dem|den|des)\b"""), 5, "der"),
+        TitleCue(CardLanguage.GERMAN, Regex("""[äöüß]"""), 4, "umlaut", folded = false),
+        TitleCue(CardLanguage.FRENCH, Regex("""\b(?:du|des|au|aux|une)\b"""), 5, "du"),
+        TitleCue(CardLanguage.FRENCH, Regex("""[éèêëç]"""), 4, "accent", folded = false),
+        TitleCue(CardLanguage.SPANISH, Regex("""ñ"""), 5, "ñ", folded = false),
+        TitleCue(CardLanguage.SPANISH, Regex("""\b(?:los|las)\b"""), 5, "los"),
+        TitleCue(CardLanguage.PORTUGUESE, Regex("""[ãõ]"""), 5, "ã", folded = false),
+        TitleCue(CardLanguage.PORTUGUESE, Regex("""\b(?:não|dos|das)\b"""), 5, "não", folded = false),
+    )
 
     private fun score(ocr: String, title: String): Float {
         val other = normalize(title) ?: return 0f

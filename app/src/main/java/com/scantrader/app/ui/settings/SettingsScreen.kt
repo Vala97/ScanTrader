@@ -53,17 +53,21 @@ import com.scantrader.app.ui.displayLabel
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
 import com.scantrader.app.vision.NeuralPackManager
 import com.scantrader.app.vision.NeuralPackState
+import com.scantrader.app.vision.PokemonCatalogController
+import com.scantrader.app.vision.PokemonCatalogRow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     onBack: () -> Unit,
+    onReviewIntro: () -> Unit,
 ) {
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val tokenSaved by viewModel.hasCardTraderToken.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
     val pokemonNeural by viewModel.pokemonPackState.collectAsStateWithLifecycle()
+    val pokemonCatalogs by viewModel.pokemonCatalogs.collectAsStateWithLifecycle()
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
 
     val importPokemon = rememberLauncherForActivityResult(
@@ -75,6 +79,7 @@ fun SettingsScreen(
     LaunchedEffect(Unit) {
         viewModel.loadNeuralPack()
         viewModel.refreshLenses()
+        viewModel.refreshPokemonCatalogs()
     }
 
     Scaffold(
@@ -100,6 +105,7 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             SettingsSection(title = "Impostazioni generali") {
+                TextButton(onClick = onReviewIntro) { Text("Rivedi introduzione") }
                 SimpleDropdown(
                     label = "Lingua",
                     options = CardLanguage.entries.toList(),
@@ -127,8 +133,8 @@ fun SettingsScreen(
                     },
                 )
                 Text(
-                    "In auto-scan, se il riconoscimento supera la soglia forte (74%) e non tocchi la carta, " +
-                        "salva in collezione dopo N secondi. I match deboli restano in conferma.",
+                    "In auto-scan, se il riconoscimento supera la soglia scelta in Impostazioni scan " +
+                        "e non tocchi la carta, salva in collezione dopo N secondi. Sotto la soglia resta in conferma.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -150,6 +156,24 @@ fun SettingsScreen(
                         onCheckedChange = viewModel::setDetectCardLanguage,
                     )
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Mostra informazioni aggiuntive (debug)")
+                        Text(
+                            "In conferma mostra il banner «Conferma a mano» e la percentuale di riconoscimento.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = defaults.showDebugInfo,
+                        onCheckedChange = viewModel::setShowDebugInfo,
+                    )
+                }
                 CardTraderTokenField(
                     saved = tokenSaved,
                     onSave = viewModel::saveCardTraderToken,
@@ -167,7 +191,7 @@ fun SettingsScreen(
 
             SettingsSection(title = "Riconoscimento MTG") {
                 Text(
-                    "Pack neurale on-device (~${NeuralPackManager.APPROX_SIZE_LABEL}). " +
+                    "Pack neurale on-device (${NeuralPackManager.APPROX_SIZE_LABEL}). " +
                         "Utile quando l’OCR è debole; dopo il download resta offline.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -213,51 +237,76 @@ fun SettingsScreen(
 
             SettingsSection(title = "Riconoscimento Pokémon") {
                 Text(
-                    NeuralPackManager.POKEMON_PACK_HINT +
-                        " Gallery reverse-image on-device; l’OCR resta per i reprint.",
+                    "Pack neurale on-device (AGPL-3.0). " +
+                        "Utile quando l’OCR è debole; dopo il download resta offline.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    neuralStatusLabel(pokemonNeural),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                if (pokemonNeural is NeuralPackState.Downloading) {
+                if (pokemonCatalogs.checking) {
+                    Text("Controllo elenco…", style = MaterialTheme.typography.bodyMedium)
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                pokemonCatalogs.message?.let { banner ->
+                    Text(
+                        banner,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (banner == PokemonCatalogController.OFFLINE) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+                val manualInstalled = viewModel.hasManualPokemonCatalog()
+                val catalogBusy = pokemonCatalogs.rows.any { it.downloading }
+                val manualCount = viewModel.manualPokemonCardCount()
+                    ?: if (pokemonCatalogs.rows.none { it.installed }) {
+                        (pokemonNeural as? NeuralPackState.Ready)?.cardCount
+                    } else {
+                        null
+                    }
+                if (pokemonNeural is NeuralPackState.Downloading && !catalogBusy) {
+                    Text(
+                        manualPokemonStatus(pokemonNeural, manualCount),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                     LinearProgressIndicator(
                         progress = { (pokemonNeural as NeuralPackState.Downloading).progress },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val busy = pokemonNeural is NeuralPackState.Downloading ||
-                        pokemonNeural is NeuralPackState.Loading
-                    Button(
-                        onClick = {
-                            importPokemon.launch(
-                                arrayOf("application/octet-stream", "*/*"),
-                            )
-                        },
-                        enabled = !busy,
-                    ) {
-                        Text(
-                            when (pokemonNeural) {
-                                is NeuralPackState.Ready -> "Reimporta .stcat"
-                                is NeuralPackState.Downloading -> "Import…"
-                                else -> "Importa .stcat"
-                            },
-                        )
+                } else if (manualInstalled) {
+                    Text("Importato", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        manualPokemonStatus(pokemonNeural, manualCount),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedButton(onClick = viewModel::deletePokemonPack) {
+                        Text("Rimuovi")
                     }
-                    if (pokemonNeural is NeuralPackState.Ready ||
-                        pokemonNeural is NeuralPackState.InstalledNotLoaded ||
-                        pokemonNeural is NeuralPackState.Error
+                }
+                pokemonCatalogs.rows.forEach { row ->
+                    PokemonCatalogRowCard(
+                        row = row,
+                        onDownload = { viewModel.downloadPokemonCatalog(row.id) },
+                        onDelete = { viewModel.deletePokemonCatalog(row.id) },
+                    )
+                }
+                TextButton(
+                    onClick = viewModel::refreshPokemonCatalogs,
+                    enabled = !pokemonCatalogs.checking,
+                ) {
+                    Text("Controlla aggiornamenti")
+                }
+                if (defaults.showDebugInfo) {
+                    val importBusy = pokemonNeural is NeuralPackState.Downloading ||
+                        pokemonNeural is NeuralPackState.Loading
+                    TextButton(
+                        onClick = {
+                            importPokemon.launch(arrayOf("application/octet-stream", "*/*"))
+                        },
+                        enabled = !importBusy,
                     ) {
-                        OutlinedButton(onClick = viewModel::deletePokemonPack, enabled = !busy) {
-                            Text("Rimuovi")
-                        }
+                        Text("Importa .stcat", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -311,6 +360,57 @@ private fun CardTraderTokenField(
         }
     }
 }
+
+@Composable
+private fun PokemonCatalogRowCard(
+    row: PokemonCatalogRow,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(row.name, style = MaterialTheme.typography.bodyMedium)
+        Text(row.statusLine(), style = MaterialTheme.typography.bodyMedium)
+        row.error?.let { error ->
+            Text(
+                error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (row.downloading) {
+            LinearProgressIndicator(
+                progress = { row.progress },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (!row.installed) {
+                Button(onClick = onDownload, enabled = !row.downloading) { Text("Scarica") }
+            } else if (row.updateAvailable) {
+                Button(onClick = onDownload, enabled = !row.downloading) { Text("Aggiorna") }
+            }
+            if (row.installed) {
+                OutlinedButton(onClick = onDelete, enabled = !row.downloading) { Text("Rimuovi") }
+            }
+        }
+    }
+}
+
+private fun manualPokemonStatus(state: NeuralPackState, cardCount: Int?): String = when (state) {
+    is NeuralPackState.Downloading -> "${state.label} (${(state.progress * 100).toInt()}%)"
+    is NeuralPackState.Loading -> "Caricamento…"
+    is NeuralPackState.Error -> "Errore: ${state.message}"
+    is NeuralPackState.Ready -> readyCount(cardCount ?: state.cardCount)
+    NeuralPackState.InstalledNotLoaded,
+    NeuralPackState.NotInstalled,
+    -> readyCount(cardCount)
+}
+
+private fun readyCount(cardCount: Int?): String =
+    if (cardCount != null && cardCount > 0) "Pronto · $cardCount carte" else "Pronto"
 
 @Composable
 private fun SettingsSection(

@@ -18,8 +18,9 @@ import okhttp3.Request
 
 /**
  * Downloads and caches Milo ONNX + per-game embedding catalogs.
- * Model/catalogs: Hugging Face HanClinto/milo — AGPL-3.0 (MTG NPZ);
- * Pokémon `.stcat` is built offline via tools/build_pokemon_stcat.
+ * Model/catalogs: Hugging Face HanClinto/milo — AGPL-3.0 (MTG NPZ).
+ * Pokémon `.stcat` files are imported by hand (`pokemon.stcat`) or downloaded
+ * into `vision/catalogs/` and combined for the gallery.
  */
 class NeuralPackManager(
     private val context: Context,
@@ -35,6 +36,7 @@ class NeuralPackManager(
     private val modelFile = File(root, "milo.onnx")
     private val mtgCatalogFile = File(root, "mtg.stcat")
     private val pokemonCatalogFile = File(root, "pokemon.stcat")
+    private val pokemonCountFile = File(root, "pokemon.count")
     private val mutex = Mutex()
 
     private val _mtgState = MutableStateFlow(inspectGame(Game.MTG))
@@ -64,7 +66,7 @@ class NeuralPackManager(
 
     fun isInstalled(game: Game): Boolean = when (game) {
         Game.MTG -> modelFile.exists() && mtgCatalogFile.exists()
-        Game.POKEMON -> modelFile.exists() && pokemonCatalogFile.exists()
+        Game.POKEMON -> modelFile.exists() && pokemonCatalogFiles().isNotEmpty()
     }
 
     fun isInstalled(): Boolean = isInstalled(Game.MTG)
@@ -94,6 +96,7 @@ class NeuralPackManager(
     }
 
     private fun loadGameLocked(game: Game): Boolean {
+        if (game == Game.POKEMON) return loadPokemonLocked()
         val catalogFile = catalogFile(game)
         val stateFlow = stateFlow(game)
         if (!modelFile.exists() || !catalogFile.exists()) {
@@ -130,6 +133,84 @@ class NeuralPackManager(
         }
     }
 
+    /**
+     * Manual `pokemon.stcat` plus every downloaded catalog. One corrupt file
+     * is skipped so the others still load.
+     */
+    private fun loadPokemonLocked(): Boolean {
+        val files = pokemonCatalogFiles()
+        if (files.isEmpty()) {
+            pokemonCatalog = null
+            _pokemonState.value = NeuralPackState.NotInstalled
+            return false
+        }
+        if (!modelFile.exists()) {
+            _pokemonState.value = NeuralPackState.InstalledNotLoaded
+            return false
+        }
+        val existing = pokemonCatalog
+        if (embedder != null && existing != null) {
+            _pokemonState.value = NeuralPackState.Ready(existing.size)
+            return true
+        }
+        return runCatching {
+            _pokemonState.value = NeuralPackState.Loading
+            if (embedder == null) {
+                embedder = MiloEmbedder(modelFile)
+            }
+            val loaded = files.mapNotNull { file ->
+                runCatching { EmbeddingCatalog.load(file) }
+                    .onFailure {
+                        com.scantrader.app.scan.ScanDebug.e("neural: skip corrupt ${file.name}", it)
+                    }
+                    .getOrNull()
+            }
+            val combined = EmbeddingCatalog.combine(loaded)
+                ?: error("Nessun catalogo Pokémon valido")
+            pokemonCatalog = combined
+            _pokemonState.value = NeuralPackState.Ready(combined.size)
+            com.scantrader.app.scan.ScanDebug.d(
+                "neural: ready game=POKEMON cards=${combined.size} files=${files.size}",
+            )
+            true
+        }.getOrElse { err ->
+            com.scantrader.app.scan.ScanDebug.e("neural: load failed game=POKEMON", err)
+            if (mtgCatalog == null) {
+                embedder?.close()
+                embedder = null
+            }
+            pokemonCatalog = null
+            _pokemonState.value = NeuralPackState.Error(err.message ?: "Caricamento fallito")
+            false
+        }
+    }
+
+    /** Download Milo if a Pokémon catalog is present, then reload the gallery. */
+    suspend fun ensurePokemonReady(): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            try {
+                if (!modelFile.exists() && pokemonCatalogFiles().isNotEmpty()) {
+                    _pokemonState.value = NeuralPackState.Downloading(0f, "Download modello…")
+                    downloadTo(MODEL_URL, modelFile) { }
+                }
+                pokemonCatalog = null
+                loadPokemonLocked()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                _pokemonState.value = NeuralPackState.Error(t.message ?: "Download modello fallito")
+                false
+            }
+        }
+    }
+
+    suspend fun reloadPokemonCatalog(): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            pokemonCatalog = null
+            loadPokemonLocked()
+        }
+    }
+
     /** Download Milo + Scryfall MTG NPZ → mtg.stcat. */
     suspend fun downloadAndInstall(
         onProgress: (String) -> Unit = {},
@@ -161,7 +242,7 @@ class NeuralPackManager(
                 mtgCatalog = converted
                 _mtgState.value = NeuralPackState.Ready(converted.size)
                 // Refresh Pokémon status if its catalog was already present.
-                if (pokemonCatalogFile.exists() && pokemonCatalog == null) {
+                if (pokemonCatalogFiles().isNotEmpty() && pokemonCatalog == null) {
                     _pokemonState.value = NeuralPackState.InstalledNotLoaded
                 }
                 onProgress("Pack neurale MTG pronto (${converted.size} carte)")
@@ -199,6 +280,7 @@ class NeuralPackManager(
                         tmp.copyTo(pokemonCatalogFile, overwrite = true)
                         tmp.delete()
                     }
+                    rememberManualCount(loaded.size)
                     if (!modelFile.exists()) {
                         _pokemonState.value = NeuralPackState.Downloading(0.3f, "Download modello…")
                         onProgress("Download modello Milo…")
@@ -207,12 +289,12 @@ class NeuralPackManager(
                                 NeuralPackState.Downloading(0.3f + p * 0.6f, "Download modello…")
                         }
                     }
-                    if (embedder == null) {
-                        embedder = MiloEmbedder(modelFile)
+                    pokemonCatalog = null
+                    if (!loadPokemonLocked()) {
+                        _pokemonState.value = NeuralPackState.Error("Import fallito")
+                        return@withLock false
                     }
-                    pokemonCatalog = loaded
-                    _pokemonState.value = NeuralPackState.Ready(loaded.size)
-                    onProgress("Pack Pokémon pronto (${loaded.size} carte)")
+                    onProgress("Pack Pokémon pronto (${pokemonCatalog?.size ?: loaded.size} carte)")
                     true
                 } ?: run {
                     _pokemonState.value = NeuralPackState.Error("Impossibile leggere il file")
@@ -233,15 +315,12 @@ class NeuralPackManager(
             try {
                 val loaded = EmbeddingCatalog.load(file)
                 loaded.save(pokemonCatalogFile)
+                rememberManualCount(loaded.size)
                 if (!modelFile.exists()) {
                     downloadTo(MODEL_URL, modelFile) {}
                 }
-                if (embedder == null) {
-                    embedder = MiloEmbedder(modelFile)
-                }
-                pokemonCatalog = loaded
-                _pokemonState.value = NeuralPackState.Ready(loaded.size)
-                true
+                pokemonCatalog = null
+                loadPokemonLocked()
             } catch (t: Throwable) {
                 _pokemonState.value = NeuralPackState.Error(t.message ?: "Import fallito")
                 false
@@ -259,10 +338,15 @@ class NeuralPackManager(
             Game.POKEMON -> {
                 pokemonCatalog = null
                 pokemonCatalogFile.delete()
-                _pokemonState.value = NeuralPackState.NotInstalled
+                pokemonCountFile.delete()
+                _pokemonState.value = if (pokemonCatalogFiles().isEmpty()) {
+                    NeuralPackState.NotInstalled
+                } else {
+                    NeuralPackState.InstalledNotLoaded
+                }
             }
         }
-        if (!mtgCatalogFile.exists() && !pokemonCatalogFile.exists()) {
+        if (!mtgCatalogFile.exists() && pokemonCatalogFiles().isEmpty()) {
             embedder?.close()
             embedder = null
             modelFile.delete()
@@ -270,6 +354,17 @@ class NeuralPackManager(
     }
 
     fun delete() = delete(Game.MTG)
+
+    fun hasManualPokemonCatalog(): Boolean = pokemonCatalogFile.exists()
+
+    fun manualPokemonCardCount(): Int? {
+        if (!pokemonCatalogFile.exists() || !pokemonCountFile.exists()) return null
+        return pokemonCountFile.readText().trim().toIntOrNull()?.takeIf { it > 0 }
+    }
+
+    private fun rememberManualCount(count: Int) {
+        if (count > 0) pokemonCountFile.writeText(count.toString())
+    }
 
     private fun catalogFile(game: Game): File = when (game) {
         Game.MTG -> mtgCatalogFile
@@ -289,10 +384,19 @@ class NeuralPackManager(
     }
 
     private fun inspectGame(game: Game): NeuralPackState {
-        val cat = catalogFile(game)
-        return if (modelFile.exists() && cat.exists()) NeuralPackState.InstalledNotLoaded
-        else if (cat.exists() && !modelFile.exists()) NeuralPackState.InstalledNotLoaded
-        else NeuralPackState.NotInstalled
+        val present = when (game) {
+            Game.MTG -> mtgCatalogFile.exists()
+            Game.POKEMON -> pokemonCatalogFiles().isNotEmpty()
+        }
+        return if (present) NeuralPackState.InstalledNotLoaded else NeuralPackState.NotInstalled
+    }
+
+    private fun pokemonCatalogFiles(): List<File> {
+        val downloaded = File(root, "catalogs").listFiles { file ->
+            file.isFile && file.name.endsWith(".stcat") && !file.name.endsWith(".part")
+        }?.sortedBy { it.name.lowercase() } ?: emptyList()
+        val manual = if (pokemonCatalogFile.exists()) listOf(pokemonCatalogFile) else emptyList()
+        return downloaded + manual
     }
 
     private fun downloadTo(url: String, dest: File, onFraction: (Float) -> Unit) {
@@ -329,8 +433,6 @@ class NeuralPackManager(
         const val CATALOG_NPZ_URL =
             "$HF/catalogs/milo1-scryfall-mtg-2026-07-09.npz"
         const val APPROX_SIZE_LABEL = "~60 MB"
-        const val POKEMON_PACK_HINT =
-            "Importa un .stcat generato con tools/build_pokemon_stcat (AGPL Milo)."
     }
 }
 

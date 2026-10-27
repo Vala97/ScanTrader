@@ -7,7 +7,10 @@ import com.scantrader.app.data.catalog.CardLanguageResolver
 import com.scantrader.app.data.export.BlueprintNames
 import com.scantrader.app.data.catalog.CardTraderPrices
 import com.scantrader.app.data.catalog.CatalogLookup
+import com.scantrader.app.data.catalog.LocalSetCatalog
 import com.scantrader.app.data.catalog.ScryfallEurPrices
+import com.scantrader.app.data.catalog.ScryfallSetDownloader
+import com.scantrader.app.data.catalog.TcgdexSetDownloader
 import com.scantrader.app.data.db.AppDatabase
 import com.scantrader.app.data.prefs.SecretStore
 import com.scantrader.app.data.prefs.UserPreferences
@@ -16,14 +19,17 @@ import com.scantrader.app.data.repo.CardRepository
 import com.scantrader.app.network.NetworkModule
 import com.scantrader.app.network.scryfall.ScryfallApi
 import com.scantrader.app.network.scryfall.ScryfallClient
+import com.scantrader.app.network.scryfall.ScryfallSetApi
 import com.scantrader.app.network.tcgdex.CachingTcgdexApi
 import com.scantrader.app.network.tcgdex.TcgdexApi
 import com.scantrader.app.network.tcgdex.TcgdexResponseCache
+import com.scantrader.app.network.tcgdex.TcgdexSetApi
 import java.io.File
 import com.scantrader.app.scan.CardOcr
 import com.scantrader.app.scan.ScanSession
 import com.scantrader.app.vision.GalleryMatcher
 import com.scantrader.app.vision.NeuralPackManager
+import com.scantrader.app.vision.PokemonCatalogController
 import com.scantrader.app.vision.VisualRanker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +50,8 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
     lateinit var visualRanker: VisualRanker
         private set
     lateinit var neuralPack: NeuralPackManager
+        private set
+    lateinit var pokemonCatalogs: PokemonCatalogController
         private set
     lateinit var galleryMatcher: GalleryMatcher
         private set
@@ -68,15 +76,23 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         super.onCreate()
         database = AppDatabase.create(this)
         repository = CardRepository(database)
-        scryfall = ScryfallClient(
-            NetworkModule.retrofit("https://api.scryfall.com/", http)
-                .create(ScryfallApi::class.java),
-        )
+        val scryfallRetrofit = NetworkModule.retrofit("https://api.scryfall.com/", http)
+        scryfall = ScryfallClient(scryfallRetrofit.create(ScryfallApi::class.java))
+        val tcgdexRetrofit = NetworkModule.retrofit("https://api.tcgdex.net/", http)
         val tcgdex = CachingTcgdexApi(
-            NetworkModule.retrofit("https://api.tcgdex.net/", http).create(TcgdexApi::class.java),
+            tcgdexRetrofit.create(TcgdexApi::class.java),
             TcgdexResponseCache(File(cacheDir, "tcgdex")),
         )
-        catalog = CatalogLookup(scryfall, tcgdex)
+        val localSets = LocalSetCatalog(
+            dir = File(cacheDir, "set-catalog"),
+            mtgSource = ScryfallSetDownloader(
+                scryfallRetrofit.create(ScryfallSetApi::class.java),
+                scryfall.gate,
+            ),
+            pokemonSource = TcgdexSetDownloader(tcgdexRetrofit.create(TcgdexSetApi::class.java)),
+            scope = appScope,
+        )
+        catalog = CatalogLookup(scryfall, tcgdex, localSets)
         scryfallEur = ScryfallEurPrices(scryfall)
         secrets = SecretStore(this)
         cardTraderPrices = CardTraderPrices(
@@ -92,6 +108,12 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         ocr = CardOcr()
         visualRanker = VisualRanker(http)
         neuralPack = NeuralPackManager(this, http)
+        pokemonCatalogs = PokemonCatalogController(
+            visionDir = File(filesDir, "vision"),
+            baseHttp = http,
+            scope = appScope,
+            onChanged = { neuralPack.ensurePokemonReady() },
+        )
         galleryMatcher = GalleryMatcher(neuralPack, scryfall, tcgdex)
         appScope.launch {
             val defaults = prefs.currentDefaults()

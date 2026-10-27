@@ -7,6 +7,7 @@ import com.scantrader.app.scan.FrameNameGate
 import com.scantrader.app.vision.MatchFusion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -739,6 +740,144 @@ class MatchFusionTest {
             "il nome letto («Staravia di Ubaldo») non coincide con «Iono's Tadbulb»",
             MatchFusion.signalPhrase("nameConflict name=Staravia di Ubaldo top=Iono's Tadbulb"),
         )
+    }
+
+    @Test
+    fun setAndCollectorWithoutAReadNameDoesNotAutoAccept() {
+        // Local index and online set+number hits share this score. fra 13 with no
+        // title must not autosave Kindred Judgment (cn was a truncated 130).
+        val nameless = ParsedCardText(
+            nameGuess = null,
+            collectorNumber = "13",
+            setCode = "fra",
+        )
+        val kindred = IdentifiedCard(
+            game = Game.MTG,
+            name = "Kindred Judgment",
+            setCode = "fra",
+            setName = "Forgotten Realms",
+            collectorNumber = "13",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+        )
+        val strictHit = MatchFusion.evaluateAutoMatch(kindred, nameless)
+        assertFalse(strictHit.accepted)
+        assertFalse(strictHit.strict)
+        assertFalse(strictHit.nameOk)
+        assertFalse(MatchFusion.allowsAutoSave(strictHit))
+
+        val online = kindred.copy(ocrScore = 0.78f, matchConfidence = 0.68f)
+        val softHit = MatchFusion.evaluateAutoMatch(online, nameless)
+        assertFalse(softHit.accepted)
+        assertFalse(softHit.strict)
+        assertFalse(MatchFusion.allowsAutoSave(softHit))
+
+        val winter = IdentifiedCard(
+            game = Game.MTG,
+            name = "Winter, Team Player",
+            printedName = "Winter, Giocatore di Squadra",
+            setCode = "fra",
+            setName = "Forgotten Realms",
+            collectorNumber = "256",
+            ocrScore = 0.98f,
+            visualScore = null,
+            matchConfidence = 0.98f,
+        )
+        val truncated = ParsedCardText(
+            nameGuess = "Winter, Giocatore di Squadr",
+            collectorNumber = "256",
+            setCode = "fra",
+        )
+        assertTrue(FrameNameGate.agrees(winter, truncated))
+        val truncatedHit = MatchFusion.evaluateAutoMatch(winter, truncated)
+        assertTrue(truncatedHit.accepted)
+        assertTrue(truncatedHit.strict)
+        assertTrue(truncatedHit.nameOk)
+        assertTrue(MatchFusion.allowsAutoSave(truncatedHit))
+
+        val fullTitle = truncated.copy(nameGuess = "Winter, Giocatore di Squadra")
+        val fullHit = MatchFusion.evaluateAutoMatch(winter, fullTitle)
+        assertTrue(fullHit.accepted)
+        assertTrue(fullHit.strict)
+        assertTrue(MatchFusion.allowsAutoSave(fullHit))
+
+        val otherWinter = winter.copy(
+            name = "Winter, Recluso Tormentato",
+            printedName = "Winter, Recluso Tormentato",
+            collectorNumber = "240",
+        )
+        val wrongWinter = MatchFusion.evaluateAutoMatch(
+            otherWinter,
+            truncated.copy(collectorNumber = "240"),
+        )
+        assertFalse(wrongWinter.accepted)
+        assertFalse(MatchFusion.allowsAutoSave(wrongWinter))
+
+        val named = nameless.copy(nameGuess = "Kindred Judgment")
+        val agreed = MatchFusion.evaluateAutoMatch(kindred, named)
+        assertTrue(agreed.accepted)
+        assertTrue(agreed.strict)
+        assertTrue(agreed.nameOk)
+        assertTrue(MatchFusion.allowsAutoSave(agreed))
+    }
+
+    @Test
+    fun confidenceSliderGatesAutosaveAndKeepsTheSafetyRules() {
+        val strong = MatchFusion.score(
+            card("Lightning Bolt", "m21", "161", ocr = 0.90f, visual = 0.88f),
+            parsed,
+        )
+        val strict = MatchFusion.evaluateAutoMatch(strong, parsed)
+        assertTrue(strict.strict)
+        assertTrue(MatchFusion.allowsAutoSave(strict, 0.74f))
+        assertFalse(MatchFusion.allowsAutoSave(strict, 0.99f))
+        val raised = MatchFusion.confirmMatchNote(
+            decision = strict,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+            minConfidence = 0.99f,
+        )
+        assertEquals("Conferma a mano", raised.title)
+        assertNull(MatchFusion.confirmNoteForDisplay(raised, showDebug = false))
+        assertEquals(raised, MatchFusion.confirmNoteForDisplay(raised, showDebug = true))
+
+        val softParsed = ParsedCardText("Lightning Bolt", "181", "dft")
+        val partial = IdentifiedCard(
+            game = Game.MTG,
+            name = "Lightning Bolt",
+            setCode = "dft",
+            setName = "Aetherdrift",
+            collectorNumber = "181",
+            ocrScore = 0.78f,
+            visualScore = null,
+            matchConfidence = 0.68f,
+        )
+        val soft = MatchFusion.evaluateAutoMatch(partial, softParsed)
+        assertTrue(soft.accepted)
+        assertTrue(soft.nameOk)
+        assertFalse(soft.strict)
+        assertFalse(MatchFusion.allowsAutoSave(soft, 0.74f))
+        assertTrue(MatchFusion.allowsAutoSave(soft, 0.50f))
+
+        val nameless = MatchFusion.AutoMatchDecision(
+            accepted = true,
+            strict = false,
+            reason = "cn+set",
+            nameOk = false,
+            confidence = 0.90f,
+        )
+        assertFalse(MatchFusion.allowsAutoSave(nameless, 0.50f))
+        val conflict = nameless.copy(nameConflict = true, nameOk = false, reason = "cn+neural")
+        assertFalse(MatchFusion.allowsAutoSave(conflict, 0.50f))
+
+        val autoNote = MatchFusion.confirmMatchNote(
+            decision = strict,
+            fromAutoScan = true,
+            autoSaveWaitSeconds = 5,
+        )
+        assertEquals("Salvataggio automatico", autoNote.title)
+        assertEquals(autoNote, MatchFusion.confirmNoteForDisplay(autoNote, showDebug = false))
     }
 
     private fun card(

@@ -41,6 +41,31 @@ class CardLanguageResolverTest {
     }
 
     @Test
+    fun morningtideItalianTitleDoesNotNeedAnItalianPrinting() = runBlocking {
+        var calls = 0
+        val resolver = resolver { _, _ ->
+            calls++
+            throw IOException("no italian printing")
+        }
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Blightsoil Druid",
+            setCode = "mor",
+            setName = "Morningtide",
+            collectorNumber = "59",
+            scryfallId = "english-mor-59",
+            catalogName = "Blightsoil Druid",
+            catalogLang = "en",
+            priceEur = "0.40",
+        )
+        val detection = resolver.explain(card, "Druido del Suolo Avvizzito", null)
+        assertEquals(CardLanguage.ITALIAN, detection.language)
+        assertTrue(detection.evidence.contains("not-en"))
+        assertTrue(detection.logLine().startsWith("lang: Italiano evidence="))
+        assertEquals(0, calls)
+    }
+
+    @Test
     fun aFailedLookupIsNotCachedAndDoesNotInventALanguage() = runBlocking {
         var calls = 0
         var fail = true

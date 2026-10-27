@@ -9,6 +9,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.ui.collection.CollectionBrowseState
+import com.scantrader.app.ui.collection.decodeCollectionBrowse
+import com.scantrader.app.ui.collection.encodeCollectionBrowse
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -30,6 +33,12 @@ class UserPreferences(private val context: Context) {
                 ?.takeIf { it in AUTO_SAVE_WAIT_OPTIONS }
                 ?: 0,
             detectCardLanguage = prefs[DETECT_LANGUAGE] ?: true,
+            autoSaveConfidencePercent = prefs[AUTO_SAVE_CONFIDENCE]
+                ?.takeIf { it in AUTO_SAVE_CONFIDENCE_RANGE }
+                ?: AUTO_SAVE_CONFIDENCE_DEFAULT,
+            showDebugInfo = prefs[SHOW_DEBUG_INFO] ?: false,
+            neuralPromptShown = prefs[NEURAL_PROMPT_SHOWN] ?: false,
+            onboardingCompleted = prefs[ONBOARDING_COMPLETED] ?: false,
         )
     }
 
@@ -66,7 +75,46 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { it[DETECT_LANGUAGE] = enabled }
     }
 
+    suspend fun setAutoSaveConfidencePercent(percent: Int) {
+        val safe = percent.takeIf { it in AUTO_SAVE_CONFIDENCE_RANGE } ?: return
+        context.dataStore.edit { it[AUTO_SAVE_CONFIDENCE] = safe }
+    }
+
+    suspend fun setShowDebugInfo(enabled: Boolean) {
+        context.dataStore.edit { it[SHOW_DEBUG_INFO] = enabled }
+    }
+
+    suspend fun setNeuralPromptShown(shown: Boolean) {
+        context.dataStore.edit { it[NEURAL_PROMPT_SHOWN] = shown }
+    }
+
+    suspend fun setOnboardingCompleted(completed: Boolean) {
+        context.dataStore.edit { it[ONBOARDING_COMPLETED] = completed }
+    }
+
+    /** Introduction finished or skipped. Also retires the old pack dialog. */
+    suspend fun completeOnboarding() {
+        context.dataStore.edit { prefs ->
+            prefs[ONBOARDING_COMPLETED] = true
+            prefs[NEURAL_PROMPT_SHOWN] = true
+        }
+    }
+
     suspend fun currentDefaults(): ScanDefaults = defaults.first()
+
+    suspend fun collectionBrowse(collectionId: Long): CollectionBrowseState {
+        val raw = context.dataStore.data.first()[browseKey(collectionId)]
+        return decodeCollectionBrowse(raw)
+    }
+
+    suspend fun setCollectionBrowse(collectionId: Long, state: CollectionBrowseState) {
+        val key = browseKey(collectionId)
+        context.dataStore.edit { prefs ->
+            if (!state.active) prefs.remove(key) else prefs[key] = encodeCollectionBrowse(state)
+        }
+    }
+
+    private fun browseKey(collectionId: Long) = stringPreferencesKey("collection_browse_$collectionId")
 
     private companion object {
         val LANGUAGE = stringPreferencesKey("default_language")
@@ -76,11 +124,24 @@ class UserPreferences(private val context: Context) {
         val ZOOM_RATIO = floatPreferencesKey("scan_zoom_ratio")
         val AUTO_SAVE_WAIT_SECONDS = intPreferencesKey("auto_save_wait_seconds")
         val DETECT_LANGUAGE = booleanPreferencesKey("detect_card_language")
+        val AUTO_SAVE_CONFIDENCE = intPreferencesKey("auto_save_confidence_percent")
+        val SHOW_DEBUG_INFO = booleanPreferencesKey("show_debug_info")
+        val NEURAL_PROMPT_SHOWN = booleanPreferencesKey("neural_prompt_shown")
+        val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
     }
 }
 
 /** Allowed auto-save wait values (0 = disabled). */
 val AUTO_SAVE_WAIT_OPTIONS = listOf(0, 2, 3, 5, 8, 10)
+
+/** Inclusive percent range for the autosave confidence slider. */
+val AUTO_SAVE_CONFIDENCE_RANGE = 50..99
+
+/**
+ * Current strict bar in [com.scantrader.app.vision.MatchFusion.AUTO_CONFIDENCE_MIN],
+ * as a whole percent. 0.74 is exactly 74.
+ */
+const val AUTO_SAVE_CONFIDENCE_DEFAULT = 74
 
 data class ScanDefaults(
     val language: CardLanguage,
@@ -91,4 +152,12 @@ data class ScanDefaults(
     val autoSaveWaitSeconds: Int = 0,
     /** When true, confirm preselects the language read on the card. */
     val detectCardLanguage: Boolean = true,
+    /** Autosave only when match confidence is at least this percent. */
+    val autoSaveConfidencePercent: Int = AUTO_SAVE_CONFIDENCE_DEFAULT,
+    /** Technical confirm copy, such as the «Conferma a mano» banner. */
+    val showDebugInfo: Boolean = false,
+    /** The first-launch pack dialog was answered. Skips the introduction. */
+    val neuralPromptShown: Boolean = false,
+    /** The introduction was finished, skipped, or replaced an answered pack prompt. */
+    val onboardingCompleted: Boolean = false,
 )

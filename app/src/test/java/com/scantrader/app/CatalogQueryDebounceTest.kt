@@ -37,6 +37,43 @@ class CatalogQueryDebounceTest {
     }
 
     @Test
+    fun silenziareEcoIAndLAreOneStableRead() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, requeryAfterMs = 2_000L, now = { 0L })
+        val capitalI = mtg("Silenziare I'Eco", "66")
+        val lowercaseL = mtg("Silenziare l'Eco", "66")
+        assertEquals(
+            debounce.agreementKey("silenziare i'eco|66|"),
+            debounce.agreementKey("silenziare l'eco|66|"),
+        )
+        assertTrue(!debounce.shouldQuery(capitalI))
+        assertTrue(debounce.shouldQuery(lowercaseL))
+        assertEquals("Silenziare I'Eco", debounce.votedFrame()?.name)
+        assertTrue(debounce.seenThisBefore("Silenziare l'Eco|66|"))
+        assertTrue(!debounce.shouldQuery(mtg("Silenziare l\u2019Eco", "66")))
+        assertTrue(!debounce.shouldQuery("Silenziare l\u00B4Eco|66|"))
+    }
+
+    @Test
+    fun ocrLookalikesShareTheAgreementKeyOnly() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, requeryAfterMs = 2_000L, now = { 0L })
+        assertEquals(
+            debounce.agreementKey("Risvegliare I'Inferno|74|"),
+            debounce.agreementKey("Risvegliare l\u2019Inferno|74|"),
+        )
+        assertEquals(
+            debounce.agreementKey("Bolto|10|"),
+            debounce.agreementKey("B0lt0|1O|"),
+        )
+        assertTrue(debounce.agreementKey("Shock|10|") != debounce.agreementKey("Shock|11|"))
+        assertTrue(!debounce.shouldQuery(mtg("Bolto", "10")))
+        assertTrue(debounce.shouldQuery(mtg("B0lt0", "1O")))
+        assertEquals("B0lt0", debounce.votedFrame()?.name)
+        val other = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
+        assertTrue(!other.shouldQuery("Silenziare I'Eco|66|"))
+        assertTrue(!other.shouldQuery("Calcolare la Delusione|67|"))
+    }
+
+    @Test
     fun sameNormalizedIdCountsAsStable() {
         val debounce = CatalogQueryDebounce(stableFramesNeeded = 2)
         assertEquals("bolla protettiva|80|", debounce.normalize("  Bolla   Protettiva|80| "))
@@ -200,6 +237,12 @@ class CatalogQueryDebounceTest {
         assertTrue(debounce.shouldQuery(full))
         assertEquals("Maxus del Team Rocket", debounce.votedFrame()?.name)
     }
+
+    private fun mtg(name: String, cn: String) = Frame(
+        name = name,
+        collectorNumber = cn,
+        pokemon = false,
+    )
 
     private fun frame(name: String?, cn: String?, set: String?, count: Int?) = Frame(
         name = name,

@@ -23,7 +23,10 @@ data class CollectionEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("collectionId")],
+    indices = [
+        Index("collectionId"),
+        Index(value = ["collectionId", "copyKey"], unique = true, name = CardStockMigration.INDEX),
+    ],
 )
 data class CardEntryEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -54,6 +57,21 @@ data class CardEntryEntity(
     /** English printing's Scryfall id when [scryfallId] is a localized print. */
     val catalogScryfallId: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
+    /** Finish without the foil bit (`etched`, `frame:showcase`, `promo:…`). Null for a normal print. */
+    val variant: String? = null,
+    /** TCGdex card id. Pokémon stock key when no Scryfall id is stored. */
+    val tcgdexId: String? = null,
+    /**
+     * Merge key for this row inside [collectionId]. See [StockKey].
+     * Empty only before [CardStockMigration] fills it.
+     */
+    val copyKey: String = "",
+    /**
+     * Seller price typed in the collection. When set, it replaces the automatic
+     * EUR amount in the grid and in the CardTrader CSV. Null keeps [priceEur]
+     * or [priceEurFoil]. Pokémon never stores a foil price.
+     */
+    val manualPriceEur: String? = null,
 )
 
 data class CollectionWithCount(

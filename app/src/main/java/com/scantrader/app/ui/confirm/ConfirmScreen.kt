@@ -126,9 +126,10 @@ fun ConfirmScreen(
     val gatedKey = viewModel.autoMatchCardKey
     val selectedKey = selected?.identityKey()
     val selectedMatchesGate = gatedKey == null || selectedKey == null || gatedKey == selectedKey
+    val minConfidence = defaults.autoSaveConfidencePercent / 100f
     val autoSaveOffered = viewModel.fromAutoScan &&
         defaults.autoSaveWaitSeconds > 0 &&
-        MatchFusion.allowsAutoSave(autoMatch)
+        MatchFusion.allowsAutoSave(autoMatch, minConfidence)
     autoSaveOfferedState.value = autoSaveOffered
     val saveLabels = AutoSaveControl.present(
         offered = autoSaveOffered,
@@ -139,12 +140,16 @@ fun ConfirmScreen(
     )
     val autoSaveArmed = saveLabels.armed
     val matchNote = autoMatch?.let { decision ->
-        MatchFusion.confirmMatchNote(
-            decision = decision,
-            fromAutoScan = viewModel.fromAutoScan,
-            autoSaveWaitSeconds = defaults.autoSaveWaitSeconds,
-            selectedMatchesGate = selectedMatchesGate,
-            autoSaveCancelled = autoSaveCancelled,
+        MatchFusion.confirmNoteForDisplay(
+            MatchFusion.confirmMatchNote(
+                decision = decision,
+                fromAutoScan = viewModel.fromAutoScan,
+                autoSaveWaitSeconds = defaults.autoSaveWaitSeconds,
+                selectedMatchesGate = selectedMatchesGate,
+                autoSaveCancelled = autoSaveCancelled,
+                minConfidence = minConfidence,
+            ),
+            showDebug = defaults.showDebugInfo,
         )
     }
 
@@ -166,6 +171,7 @@ fun ConfirmScreen(
 
     fun doSave() {
         val card = selected ?: return
+        if (viewModel.candidates.value.none { it.identityKey() == card.identityKey() }) return
         val target = collectionId ?: return
         cancelAutoSave(AutoSaveControl.Gesture.TAP)
         viewModel.save(card, target, quantity, language, condition, foil, onSaved)
@@ -208,16 +214,18 @@ fun ConfirmScreen(
             priced.priceCurrency != card.priceCurrency
         if (changed) selected = priced
     }
-    LaunchedEffect(candidates) {
-        val locked = viewModel.autoMatchCardKey
-        val preferred = candidates.firstOrNull { locked != null && it.identityKey() == locked }
-            ?: candidates.firstOrNull()
-        val lockedMismatch = locked != null &&
-            selected?.identityKey() != locked &&
-            preferred?.identityKey() == locked
-        if (selected == null || candidates.none { sameCard(it, selected) } || lockedMismatch) {
-            selected = preferred
-        }
+    val lockedNow = viewModel.autoMatchCardKey
+    val preferredNow = candidates.firstOrNull { lockedNow != null && it.identityKey() == lockedNow }
+        ?: candidates.firstOrNull()
+    val lockedMismatchNow = lockedNow != null &&
+        selected?.identityKey() != lockedNow &&
+        preferredNow?.identityKey() == lockedNow
+    // Follow the live list in this frame. A catalog lookup clears it, so the
+    // previous card cannot stay on screen until the next effect runs.
+    if ((selected == null || candidates.none { sameCard(it, selected) } || lockedMismatchNow) &&
+        selected != preferredNow
+    ) {
+        selected = preferredNow
     }
     LaunchedEffect(collections, viewModel.preferredCollectionId) {
         val preferred = viewModel.preferredCollectionId
@@ -252,7 +260,8 @@ fun ConfirmScreen(
             secondsLeftState.intValue = 0
             val card = selectedState.value
             val target = collectionIdState.value
-            if (card != null && card.identityKey() == key && target != null && !viewModel.saving.value) {
+            val stillShown = viewModel.candidates.value.any { it.identityKey() == key }
+            if (card != null && card.identityKey() == key && stillShown && target != null && !viewModel.saving.value) {
                 ScanDebug.d("autosave: saved")
                 viewModel.save(
                     card,
@@ -372,14 +381,16 @@ fun ConfirmScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        current.confidenceLabel()?.let { pct ->
-                            val visual = current.visualScore?.let { v -> " · arte ${(v * 100).toInt()}%" }.orEmpty()
-                            Text(
-                                "Match $pct$visual",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.tertiary,
-                                fontWeight = FontWeight.Medium,
-                            )
+                        if (defaults.showDebugInfo) {
+                            current.confidenceLabel()?.let { pct ->
+                                val visual = current.visualScore?.let { v -> " · arte ${(v * 100).toInt()}%" }.orEmpty()
+                                Text(
+                                    "Match $pct$visual",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
                         }
                         Text(
                             text = priceLine?.let { "Prezzo medio: $it" } ?: "Prezzo medio: n/d",
@@ -557,12 +568,14 @@ fun ConfirmScreen(
                                     fontWeight = FontWeight.Medium,
                                 )
                             }
-                            card.confidenceLabel()?.let { pct ->
-                                Text(
-                                    "Match $pct",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.tertiary,
-                                )
+                            if (defaults.showDebugInfo) {
+                                card.confidenceLabel()?.let { pct ->
+                                    Text(
+                                        "Match $pct",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                    )
+                                }
                             }
                         }
                     }

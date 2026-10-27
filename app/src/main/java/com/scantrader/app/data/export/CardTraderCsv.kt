@@ -2,6 +2,7 @@ package com.scantrader.app.data.export
 
 import com.scantrader.app.data.catalog.ExpansionCodes
 import com.scantrader.app.data.db.CardEntryEntity
+import com.scantrader.app.data.db.CardPrice
 import com.scantrader.app.data.model.Game
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -97,14 +98,12 @@ object CardTraderCsv {
     }
 
     /**
-     * Magic foil rows use the foil EUR price when it is present.
+     * A manual price replaces the automatic one.
+     * Magic foil rows otherwise use the foil EUR price when it is present.
      * Pokémon always uses the non-foil EUR. A holo amount is never written.
      * A missing or non-positive price leaves the cell empty.
      */
-    fun exportPriceCents(entry: CardEntryEntity): String? {
-        val raw = if (entry.game == Game.POKEMON || !entry.foil) entry.priceEur else entry.priceEurFoil
-        return priceToCents(raw)
-    }
+    fun exportPriceCents(entry: CardEntryEntity): String? = priceToCents(CardPrice.exportRaw(entry))
 
     fun priceToCents(raw: String?): String? {
         if (raw.isNullOrBlank()) return null

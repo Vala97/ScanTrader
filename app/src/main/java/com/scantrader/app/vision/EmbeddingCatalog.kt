@@ -81,6 +81,33 @@ class EmbeddingCatalog private constructor(
         fun create(ids: Array<String>, embeddings: FloatArray, dim: Int): EmbeddingCatalog =
             EmbeddingCatalog(ids, embeddings, dim)
 
+        /**
+         * One gallery from several catalogs of the same dimension.
+         * Later catalogs override the same card id. A different dimension is skipped.
+         */
+        fun combine(parts: List<EmbeddingCatalog>): EmbeddingCatalog? {
+            val usable = parts.filter { it.size > 0 && it.dim > 0 }
+            if (usable.isEmpty()) return null
+            val dim = usable.first().dim
+            val byId = LinkedHashMap<String, FloatArray>()
+            for (cat in usable) {
+                if (cat.dim != dim) continue
+                for (i in cat.cardIds.indices) {
+                    val from = i * dim
+                    byId[cat.cardIds[i]] = cat.embeddings.copyOfRange(from, from + dim)
+                }
+            }
+            if (byId.isEmpty()) return null
+            val ids = byId.keys.toTypedArray()
+            val flat = FloatArray(ids.size * dim)
+            var offset = 0
+            for (vec in byId.values) {
+                System.arraycopy(vec, 0, flat, offset, dim)
+                offset += dim
+            }
+            return EmbeddingCatalog(ids, flat, dim)
+        }
+
         fun fromNpz(npzFile: File): EmbeddingCatalog {
             ZipFile(npzFile).use { zip ->
                 val embEntry = zip.getEntry("embeddings.npy")

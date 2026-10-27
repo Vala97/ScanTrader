@@ -90,11 +90,34 @@ object MatchFusion {
         val title: String,
         val body: String,
         val tone: ConfirmMatchTone,
-    )
+    ) {
+        /** Recognition explanation. Hidden unless debug info is on. Autosave status stays. */
+        val debugOnly: Boolean
+            get() = title == "Conferma a mano" || title == "Riconoscimento forte"
+    }
 
-    /** Configurable confirm-screen wait may fire only for a strict accept. */
-    fun allowsAutoSave(decision: AutoMatchDecision?): Boolean =
-        decision != null && decision.accepted && decision.strict
+    /**
+     * Autosave needs the existing accept, plus confidence at or above [minConfidence].
+     * The default is the strict bar (74%). Raising it keeps a strong match on the
+     * confirm screen. Lowering it can save a match whose title agrees, and still
+     * refuses a set+collector hit with no agreeing title and a name conflict.
+     */
+    fun allowsAutoSave(
+        decision: AutoMatchDecision?,
+        minConfidence: Float = AUTO_CONFIDENCE_MIN,
+    ): Boolean {
+        if (decision == null || !decision.accepted || decision.nameConflict) return false
+        val confidence = decision.confidence ?: return false
+        if (confidence + 1e-4f < minConfidence) return false
+        if (decision.strict) return true
+        return minConfidence + 1e-4f < AUTO_CONFIDENCE_MIN && decision.nameOk
+    }
+
+    /** «Conferma a mano» and the strong-match explanation are debug copy. */
+    fun confirmNoteForDisplay(note: ConfirmMatchNote, showDebug: Boolean): ConfirmMatchNote? {
+        if (showDebug || !note.debugOnly) return note
+        return null
+    }
 
     fun confirmMatchNote(
         decision: AutoMatchDecision,
@@ -102,39 +125,42 @@ object MatchFusion {
         autoSaveWaitSeconds: Int,
         selectedMatchesGate: Boolean = true,
         autoSaveCancelled: Boolean = false,
+        minConfidence: Float = AUTO_CONFIDENCE_MIN,
     ): ConfirmMatchNote {
+        val willSave = allowsAutoSave(decision, minConfidence)
         val pct = decision.confidence?.let { confidence ->
             "${(confidence * 100f).toInt().coerceIn(0, 100)}%"
         } ?: "senza percentuale"
+        val thresholdPct = (minConfidence * 100f).toInt().coerceIn(0, 100)
         val signal = signalPhrase(decision.reason)
         val waitOn = autoSaveWaitSeconds > 0
         return when {
-            decision.strict && fromAutoScan && waitOn && autoSaveCancelled ->
+            willSave && fromAutoScan && waitOn && autoSaveCancelled ->
                 ConfirmMatchNote(
                     title = "Salvataggio automatico annullato",
                     body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
                         "Hai modificato la scheda: tocca Salva in collezione per aggiungere la carta.",
                     tone = ConfirmMatchTone.CONFIRM,
                 )
-            decision.strict && fromAutoScan && waitOn && !selectedMatchesGate -> ConfirmMatchNote(
+            willSave && fromAutoScan && waitOn && !selectedMatchesGate -> ConfirmMatchNote(
                 title = "Conferma a mano",
                 body = "Il riconoscimento forte ($pct) riguarda un’altra stampa. " +
                     "Tocca Salva per aggiungere la carta scelta.",
                 tone = ConfirmMatchTone.BLOCKED,
             )
-            decision.strict && fromAutoScan && waitOn && selectedMatchesGate -> ConfirmMatchNote(
+            willSave && fromAutoScan && waitOn && selectedMatchesGate -> ConfirmMatchNote(
                 title = "Salvataggio automatico",
                 body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
                     "Se non tocchi nulla, la carta entra in collezione da sola.",
                 tone = ConfirmMatchTone.AUTO_SAVE,
             )
-            decision.strict && fromAutoScan && !waitOn -> ConfirmMatchNote(
+            willSave && fromAutoScan && !waitOn -> ConfirmMatchNote(
                 title = "Riconoscimento forte",
                 body = "Riconoscimento forte ($pct). ${signal.sentence()}. " +
                     "L’attesa in Impostazioni è disattivata. Tocca Salva.",
                 tone = ConfirmMatchTone.CONFIRM,
             )
-            decision.strict -> ConfirmMatchNote(
+            willSave -> ConfirmMatchNote(
                 title = "Riconoscimento forte",
                 body = "Riconoscimento forte ($pct). ${signal.sentence()}. Tocca Salva per aggiungere la carta.",
                 tone = ConfirmMatchTone.CONFIRM,
@@ -142,7 +168,7 @@ object MatchFusion {
             decision.accepted -> ConfirmMatchNote(
                 title = "Conferma a mano",
                 body = "Match parziale ($pct): $signal. " +
-                    "Resta sotto la soglia forte del 74%. Tocca Salva per aggiungere la carta.",
+                    "Resta sotto la soglia del $thresholdPct%. Tocca Salva per aggiungere la carta.",
                 tone = ConfirmMatchTone.CONFIRM,
             )
             else -> ConfirmMatchNote(
@@ -213,12 +239,17 @@ object MatchFusion {
             ?: return AutoMatchDecision(accepted = false, reason = "noConf")
         val visual = top.visualScore
         val ocr = top.ocrScore ?: 0f
+        // A missing title is not agreement. Set+number alone must not autosave.
+        val readAgrees = parsed?.let { frame ->
+            FrameNameGate.confidentTitle(frame.nameGuess) != null &&
+                FrameNameGate.agrees(top, frame)
+        } == true
         val strictOk = confidence >= AUTO_CONFIDENCE_MIN && when {
             visual != null && visual >= 0.88f && confidence >= 0.78f -> true
             visual != null && visual >= 0.80f && confidence >= AUTO_CONFIDENCE_MIN -> true
             visual != null && visual >= 0.72f && ocr >= 0.80f -> true
-            // Exact set+number OCR without usable art still allowed if very strong.
-            visual == null && ocr >= 0.95f && confidence >= 0.90f -> true
+            // Exact set+number without art, only when the title we read agrees.
+            visual == null && ocr >= 0.95f && confidence >= 0.90f && readAgrees -> true
             else -> false
         }
         if (strictOk) {
@@ -239,7 +270,7 @@ object MatchFusion {
                 accepted = true,
                 strict = true,
                 reason = "strict",
-                nameOk = parsed != null && FrameNameGate.agrees(top, parsed),
+                nameOk = readAgrees,
                 confidence = confidence,
             )
         }
@@ -441,14 +472,16 @@ object MatchFusion {
             // Exact localized title, gallery agrees, and there is only one printing.
             // A missing or wrong collector must not hold the card back.
             exact && galleryHit && onlyPrinting -> "name+gallery"
-            cnOk && setOk && ocr >= 0.55f -> "cn+set"
-            cnOk && setOk && confidence >= 0.70f -> "cn+set"
+            // Set+number (local index or online) needs a title that agrees.
+            // Without one, keep scanning instead of accepting the printing.
+            nameOk && cnOk && setOk && ocr >= 0.55f -> "cn+set"
+            nameOk && cnOk && setOk && confidence >= 0.70f -> "cn+set"
             nameOk && cnOk && setOk -> "name+cn+set"
             nameOk && cnOk && ocr >= 0.65f -> "name+cn"
             nameOk && setOk && confidence >= 0.58f && ocr >= 0.50f -> "name+set"
             nameOk && ocr >= 0.80f && confidence >= 0.55f -> "nameExact"
             nameOk && (visual ?: 0f) >= 0.55f && confidence >= 0.55f && ocr >= 0.50f -> "name+visual"
-            cnOk && setOk && (visual ?: 0f) >= 0.60f && ocr >= 0.50f -> "cn+set+visual"
+            nameOk && cnOk && setOk && (visual ?: 0f) >= 0.60f && ocr >= 0.50f -> "cn+set+visual"
             else -> "softFail"
         }
         val accepted = softReason != "softFail"
