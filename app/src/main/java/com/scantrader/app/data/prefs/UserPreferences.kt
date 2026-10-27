@@ -110,7 +110,7 @@ class UserPreferences(private val context: Context) {
     suspend fun setCollectionBrowse(collectionId: Long, state: CollectionBrowseState) {
         val key = browseKey(collectionId)
         context.dataStore.edit { prefs ->
-            if (!state.active) prefs.remove(key) else prefs[key] = encodeCollectionBrowse(state)
+            if (!state.active && !state.filtersOpen) prefs.remove(key) else prefs[key] = encodeCollectionBrowse(state)
         }
     }
 

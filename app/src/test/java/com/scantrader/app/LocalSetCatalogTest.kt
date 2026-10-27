@@ -362,6 +362,49 @@ class LocalSetCatalogTest {
     }
 
     @Test
+    fun cachedSetNamesComeFromDiskAndDoNotDownload() {
+        val dir = Files.createTempDirectory("set-catalog-names").toFile()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        try {
+            val local = LocalSetCatalog(dir, errorMtg(), errorPokemon(), scope)
+            local.installMtg(
+                "fdn",
+                listOf(
+                    ScryfallCard(
+                        id = "fdn-1",
+                        name = "Shock",
+                        set = "fdn",
+                        setName = "Foundations",
+                        collectorNumber = "1",
+                        lang = "en",
+                    ),
+                ),
+            )
+            local.installPokemon(
+                setId = "sv10",
+                lang = "en",
+                cards = listOf(StoredPkmCard("sv10-1", "1", "Card", null)),
+                setName = "Destined Rivals",
+            )
+            local.installPokemon(
+                setId = "sv10",
+                lang = "it",
+                cards = listOf(StoredPkmCard("sv10-1", "1", "Carta", null)),
+                setName = "Rivali Predestinati",
+            )
+            val reloaded = LocalSetCatalog(dir, errorMtg(), errorPokemon(), scope)
+            assertEquals(listOf("Foundations"), reloaded.cachedSetNames(Game.MTG, "FDN"))
+            assertEquals(
+                setOf("Destined Rivals", "Rivali Predestinati"),
+                reloaded.cachedSetNames(Game.POKEMON, "sv10").toSet(),
+            )
+            assertTrue(reloaded.cachedSetNames(Game.MTG, "missing").isEmpty())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun cachedPokemonSetResolvesWithoutNetwork() = runBlocking {
         val dir = Files.createTempDirectory("set-catalog-pkm").toFile()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
