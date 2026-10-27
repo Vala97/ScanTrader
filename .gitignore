@@ -15,8 +15,12 @@ keystore.properties
 *.jks
 *.keystore
 .kotlin
+__pycache__/
+*.pyc
 .tmp-vision
 tools/build_pokemon_stcat/cache/
 tools/build_pokemon_stcat/*.stcat
 tools/build_pokemon_stcat/*.stcat.part
 tools/publish_stcat/stcat-index.json
+/app-update.json
+tools/publish_app_update/app-update.json

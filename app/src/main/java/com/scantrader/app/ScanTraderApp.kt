@@ -27,10 +27,15 @@ import com.scantrader.app.network.tcgdex.TcgdexSetApi
 import java.io.File
 import com.scantrader.app.scan.CardOcr
 import com.scantrader.app.scan.ScanSession
+import com.scantrader.app.update.AppUpdateController
+import com.scantrader.app.update.DisabledUpdateSource
+import com.scantrader.app.update.GithubReleaseUpdateSource
+import com.scantrader.app.update.PackageUpdateInstaller
 import com.scantrader.app.vision.GalleryMatcher
 import com.scantrader.app.vision.NeuralPackManager
 import com.scantrader.app.vision.PokemonCatalogController
 import com.scantrader.app.vision.VisualRanker
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -66,6 +71,8 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
     lateinit var languageResolver: CardLanguageResolver
         private set
     lateinit var blueprintNames: BlueprintNames
+        private set
+    lateinit var appUpdates: AppUpdateController
         private set
     val scanSession = ScanSession()
 
@@ -115,6 +122,26 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
             onChanged = { neuralPack.ensurePokemonReady() },
         )
         galleryMatcher = GalleryMatcher(neuralPack, scryfall, tcgdex)
+        val updateClient = http.newBuilder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.MINUTES)
+            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
+        val updateSource = if (BuildConfig.GITHUB_SELF_UPDATE) {
+            GithubReleaseUpdateSource(updateClient)
+        } else {
+            DisabledUpdateSource
+        }
+        appUpdates = AppUpdateController(
+            context = this,
+            source = updateSource,
+            prefs = prefs,
+            client = updateClient,
+            installer = PackageUpdateInstaller(this),
+            versionCode = BuildConfig.VERSION_CODE,
+            sdkInt = android.os.Build.VERSION.SDK_INT,
+            scope = appScope,
+        )
         appScope.launch {
             val defaults = prefs.currentDefaults()
             scanSession.zoomRatio = defaults.zoomRatio

@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.scantrader.app.data.model.CardCondition
@@ -39,6 +40,7 @@ class UserPreferences(private val context: Context) {
             showDebugInfo = prefs[SHOW_DEBUG_INFO] ?: false,
             neuralPromptShown = prefs[NEURAL_PROMPT_SHOWN] ?: false,
             onboardingCompleted = prefs[ONBOARDING_COMPLETED] ?: false,
+            autoUpdateCheck = prefs[AUTO_UPDATE_CHECK] ?: true,
         )
     }
 
@@ -84,6 +86,10 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { it[SHOW_DEBUG_INFO] = enabled }
     }
 
+    suspend fun setAutoUpdateCheck(enabled: Boolean) {
+        context.dataStore.edit { it[AUTO_UPDATE_CHECK] = enabled }
+    }
+
     suspend fun setNeuralPromptShown(shown: Boolean) {
         context.dataStore.edit { it[NEURAL_PROMPT_SHOWN] = shown }
     }
@@ -101,6 +107,22 @@ class UserPreferences(private val context: Context) {
     }
 
     suspend fun currentDefaults(): ScanDefaults = defaults.first()
+
+    suspend fun appUpdateCheckedAt(): Long =
+        context.dataStore.data.first()[UPDATE_CHECKED_AT] ?: 0L
+
+    suspend fun setAppUpdateCheckedAt(epochMs: Long) {
+        context.dataStore.edit { it[UPDATE_CHECKED_AT] = epochMs }
+    }
+
+    suspend fun pendingAppUpdate(): String? =
+        context.dataStore.data.first()[PENDING_APP_UPDATE]?.takeIf { it.isNotBlank() }
+
+    suspend fun setPendingAppUpdate(raw: String?) {
+        context.dataStore.edit { prefs ->
+            if (raw.isNullOrBlank()) prefs.remove(PENDING_APP_UPDATE) else prefs[PENDING_APP_UPDATE] = raw
+        }
+    }
 
     suspend fun collectionBrowse(collectionId: Long): CollectionBrowseState {
         val raw = context.dataStore.data.first()[browseKey(collectionId)]
@@ -128,6 +150,9 @@ class UserPreferences(private val context: Context) {
         val SHOW_DEBUG_INFO = booleanPreferencesKey("show_debug_info")
         val NEURAL_PROMPT_SHOWN = booleanPreferencesKey("neural_prompt_shown")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+        val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
+        val UPDATE_CHECKED_AT = longPreferencesKey("app_update_checked_at")
+        val PENDING_APP_UPDATE = stringPreferencesKey("app_update_pending")
     }
 }
 
@@ -160,4 +185,6 @@ data class ScanDefaults(
     val neuralPromptShown: Boolean = false,
     /** The introduction was finished, skipped, or replaced an answered pack prompt. */
     val onboardingCompleted: Boolean = false,
+    /** Daily GitHub release check. A manual check ignores this. */
+    val autoUpdateCheck: Boolean = true,
 )

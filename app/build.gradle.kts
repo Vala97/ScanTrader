@@ -1,9 +1,65 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
+
+val appVersion = Properties().apply {
+    file("version.properties").inputStream().use { load(it) }
+}
+val appVersionCode = appVersion.getProperty("VERSION_CODE").trim().toInt()
+val appVersionName = appVersion.getProperty("VERSION_NAME").trim()
+
+/**
+ * Release signing. `keystore.properties` (gitignored) wins per field, then
+ * `SCANTRADER_KEYSTORE_FILE`, `SCANTRADER_KEYSTORE_PASSWORD`,
+ * `SCANTRADER_KEYSTORE_KEY_ALIAS`, `SCANTRADER_KEYSTORE_KEY_PASSWORD`.
+ * If any value is missing, the release APK is still built and left unsigned.
+ */
+fun releaseKeystore(): Map<String, String>? {
+    val fromFile = Properties()
+    val propsFile = rootProject.file("keystore.properties")
+    if (propsFile.isFile) {
+        propsFile.inputStream().use { fromFile.load(it) }
+    }
+    fun value(fileKey: String, envKey: String): String? =
+        fromFile.getProperty(fileKey)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: System.getenv(envKey)?.trim()?.takeIf { it.isNotEmpty() }
+
+    val storePath = value("storeFile", "SCANTRADER_KEYSTORE_FILE")
+    val storePassword = value("storePassword", "SCANTRADER_KEYSTORE_PASSWORD")
+    val keyAlias = value("keyAlias", "SCANTRADER_KEYSTORE_KEY_ALIAS")
+    val keyPassword = value("keyPassword", "SCANTRADER_KEYSTORE_KEY_PASSWORD")
+    if (storePath == null || storePassword == null || keyAlias == null || keyPassword == null) {
+        logger.warn(
+            "ScanTrader: release APK will be unsigned. Add keystore.properties " +
+                "(storeFile, storePassword, keyAlias, keyPassword) or set " +
+                "SCANTRADER_KEYSTORE_FILE, SCANTRADER_KEYSTORE_PASSWORD, " +
+                "SCANTRADER_KEYSTORE_KEY_ALIAS and SCANTRADER_KEYSTORE_KEY_PASSWORD.",
+        )
+        return null
+    }
+    val candidate = file(storePath).let { if (it.isAbsolute) it else rootProject.file(storePath) }
+    if (!candidate.isFile) {
+        logger.warn("ScanTrader: keystore not found at ${candidate.absolutePath}. Release APK will be unsigned.")
+        return null
+    }
+    return mapOf(
+        "storeFile" to candidate.absolutePath,
+        "storePassword" to storePassword,
+        "keyAlias" to keyAlias,
+        "keyPassword" to keyPassword,
+    )
+}
+
+val releaseSigning = releaseKeystore()
+val githubSelfUpdate = (findProperty("scantrader.githubSelfUpdate") as? String)
+    ?.equals("false", ignoreCase = true)
+    ?.not()
+    ?: true
 
 android {
     namespace = "com.scantrader.app"
@@ -13,17 +69,38 @@ android {
         applicationId = "com.scantrader.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
+        // Play builds pass -Pscantrader.githubSelfUpdate=false. Debug stays `assembleDebug`.
+        buildConfigField("boolean", "GITHUB_SELF_UPDATE", githubSelfUpdate.toString())
+    }
+
+    signingConfigs {
+        if (releaseSigning != null) {
+            create("release") {
+                storeFile = file(releaseSigning.getValue("storeFile"))
+                storePassword = releaseSigning.getValue("storePassword")
+                keyAlias = releaseSigning.getValue("keyAlias")
+                keyPassword = releaseSigning.getValue("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            if (releaseSigning != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // Phones. Debug keeps every ABI so an x86_64 emulator still runs.
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
         }
     }
 

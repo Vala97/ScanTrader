@@ -48,6 +48,7 @@ import com.scantrader.app.data.db.CollectionWithCount
 import com.scantrader.app.data.repo.RenameCollection
 import com.scantrader.app.ui.HomeViewModel
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
+import com.scantrader.app.ui.update.AppUpdateDialog
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -61,6 +62,7 @@ fun HomeScreen(
 ) {
     val collections by viewModel.collections.collectAsStateWithLifecycle()
     val showOnboarding by viewModel.showOnboarding.collectAsStateWithLifecycle()
+    val appUpdate by viewModel.appUpdate.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<CollectionWithCount?>(null) }
@@ -215,6 +217,12 @@ fun HomeScreen(
         )
     }
 
+    AppUpdateDialog(
+        state = appUpdate,
+        onLater = viewModel::dismissAppUpdate,
+        onInstall = viewModel::installAppUpdate,
+        onOpenSettings = viewModel::openAppUpdateSettings,
+    )
 }
 
 @Composable
