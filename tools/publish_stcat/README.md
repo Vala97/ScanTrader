@@ -4,7 +4,7 @@ L’app scarica l’indice da un URL stabile:
 
 `https://github.com/Vala97/ScanTrader/releases/latest/download/stcat-index.json`
 
-`releases/latest` è l’ultimo release **non** prerelease. Il release dei cataloghi (tag consigliato `stcat`) deve restare quello, oppure va ripubblicato dopo un release dell’app. I file `.stcat` nell’indice usano un URL fissato sul tag, così un indice già installato continua a puntare allo stesso file.
+`releases/latest` è l’ultimo release **non** prerelease. Il release dei cataloghi (tag consigliato `stcat`) deve restare quello. Un release dell’app non va pubblicato come release normale: l’aggiornamento in-app usa il tag fisso `app-update`, creato con `--prerelease`, così `stcat` resta `releases/latest`. I file `.stcat` nell’indice usano un URL fissato sul tag, così un indice già installato continua a puntare allo stesso file.
 
 Lo script **non** crea il release e **non** chiama `gh`. Stampa solo i comandi.
 

@@ -4,7 +4,7 @@ App Android non ufficiale: scansiona carte **Magic: The Gathering** e **Pokémon
 
 Non è affiliata a Wizards of the Coast, The Pokémon Company, Nintendo o CardTrader.
 
-**V1.0** (build 1). La stessa stringa è in **Informazioni** (`Versione V1.0 (build 1)`; le build debug aggiungono `· debug`).
+La versione è solo in `app/version.properties` (`VERSION_NAME` e `VERSION_CODE`; oggi 1.0, build 1). **Informazioni** la legge da lì (`Versione V1.0 (build 1)`; le build debug aggiungono `· debug`).
 
 ## Cosa fa
 
@@ -42,7 +42,45 @@ Da terminale, con SDK Android installato e `local.properties` (`sdk.dir=...`):
 
 ```bat
 gradlew.bat :app:assembleDebug
+gradlew.bat :app:assembleRelease
 ```
+
+`assembleRelease` attiva minify e `shrinkResources` (regole in `app/proguard-rules.pro`: ONNX Runtime, ML Kit, Room, Retrofit e i model Gson). Moshi e kotlinx.serialization non sono dipendenze. La release include solo l’ABI `arm64-v8a`. La debug tiene tutte le ABI, così un emulatore x86_64 parte ancora.
+
+Senza keystore l’APK di release si compila lo stesso e resta non firmato (`app-release-unsigned.apk`): in log compare un avviso. Una build Play Store, senza l’aggiornamento da GitHub, si ottiene con `-Pscantrader.githubSelfUpdate=false` (il task resta `assembleRelease` / `assembleDebug`).
+
+## Firma della release
+
+Il keystore non va nel git (`*.jks`, `*.keystore` e `keystore.properties` sono già ignorati). Si crea una volta, fuori dal repository o nella root, e non si committa:
+
+```bat
+keytool -genkeypair -v -keystore keystore.jks -alias scantrader -keyalg RSA -keysize 2048 -validity 10000
+```
+
+`keystore.properties` nella root del repo (accanto a `settings.gradle.kts`), mai committato:
+
+```properties
+storeFile=keystore.jks
+storePassword=la-password-del-keystore
+keyAlias=scantrader
+keyPassword=la-password-della-chiave
+```
+
+`storeFile` è relativo alla root del repo, oppure un percorso assoluto. Per ogni campo vale prima il file, poi la variabile d’ambiente: `SCANTRADER_KEYSTORE_FILE`, `SCANTRADER_KEYSTORE_PASSWORD`, `SCANTRADER_KEYSTORE_KEY_ALIAS`, `SCANTRADER_KEYSTORE_KEY_PASSWORD`. Se manca un campo o il file del keystore non c’è, la release resta non firmata e la build non fallisce.
+
+Il workflow su tag `v*` (`.github/workflows/release-apk.yml`) firma solo se nel repository GitHub ci sono i secret `SCANTRADER_KEYSTORE_BASE64` (il file `.jks` in base64), `SCANTRADER_KEYSTORE_PASSWORD`, `SCANTRADER_KEYSTORE_KEY_ALIAS` e `SCANTRADER_KEYSTORE_KEY_PASSWORD`. Se ne manca uno, il job di compilazione non parte.
+
+## Aggiornamento in-app
+
+All’avvio, se «Controlla aggiornamenti automaticamente» è acceso (lo è di default), l’app legge al massimo una volta al giorno:
+
+`https://github.com/Vala97/ScanTrader/releases/download/app-update/app-update.json`
+
+Non usa `releases/latest`: quell’URL deve restare il release dei cataloghi (`stcat`). `app-update` si pubblica come **prerelease**. In Impostazioni generali, «Controlla aggiornamenti» forza il controllo. Se `versionCode` è maggiore di quello installato, un dialogo Material 3 mostra «Nuova versione … disponibile», le note, «Aggiorna» e «Più tardi». Il download va in cache, lo sha256 viene verificato e solo allora parte l’installazione. Senza il permesso «Installa app sconosciute» compare un messaggio che porta alle impostazioni.
+
+Per una build destinata al Play Store il controllo GitHub si spegne con `-Pscantrader.githubSelfUpdate=false`. L’interfaccia `UpdateSource` è il punto in cui infilare gli aggiornamenti in-app di Play.
+
+L’indice si prepara con [`tools/publish_app_update`](tools/publish_app_update/README.md): lo script non carica nulla. Il workflow sul tag `v*` carica l’APK firmato e `app-update.json` sul release `app-update`, e lo lascia prerelease.
 
 ## Import su CardTrader
 

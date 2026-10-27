@@ -84,7 +84,16 @@ class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
         }
         app.pokemonCatalogs.refresh()
+        app.appUpdates.checkOnLaunch()
     }
+
+    val appUpdate = app.appUpdates.state
+
+    fun installAppUpdate() = app.appUpdates.downloadAndInstall()
+
+    fun dismissAppUpdate() = app.appUpdates.dismiss()
+
+    fun openAppUpdateSettings() = app.appUpdates.openPermissionSettings()
 
     /** True only the first time this process should open the introduction. */
     fun consumeOnboardingLaunch(): Boolean {
@@ -284,6 +293,22 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
     fun setShowDebugInfo(enabled: Boolean) {
         viewModelScope.launch { app.prefs.setShowDebugInfo(enabled) }
     }
+
+    val appUpdate = app.appUpdates.state
+
+    fun setAutoUpdateCheck(enabled: Boolean) {
+        viewModelScope.launch { app.prefs.setAutoUpdateCheck(enabled) }
+    }
+
+    fun checkForAppUpdate() {
+        app.appUpdates.checkNow()
+    }
+
+    fun installAppUpdate() = app.appUpdates.downloadAndInstall()
+
+    fun dismissAppUpdate() = app.appUpdates.dismiss()
+
+    fun openAppUpdateSettings() = app.appUpdates.openPermissionSettings()
 
     val hasCardTraderToken = MutableStateFlow(app.secrets.hasCardTraderToken())
 

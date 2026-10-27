@@ -49,6 +49,7 @@ import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensOption
 import com.scantrader.app.ui.SettingsViewModel
 import com.scantrader.app.ui.components.SimpleDropdown
+import com.scantrader.app.ui.update.AppUpdateDialog
 import com.scantrader.app.ui.displayLabel
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
 import com.scantrader.app.vision.NeuralPackManager
@@ -69,6 +70,7 @@ fun SettingsScreen(
     val pokemonNeural by viewModel.pokemonPackState.collectAsStateWithLifecycle()
     val pokemonCatalogs by viewModel.pokemonCatalogs.collectAsStateWithLifecycle()
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
+    val appUpdate by viewModel.appUpdate.collectAsStateWithLifecycle()
 
     val importPokemon = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -173,6 +175,44 @@ fun SettingsScreen(
                         checked = defaults.showDebugInfo,
                         onCheckedChange = viewModel::setShowDebugInfo,
                     )
+                }
+                if (appUpdate.githubSelfUpdate) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Controlla aggiornamenti automaticamente")
+                            Text(
+                                "All’avvio, al massimo una volta al giorno.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = defaults.autoUpdateCheck,
+                            onCheckedChange = viewModel::setAutoUpdateCheck,
+                        )
+                    }
+                    Button(
+                        onClick = viewModel::checkForAppUpdate,
+                        enabled = !appUpdate.checking && !appUpdate.downloading,
+                    ) {
+                        Text(if (appUpdate.checking) "Controllo…" else "Controlla aggiornamenti")
+                    }
+                    if (appUpdate.checking) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    if (appUpdate.offer == null) {
+                        appUpdate.message?.let { message ->
+                            Text(
+                                message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
                 CardTraderTokenField(
                     saved = tokenSaved,
@@ -318,6 +358,12 @@ fun SettingsScreen(
             )
         }
     }
+    AppUpdateDialog(
+        state = appUpdate,
+        onLater = viewModel::dismissAppUpdate,
+        onInstall = viewModel::installAppUpdate,
+        onOpenSettings = viewModel::openAppUpdateSettings,
+    )
 }
 
 @Composable
