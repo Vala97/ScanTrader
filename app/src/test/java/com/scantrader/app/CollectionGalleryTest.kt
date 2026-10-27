@@ -6,6 +6,7 @@ import com.scantrader.app.ui.collection.COLLECTION_SEARCH_DEBOUNCE_MS
 import com.scantrader.app.ui.collection.CollectionBrowseState
 import com.scantrader.app.ui.collection.CollectionSort
 import com.scantrader.app.ui.collection.browseCollection
+import com.scantrader.app.ui.collection.collectionCatalogSetNames
 import com.scantrader.app.ui.collection.collectionPrice
 import com.scantrader.app.ui.collection.collectionSearchDelay
 import com.scantrader.app.ui.collection.collectionSections
@@ -192,6 +193,63 @@ class CollectionGalleryTest {
         assertEquals(CollectionSort.COLLECTOR_NUMBER, decodeCollectionBrowse(broken).sort)
         assertFalse(CollectionBrowseState().active)
         assertTrue(state.active)
+        assertFalse(CollectionBrowseState(query = "fra").filtersActive)
+        assertTrue(CollectionBrowseState(sort = CollectionSort.NAME).filtersActive)
+        assertFalse(CollectionBrowseState().filtersOpen)
+        val opened = state.copy(filtersOpen = true)
+        assertEquals(opened, decodeCollectionBrowse(encodeCollectionBrowse(opened)))
+        assertFalse(decodeCollectionBrowse(encodeCollectionBrowse(state)).filtersOpen)
+    }
+
+    @Test
+    fun searchMatchesTheSetNameTheSetCodeAndACachedLocalizedName() {
+        val morning = card(id = 1, name = "Shock", setCode = "mor", setName = "Morningtide")
+        val foundations = card(id = 2, name = "Shock", setCode = "fdn", setName = "  ")
+        val italian = card(
+            id = 3,
+            name = "Rivale",
+            setCode = "sv10",
+            setName = "Destined Rivals",
+            game = Game.POKEMON,
+        )
+        val other = card(id = 4, name = "Bolt", setCode = "lea", setName = "Limited Edition Alpha")
+        val cards = listOf(morning, foundations, italian, other)
+        val names = mapOf(
+            "MTG:fdn" to listOf("Foundations"),
+            "POKEMON:sv10" to listOf("Destined Rivals", "Rivali Predestinati"),
+        )
+        assertEquals(listOf(1L), ids(browseCollection(cards, CollectionBrowseState(query = "morningtide"), names)))
+        assertEquals(listOf(1L), ids(browseCollection(cards, CollectionBrowseState(query = "MOR"), names)))
+        assertEquals(listOf(2L), ids(browseCollection(cards, CollectionBrowseState(query = "foundations"), names)))
+        assertEquals(listOf(2L), ids(browseCollection(cards, CollectionBrowseState(query = "fdn"), names)))
+        assertEquals(listOf(3L), ids(browseCollection(cards, CollectionBrowseState(query = "rivali"), names)))
+        assertEquals(listOf(3L), ids(browseCollection(cards, CollectionBrowseState(query = "destined"), names)))
+        val accented = card(id = 5, name = "X", setCode = "plst", setName = "Àlba degli Eroi")
+        assertEquals(
+            listOf(5L),
+            ids(browseCollection(listOf(accented), CollectionBrowseState(query = "alba"))),
+        )
+        assertEquals(listOf(4L), ids(browseCollection(cards, CollectionBrowseState(query = "alpha"), names)))
+        assertTrue(ids(browseCollection(cards, CollectionBrowseState(query = "zzz"), names)).isEmpty())
+    }
+
+    @Test
+    fun catalogSetNamesAreAskedOncePerSetAndBlankNamesDrop() {
+        val calls = mutableListOf<String>()
+        val names = collectionCatalogSetNames(
+            listOf(
+                card(id = 1, setCode = "fdn", setName = ""),
+                card(id = 2, setCode = "FDN", setName = ""),
+                card(id = 3, setCode = "mor"),
+            ),
+        ) { game, code ->
+            calls += "${game.name}:$code"
+            if (code.equals("fdn", ignoreCase = true)) listOf(" Foundations ", "", "Foundations") else emptyList()
+        }
+        assertEquals(listOf("MTG:fdn", "MTG:mor"), calls.map { it.substringBefore(':') + ":" + it.substringAfter(':').lowercase() }.distinct())
+        assertEquals(2, calls.size)
+        assertEquals(listOf("Foundations"), names["MTG:fdn"])
+        assertEquals(emptyList<String>(), names["MTG:mor"])
     }
 
     private fun ids(result: com.scantrader.app.ui.collection.CollectionBrowseResult) =

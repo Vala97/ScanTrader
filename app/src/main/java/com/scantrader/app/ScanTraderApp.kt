@@ -48,6 +48,8 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         private set
     lateinit var catalog: CatalogLookup
         private set
+    lateinit var localSets: LocalSetCatalog
+        private set
     lateinit var prefs: UserPreferences
         private set
     lateinit var ocr: CardOcr
@@ -90,7 +92,7 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
             tcgdexRetrofit.create(TcgdexApi::class.java),
             TcgdexResponseCache(File(cacheDir, "tcgdex")),
         )
-        val localSets = LocalSetCatalog(
+        localSets = LocalSetCatalog(
             dir = File(cacheDir, "set-catalog"),
             mtgSource = ScryfallSetDownloader(
                 scryfallRetrofit.create(ScryfallSetApi::class.java),

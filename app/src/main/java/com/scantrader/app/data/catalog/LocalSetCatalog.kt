@@ -1,6 +1,7 @@
 package com.scantrader.app.data.catalog
 
 import com.google.gson.Gson
+import com.scantrader.app.data.model.Game
 import com.scantrader.app.network.scryfall.ScryfallCard
 import com.scantrader.app.network.tcgdex.TcgdexCard
 import com.scantrader.app.network.tcgdex.TcgdexCardCount
@@ -33,6 +34,7 @@ class LocalSetCatalog(
     private val memoryPokemon = ConcurrentHashMap<String, PokemonSetSnapshot>()
     private val inflight = ConcurrentHashMap<String, Job>()
     private val failedAt = ConcurrentHashMap<String, Long>()
+    private val nameCache = ConcurrentHashMap<String, Pair<Long, List<String>>>()
 
     fun mtgSnapshot(setCode: String): MtgSetSnapshot? {
         val code = canonicalMtg(setCode) ?: return null
@@ -143,6 +145,15 @@ class LocalSetCatalog(
         )
         writePokemon(snap)
         memoryPokemon[pokemonKey(id, language)] = snap
+    }
+
+    /**
+     * English and localized set names already on disk for [setCode].
+     * Reads the cache only: no download, no refresh, and an old file is kept.
+     */
+    fun cachedSetNames(game: Game, setCode: String): List<String> = when (game) {
+        Game.MTG -> cachedMtgSetNames(setCode)
+        Game.POKEMON -> cachedPokemonSetNames(setCode)
     }
 
     fun logHit(setCode: String, elapsedMs: Long) {
@@ -308,6 +319,42 @@ class LocalSetCatalog(
         }.onFailure { error ->
             log("catalog cache write failed ${file.name}: ${error.message}")
         }
+    }
+
+    private fun cachedMtgSetNames(setCode: String): List<String> {
+        val code = canonicalMtg(setCode) ?: return emptyList()
+        val file = mtgFile(code)
+        val stamp = if (file.isFile) file.lastModified() else 0L
+        val key = "mtg:$code"
+        nameCache[key]?.takeIf { it.first == stamp }?.let { return it.second }
+        val names = (memoryMtg[code] ?: readMtg(code))
+            ?.cards
+            .orEmpty()
+            .mapNotNull { it.setName?.trim()?.takeIf { name -> name.isNotEmpty() } }
+            .distinct()
+        nameCache[key] = stamp to names
+        return names
+    }
+
+    private fun cachedPokemonSetNames(setCode: String): List<String> {
+        val id = canonicalPokemon(setCode) ?: return emptyList()
+        val prefix = "pkm-${sanitize(id)}-"
+        val files = dir.listFiles().orEmpty().filter { file ->
+            file.isFile && file.name.startsWith(prefix) && file.name.endsWith(".json")
+        }
+        val stamp = files.maxOfOrNull { it.lastModified() } ?: 0L
+        val key = "pkm:$id"
+        nameCache[key]?.takeIf { it.first == stamp }?.let { return it.second }
+        val fromMemory = memoryPokemon.values
+            .filter { it.setId == id }
+            .map { it.setName }
+        val fromDisk = files.mapNotNull { file ->
+            val lang = file.name.removePrefix(prefix).removeSuffix(".json")
+            readPokemon(id, lang)?.setName
+        }
+        val names = (fromMemory + fromDisk).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        nameCache[key] = stamp to names
+        return names
     }
 
     private fun mtgFile(code: String) = File(dir, "mtg-$code.json")
