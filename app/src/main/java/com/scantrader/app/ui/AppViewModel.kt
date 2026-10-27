@@ -12,7 +12,14 @@ import com.scantrader.app.data.db.CollectionWithCount
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
+import com.scantrader.app.ui.collection.CollectionBrowseState
+import com.scantrader.app.ui.collection.CollectionBrowser
 import com.scantrader.app.ui.collection.CollectionSort
+import com.scantrader.app.ui.collection.browseCollection
+import com.scantrader.app.ui.collection.collectionConditionChoices
+import com.scantrader.app.ui.collection.collectionLanguageChoices
+import com.scantrader.app.ui.collection.collectionSearchDelay
+import com.scantrader.app.ui.collection.collectionSetChoices
 import com.scantrader.app.data.catalog.CatalogQueryDebounce
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
@@ -40,6 +47,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -48,6 +56,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -107,6 +120,7 @@ class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 }
 
+@OptIn(FlowPreview::class)
 class CollectionViewModel(
     private val app: ScanTraderApp,
     private val collectionId: Long,
@@ -116,11 +130,57 @@ class CollectionViewModel(
     val cards: StateFlow<List<CardEntryEntity>> =
         app.repository.cards(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val exporting = MutableStateFlow(false)
-    val sort = MutableStateFlow(CollectionSort.COLLECTOR_NUMBER)
+    private val controls = MutableStateFlow(CollectionBrowseState())
+    private val touched = AtomicBoolean(false)
+    private val restored = MutableStateFlow(false)
+    private val debouncedQuery = controls
+        .map { it.query }
+        .distinctUntilChanged()
+        .debounce { collectionSearchDelay(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+    val browser: StateFlow<CollectionBrowser> = combine(cards, controls, debouncedQuery) { all, ctrl, query ->
+        CollectionBrowser(
+            controls = ctrl,
+            result = browseCollection(all, ctrl.copy(query = query)),
+            sets = collectionSetChoices(all),
+            languages = collectionLanguageChoices(all),
+            conditions = collectionConditionChoices(all),
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CollectionBrowser())
 
-    fun setSort(value: CollectionSort) {
-        sort.value = value
+    init {
+        viewModelScope.launch {
+            val saved = app.prefs.collectionBrowse(collectionId)
+            if (!touched.get()) controls.value = saved
+            restored.value = true
+        }
+        viewModelScope.launch {
+            restored.first { it }
+            controls.debounce(200).collect { app.prefs.setCollectionBrowse(collectionId, it) }
+        }
     }
+
+    fun setQuery(text: String) = edit { it.copy(query = text) }
+
+    fun toggleSet(value: String) = edit { it.copy(sets = toggle(it.sets, value)) }
+
+    fun toggleLanguage(value: String) = edit { it.copy(languages = toggle(it.languages, value)) }
+
+    fun toggleCondition(value: String) = edit { it.copy(conditions = toggle(it.conditions, value)) }
+
+    fun toggleFoil(foil: Boolean) = edit { it.copy(foil = if (it.foil == foil) null else foil) }
+
+    fun setSort(value: CollectionSort) = edit { it.copy(sort = value) }
+
+    fun clearBrowse() = edit { CollectionBrowseState() }
+
+    private fun edit(transform: (CollectionBrowseState) -> CollectionBrowseState) {
+        touched.set(true)
+        controls.value = transform(controls.value)
+    }
+
+    private fun toggle(values: Set<String>, value: String): Set<String> =
+        if (value in values) values - value else values + value
 
     fun share(context: Context) {
         if (exporting.value || cards.value.isEmpty()) return

@@ -14,11 +14,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items as rowItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -27,7 +30,9 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ButtonDefaults
@@ -35,6 +40,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -84,15 +90,16 @@ fun CollectionScreen(
     val collection by viewModel.collection.collectAsStateWithLifecycle()
     val cards by viewModel.cards.collectAsStateWithLifecycle()
     val exporting by viewModel.exporting.collectAsStateWithLifecycle()
-    val sort by viewModel.sort.collectAsStateWithLifecycle()
+    val browser by viewModel.browser.collectAsStateWithLifecycle()
+    val sort = browser.controls.sort
     val context = LocalContext.current
     val title = collection?.name ?: "Collezione"
     var sortMenu by rememberSaveable { mutableStateOf(false) }
     var editingId by remember { mutableStateOf<Long?>(null) }
     var renaming by rememberSaveable { mutableStateOf(false) }
     var renameError by remember { mutableStateOf<String?>(null) }
-    val sections = remember(cards, sort) { collectionSections(cards, sort) }
     val editing = cards.firstOrNull { it.id == editingId }
+    val sections = browser.result.sections
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -129,10 +136,34 @@ fun CollectionScreen(
                                 },
                             )
                             SortMenuItem(
-                                label = "Prezzo",
+                                label = "Nome",
+                                selected = sort == CollectionSort.NAME,
+                                onClick = {
+                                    viewModel.setSort(CollectionSort.NAME)
+                                    sortMenu = false
+                                },
+                            )
+                            SortMenuItem(
+                                label = "Prezzo crescente",
+                                selected = sort == CollectionSort.PRICE_ASC,
+                                onClick = {
+                                    viewModel.setSort(CollectionSort.PRICE_ASC)
+                                    sortMenu = false
+                                },
+                            )
+                            SortMenuItem(
+                                label = "Prezzo decrescente",
                                 selected = sort == CollectionSort.PRICE,
                                 onClick = {
                                     viewModel.setSort(CollectionSort.PRICE)
+                                    sortMenu = false
+                                },
+                            )
+                            SortMenuItem(
+                                label = "Data di aggiunta",
+                                selected = sort == CollectionSort.DATE_ADDED,
+                                onClick = {
+                                    viewModel.setSort(CollectionSort.DATE_ADDED)
                                     sortMenu = false
                                 },
                             )
@@ -168,25 +199,53 @@ fun CollectionScreen(
                 )
             }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 104.dp),
-                modifier = Modifier
+            Column(
+                Modifier
                     .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                    .padding(padding)
+                    .imePadding(),
             ) {
-                sections.forEach { section ->
-                    item(
-                        key = "section-${section.key}",
-                        span = { GridItemSpan(maxLineSpan) },
-                        contentType = "header",
-                    ) {
-                        SectionHeader(section)
+                CollectionBrowseBar(
+                    browser = browser,
+                    onQuery = viewModel::setQuery,
+                    onToggleSet = viewModel::toggleSet,
+                    onToggleLanguage = viewModel::toggleLanguage,
+                    onToggleCondition = viewModel::toggleCondition,
+                    onToggleFoil = viewModel::toggleFoil,
+                    onClear = viewModel::clearBrowse,
+                )
+                if (browser.result.copies == 0) {
+                    Column(Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
+                        Text("Nessuna carta", style = MaterialTheme.typography.titleLarge)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Nessun risultato con questi filtri.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    items(section.cards, key = { it.id }, contentType = { _ -> "card" }) { card ->
-                        GalleryTile(card = card, onClick = { editingId = card.id })
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 104.dp),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        sections.forEach { section ->
+                            if (browser.result.grouped) {
+                                item(
+                                    key = "section-${section.key}",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                    contentType = "header",
+                                ) {
+                                    SectionHeader(section)
+                                }
+                            }
+                            items(section.cards, key = { it.id }, contentType = { _ -> "card" }) { card ->
+                                GalleryTile(card = card, onClick = { editingId = card.id })
+                            }
+                        }
                     }
                 }
             }
@@ -239,6 +298,123 @@ fun CollectionScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun CollectionBrowseBar(
+    browser: CollectionBrowser,
+    onQuery: (String) -> Unit,
+    onToggleSet: (String) -> Unit,
+    onToggleLanguage: (String) -> Unit,
+    onToggleCondition: (String) -> Unit,
+    onToggleFoil: (Boolean) -> Unit,
+    onClear: () -> Unit,
+) {
+    val controls = browser.controls
+    Column(
+        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = controls.query,
+            onValueChange = onQuery,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Cerca per nome") },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = if (controls.query.isEmpty()) {
+                null
+            } else {
+                {
+                    IconButton(onClick = { onQuery("") }) {
+                        Icon(Icons.Default.Close, contentDescription = "Cancella ricerca")
+                    }
+                }
+            },
+        )
+        if (browser.sets.isNotEmpty()) {
+            FilterChipRow(
+                title = "Espansione",
+                choices = browser.sets,
+                selected = controls.sets,
+                onToggle = onToggleSet,
+            )
+        }
+        if (browser.languages.isNotEmpty()) {
+            FilterChipRow(
+                title = "Lingua",
+                choices = browser.languages,
+                selected = controls.languages,
+                onToggle = onToggleLanguage,
+            )
+        }
+        if (browser.conditions.isNotEmpty()) {
+            FilterChipRow(
+                title = "Condizione",
+                choices = browser.conditions,
+                selected = controls.conditions,
+                onToggle = onToggleCondition,
+            )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                "Finitura",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = controls.foil == true,
+                    onClick = { onToggleFoil(true) },
+                    label = { Text("Foil") },
+                )
+                FilterChip(
+                    selected = controls.foil == false,
+                    onClick = { onToggleFoil(false) },
+                    label = { Text("Normale") },
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                collectionSummary(browser.result.copies, browser.result.total),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (controls.active) {
+                TextButton(onClick = onClear) { Text("Azzera") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterChipRow(
+    title: String,
+    choices: List<CollectionChoice>,
+    selected: Set<String>,
+    onToggle: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            rowItems(choices, key = { it.value }) { choice ->
+                FilterChip(
+                    selected = choice.value in selected,
+                    onClick = { onToggle(choice.value) },
+                    label = { Text(choice.label) },
+                )
+            }
+        }
     }
 }
 

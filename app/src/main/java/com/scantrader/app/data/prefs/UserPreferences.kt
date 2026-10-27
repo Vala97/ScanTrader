@@ -9,6 +9,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.ui.collection.CollectionBrowseState
+import com.scantrader.app.ui.collection.decodeCollectionBrowse
+import com.scantrader.app.ui.collection.encodeCollectionBrowse
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -85,6 +88,20 @@ class UserPreferences(private val context: Context) {
     }
 
     suspend fun currentDefaults(): ScanDefaults = defaults.first()
+
+    suspend fun collectionBrowse(collectionId: Long): CollectionBrowseState {
+        val raw = context.dataStore.data.first()[browseKey(collectionId)]
+        return decodeCollectionBrowse(raw)
+    }
+
+    suspend fun setCollectionBrowse(collectionId: Long, state: CollectionBrowseState) {
+        val key = browseKey(collectionId)
+        context.dataStore.edit { prefs ->
+            if (!state.active) prefs.remove(key) else prefs[key] = encodeCollectionBrowse(state)
+        }
+    }
+
+    private fun browseKey(collectionId: Long) = stringPreferencesKey("collection_browse_$collectionId")
 
     private companion object {
         val LANGUAGE = stringPreferencesKey("default_language")
