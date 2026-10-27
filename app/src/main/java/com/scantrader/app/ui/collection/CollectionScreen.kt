@@ -31,10 +31,12 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.DropdownMenu
@@ -91,10 +93,8 @@ fun CollectionScreen(
     val cards by viewModel.cards.collectAsStateWithLifecycle()
     val exporting by viewModel.exporting.collectAsStateWithLifecycle()
     val browser by viewModel.browser.collectAsStateWithLifecycle()
-    val sort = browser.controls.sort
     val context = LocalContext.current
     val title = collection?.name ?: "Collezione"
-    var sortMenu by rememberSaveable { mutableStateOf(false) }
     var editingId by remember { mutableStateOf<Long?>(null) }
     var renaming by rememberSaveable { mutableStateOf(false) }
     var renameError by remember { mutableStateOf<String?>(null) }
@@ -118,56 +118,6 @@ fun CollectionScreen(
                         renaming = true
                     }, enabled = collection != null) {
                         Icon(Icons.Default.Edit, contentDescription = "Rinomina")
-                    }
-                    Box {
-                        IconButton(onClick = { sortMenu = true }) {
-                            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Ordina")
-                        }
-                        DropdownMenu(
-                            expanded = sortMenu,
-                            onDismissRequest = { sortMenu = false },
-                        ) {
-                            SortMenuItem(
-                                label = "Numero di collezione",
-                                selected = sort == CollectionSort.COLLECTOR_NUMBER,
-                                onClick = {
-                                    viewModel.setSort(CollectionSort.COLLECTOR_NUMBER)
-                                    sortMenu = false
-                                },
-                            )
-                            SortMenuItem(
-                                label = "Nome",
-                                selected = sort == CollectionSort.NAME,
-                                onClick = {
-                                    viewModel.setSort(CollectionSort.NAME)
-                                    sortMenu = false
-                                },
-                            )
-                            SortMenuItem(
-                                label = "Prezzo crescente",
-                                selected = sort == CollectionSort.PRICE_ASC,
-                                onClick = {
-                                    viewModel.setSort(CollectionSort.PRICE_ASC)
-                                    sortMenu = false
-                                },
-                            )
-                            SortMenuItem(
-                                label = "Prezzo decrescente",
-                                selected = sort == CollectionSort.PRICE,
-                                onClick = {
-                                    viewModel.setSort(CollectionSort.PRICE)
-                                    sortMenu = false
-                                },
-                            )
-                            SortMenuItem(
-                                label = "Data di aggiunta",
-                                selected = sort == CollectionSort.DATE_ADDED,
-                                onClick = {
-                                    viewModel.setSort(CollectionSort.DATE_ADDED)
-                                    sortMenu = false
-                                },
-                            )
-                        }
                     }
                     IconButton(
                         onClick = { viewModel.share(context) },
@@ -208,10 +158,12 @@ fun CollectionScreen(
                 CollectionBrowseBar(
                     browser = browser,
                     onQuery = viewModel::setQuery,
+                    onToggleFilters = { viewModel.setFiltersOpen(!browser.controls.filtersOpen) },
                     onToggleSet = viewModel::toggleSet,
                     onToggleLanguage = viewModel::toggleLanguage,
                     onToggleCondition = viewModel::toggleCondition,
                     onToggleFoil = viewModel::toggleFoil,
+                    onSort = viewModel::setSort,
                     onClear = viewModel::clearBrowse,
                 )
                 if (browser.result.copies == 0) {
@@ -305,10 +257,12 @@ fun CollectionScreen(
 private fun CollectionBrowseBar(
     browser: CollectionBrowser,
     onQuery: (String) -> Unit,
+    onToggleFilters: () -> Unit,
     onToggleSet: (String) -> Unit,
     onToggleLanguage: (String) -> Unit,
     onToggleCondition: (String) -> Unit,
     onToggleFoil: (Boolean) -> Unit,
+    onSort: (CollectionSort) -> Unit,
     onClear: () -> Unit,
 ) {
     val controls = browser.controls
@@ -316,65 +270,92 @@ private fun CollectionBrowseBar(
         Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedTextField(
-            value = controls.query,
-            onValueChange = onQuery,
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("Cerca per nome") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            trailingIcon = if (controls.query.isEmpty()) {
-                null
-            } else {
-                {
-                    IconButton(onClick = { onQuery("") }) {
-                        Icon(Icons.Default.Close, contentDescription = "Cancella ricerca")
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            OutlinedTextField(
+                value = controls.query,
+                onValueChange = onQuery,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text("Cerca nome o espansione") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = if (controls.query.isEmpty()) {
+                    null
+                } else {
+                    {
+                        IconButton(onClick = { onQuery("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancella ricerca")
+                        }
                     }
+                },
+            )
+            BadgedBox(
+                badge = {
+                    if (controls.filtersActive) {
+                        Badge(containerColor = MaterialTheme.colorScheme.primary)
+                    }
+                },
+            ) {
+                IconButton(onClick = onToggleFilters) {
+                    Icon(
+                        Icons.Default.FilterList,
+                        contentDescription = if (controls.filtersOpen) "Nascondi filtri" else "Mostra filtri",
+                        tint = if (controls.filtersOpen || controls.filtersActive) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
                 }
-            },
-        )
-        if (browser.sets.isNotEmpty()) {
-            FilterChipRow(
-                title = "Espansione",
-                choices = browser.sets,
-                selected = controls.sets,
-                onToggle = onToggleSet,
-            )
+            }
         }
-        if (browser.languages.isNotEmpty()) {
-            FilterChipRow(
-                title = "Lingua",
-                choices = browser.languages,
-                selected = controls.languages,
-                onToggle = onToggleLanguage,
-            )
-        }
-        if (browser.conditions.isNotEmpty()) {
-            FilterChipRow(
-                title = "Condizione",
-                choices = browser.conditions,
-                selected = controls.conditions,
-                onToggle = onToggleCondition,
-            )
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                "Finitura",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = controls.foil == true,
-                    onClick = { onToggleFoil(true) },
-                    label = { Text("Foil") },
-                )
-                FilterChip(
-                    selected = controls.foil == false,
-                    onClick = { onToggleFoil(false) },
-                    label = { Text("Normale") },
+        if (controls.filtersOpen) {
+            if (browser.sets.isNotEmpty()) {
+                FilterChipRow(
+                    title = "Espansione",
+                    choices = browser.sets,
+                    selected = controls.sets,
+                    onToggle = onToggleSet,
                 )
             }
+            if (browser.languages.isNotEmpty()) {
+                FilterChipRow(
+                    title = "Lingua",
+                    choices = browser.languages,
+                    selected = controls.languages,
+                    onToggle = onToggleLanguage,
+                )
+            }
+            if (browser.conditions.isNotEmpty()) {
+                FilterChipRow(
+                    title = "Condizione",
+                    choices = browser.conditions,
+                    selected = controls.conditions,
+                    onToggle = onToggleCondition,
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Finitura",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = controls.foil == true,
+                        onClick = { onToggleFoil(true) },
+                        label = { Text("Foil") },
+                    )
+                    FilterChip(
+                        selected = controls.foil == false,
+                        onClick = { onToggleFoil(false) },
+                        label = { Text("Normale") },
+                    )
+                }
+            }
+            SortPicker(sort = controls.sort, onSort = onSort)
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -416,6 +397,44 @@ private fun FilterChipRow(
             }
         }
     }
+}
+
+@Composable
+private fun SortPicker(
+    sort: CollectionSort,
+    onSort: (CollectionSort) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            "Ordine",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Box {
+            TextButton(onClick = { open = true }) { Text(sortLabel(sort)) }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                CollectionSort.entries.forEach { option ->
+                    SortMenuItem(
+                        label = sortLabel(option),
+                        selected = sort == option,
+                        onClick = {
+                            onSort(option)
+                            open = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun sortLabel(sort: CollectionSort): String = when (sort) {
+    CollectionSort.COLLECTOR_NUMBER -> "Numero di collezione"
+    CollectionSort.NAME -> "Nome"
+    CollectionSort.PRICE_ASC -> "Prezzo crescente"
+    CollectionSort.PRICE -> "Prezzo decrescente"
+    CollectionSort.DATE_ADDED -> "Data di aggiunta"
 }
 
 @Composable

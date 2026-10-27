@@ -4,6 +4,7 @@ import com.scantrader.app.data.db.CardEntryEntity
 import com.scantrader.app.data.db.CardPrice
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.data.model.Game
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.Normalizer
@@ -39,10 +40,16 @@ data class CollectionBrowseState(
     val conditions: Set<String> = emptySet(),
     val foil: Boolean? = null,
     val sort: CollectionSort = CollectionSort.COLLECTOR_NUMBER,
+    /** The chip and sort panel. Collapsed until the user opens it. */
+    val filtersOpen: Boolean = false,
 ) {
+    /** Search, a chip, foil, or a non-default sort. «Azzera» uses this. */
     val active: Boolean
-        get() = query.isNotBlank() ||
-            sets.isNotEmpty() ||
+        get() = query.isNotBlank() || filtersActive
+
+    /** A chip, foil, or a non-default sort. The filter button shows a dot. */
+    val filtersActive: Boolean
+        get() = sets.isNotEmpty() ||
             languages.isNotEmpty() ||
             conditions.isNotEmpty() ||
             foil != null ||
@@ -107,6 +114,26 @@ fun collectionPrice(card: CardEntryEntity): BigDecimal? {
 fun collectionSetKey(card: CardEntryEntity): String =
     "${card.game.name}:${card.setCode.trim().lowercase()}"
 
+/**
+ * Names from the local set catalog, one list per [collectionSetKey].
+ * [lookup] must not hit the network. Blank names are dropped. Each set is asked once.
+ */
+fun collectionCatalogSetNames(
+    cards: List<CardEntryEntity>,
+    lookup: (Game, String) -> List<String>,
+): Map<String, List<String>> {
+    val names = LinkedHashMap<String, List<String>>()
+    for (card in cards) {
+        val key = collectionSetKey(card)
+        if (key in names) continue
+        names[key] = lookup(card.game, card.setCode)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+    }
+    return names
+}
+
 fun collectionSetChoices(cards: List<CardEntryEntity>): List<CollectionChoice> =
     cards.groupBy { collectionSetKey(it) }
         .map { (key, rows) -> CollectionChoice(key, sectionTitle(rows)) }
@@ -139,8 +166,9 @@ fun collectionConditionChoices(cards: List<CardEntryEntity>): List<CollectionCho
 fun browseCollection(
     cards: List<CardEntryEntity>,
     state: CollectionBrowseState,
+    setNames: Map<String, List<String>> = emptyMap(),
 ): CollectionBrowseResult {
-    val filtered = cards.filter { cardMatches(it, state) }
+    val filtered = cards.filter { cardMatches(it, state, setNames) }
     val copies = filtered.sumOf { it.quantity.coerceAtLeast(0) }
     val total = filtered.fold(BigDecimal.ZERO) { acc, card ->
         val price = collectionPrice(card) ?: return@fold acc
@@ -191,12 +219,13 @@ fun encodeCollectionBrowse(state: CollectionBrowseState): String {
         join(state.conditions),
         foil,
         state.sort.name,
+        if (state.filtersOpen) "open" else "closed",
     ).joinToString("\n")
 }
 
 fun decodeCollectionBrowse(raw: String?): CollectionBrowseState {
     if (raw.isNullOrBlank()) return CollectionBrowseState()
-    val lines = raw.split('\n', limit = 7)
+    val lines = raw.split('\n', limit = 8)
     if (lines.firstOrNull() != "1" || lines.size < 7) return CollectionBrowseState()
     val sort = runCatching { CollectionSort.valueOf(lines[6]) }.getOrDefault(CollectionSort.COLLECTOR_NUMBER)
     return CollectionBrowseState(
@@ -210,14 +239,19 @@ fun decodeCollectionBrowse(raw: String?): CollectionBrowseState {
             else -> null
         },
         sort = sort,
+        filtersOpen = lines.getOrNull(7) == "open",
     )
 }
 
 private fun splitField(raw: String): Set<String> =
     raw.split('\u001f').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
-private fun cardMatches(card: CardEntryEntity, state: CollectionBrowseState): Boolean {
-    if (!matchesCollectionQuery(card, state.query)) return false
+private fun cardMatches(
+    card: CardEntryEntity,
+    state: CollectionBrowseState,
+    setNames: Map<String, List<String>>,
+): Boolean {
+    if (!matchesCollectionQuery(card, state.query, setNames)) return false
     if (state.sets.isNotEmpty() && collectionSetKey(card) !in state.sets) return false
     if (state.languages.isNotEmpty() && card.language !in state.languages) return false
     if (state.conditions.isNotEmpty() && card.condition !in state.conditions) return false
@@ -225,11 +259,18 @@ private fun cardMatches(card: CardEntryEntity, state: CollectionBrowseState): Bo
     return true
 }
 
-private fun matchesCollectionQuery(card: CardEntryEntity, query: String): Boolean {
+private fun matchesCollectionQuery(
+    card: CardEntryEntity,
+    query: String,
+    setNames: Map<String, List<String>>,
+): Boolean {
     val needle = foldMatch(query.trim())
     if (needle.isEmpty()) return true
     if (foldMatch(card.name).contains(needle)) return true
-    return foldMatch(card.catalogName.orEmpty()).contains(needle)
+    if (foldMatch(card.catalogName.orEmpty()).contains(needle)) return true
+    if (foldMatch(card.setName).contains(needle)) return true
+    if (foldMatch(card.setCode).contains(needle)) return true
+    return setNames[collectionSetKey(card)].orEmpty().any { foldMatch(it).contains(needle) }
 }
 
 private fun foldMatch(value: String): String {

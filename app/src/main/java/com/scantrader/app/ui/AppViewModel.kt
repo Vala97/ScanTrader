@@ -16,6 +16,7 @@ import com.scantrader.app.ui.collection.CollectionBrowseState
 import com.scantrader.app.ui.collection.CollectionBrowser
 import com.scantrader.app.ui.collection.CollectionSort
 import com.scantrader.app.ui.collection.browseCollection
+import com.scantrader.app.ui.collection.collectionCatalogSetNames
 import com.scantrader.app.ui.collection.collectionConditionChoices
 import com.scantrader.app.ui.collection.collectionLanguageChoices
 import com.scantrader.app.ui.collection.collectionSearchDelay
@@ -126,10 +127,24 @@ class CollectionViewModel(
         .distinctUntilChanged()
         .debounce { collectionSearchDelay(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
-    val browser: StateFlow<CollectionBrowser> = combine(cards, controls, debouncedQuery) { all, ctrl, query ->
+    private val catalogSetNames = cards
+        .map { list ->
+            withContext(Dispatchers.IO) {
+                collectionCatalogSetNames(list) { game, code ->
+                    runCatching { app.localSets.cachedSetNames(game, code) }.getOrDefault(emptyList())
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+    val browser: StateFlow<CollectionBrowser> = combine(
+        cards,
+        controls,
+        debouncedQuery,
+        catalogSetNames,
+    ) { all, ctrl, query, names ->
         CollectionBrowser(
             controls = ctrl,
-            result = browseCollection(all, ctrl.copy(query = query)),
+            result = browseCollection(all, ctrl.copy(query = query), names),
             sets = collectionSetChoices(all),
             languages = collectionLanguageChoices(all),
             conditions = collectionConditionChoices(all),
@@ -160,7 +175,9 @@ class CollectionViewModel(
 
     fun setSort(value: CollectionSort) = edit { it.copy(sort = value) }
 
-    fun clearBrowse() = edit { CollectionBrowseState() }
+    fun setFiltersOpen(open: Boolean) = edit { it.copy(filtersOpen = open) }
+
+    fun clearBrowse() = edit { CollectionBrowseState(filtersOpen = it.filtersOpen) }
 
     private fun edit(transform: (CollectionBrowseState) -> CollectionBrowseState) {
         touched.set(true)
