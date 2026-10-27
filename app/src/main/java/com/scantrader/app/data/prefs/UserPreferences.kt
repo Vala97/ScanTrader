@@ -38,6 +38,7 @@ class UserPreferences(private val context: Context) {
                 ?: AUTO_SAVE_CONFIDENCE_DEFAULT,
             showDebugInfo = prefs[SHOW_DEBUG_INFO] ?: false,
             neuralPromptShown = prefs[NEURAL_PROMPT_SHOWN] ?: false,
+            onboardingCompleted = prefs[ONBOARDING_COMPLETED] ?: false,
         )
     }
 
@@ -87,6 +88,18 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { it[NEURAL_PROMPT_SHOWN] = shown }
     }
 
+    suspend fun setOnboardingCompleted(completed: Boolean) {
+        context.dataStore.edit { it[ONBOARDING_COMPLETED] = completed }
+    }
+
+    /** Introduction finished or skipped. Also retires the old pack dialog. */
+    suspend fun completeOnboarding() {
+        context.dataStore.edit { prefs ->
+            prefs[ONBOARDING_COMPLETED] = true
+            prefs[NEURAL_PROMPT_SHOWN] = true
+        }
+    }
+
     suspend fun currentDefaults(): ScanDefaults = defaults.first()
 
     suspend fun collectionBrowse(collectionId: Long): CollectionBrowseState {
@@ -114,6 +127,7 @@ class UserPreferences(private val context: Context) {
         val AUTO_SAVE_CONFIDENCE = intPreferencesKey("auto_save_confidence_percent")
         val SHOW_DEBUG_INFO = booleanPreferencesKey("show_debug_info")
         val NEURAL_PROMPT_SHOWN = booleanPreferencesKey("neural_prompt_shown")
+        val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
     }
 }
 
@@ -142,6 +156,8 @@ data class ScanDefaults(
     val autoSaveConfidencePercent: Int = AUTO_SAVE_CONFIDENCE_DEFAULT,
     /** Technical confirm copy, such as the «Conferma a mano» banner. */
     val showDebugInfo: Boolean = false,
-    /** The first-launch neural-pack dialog has already been answered. */
+    /** The first-launch pack dialog was answered. Skips the introduction. */
     val neuralPromptShown: Boolean = false,
+    /** The introduction was finished, skipped, or replaced an answered pack prompt. */
+    val onboardingCompleted: Boolean = false,
 )

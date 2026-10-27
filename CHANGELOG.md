@@ -12,7 +12,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - In Impostazioni scan, «Soglia auto-salvataggio» va dal 50% al 99% (predefinito 74%). Sotto la soglia la carta resta in conferma. Restano le regole di prima: il nome viene solo dal titolo, un set e un numero senza nome non si salvano da soli, la stessa stampa non passa due volte di fila e i codici set sconosciuti si scartano.
 - In Impostazioni generali, «Mostra informazioni aggiuntive (debug)» è spento. Il banner «Conferma a mano» e la percentuale di match compaiono solo se è acceso. Il salvataggio automatico resta visibile.
 - Nella scheda carta si può scrivere un prezzo. Quel prezzo sostituisce quello automatico, anche nel CSV CardTrader, finché non si tocca «Ripristina prezzo automatico». Il Pokémon non ha un prezzo foil.
-- Al primo avvio un dialogo propone di scaricare il pack neurale Magic e i cataloghi Pokémon («Scarica» / «Non ora»). Compare una sola volta. I download restano in Impostazioni.
+- Al primo avvio un'introduzione a pagine (si scorre, con i pallini). «Salta» è sempre visibile; «Avanti» sull'ultima pagina diventa «Inizia». Le pagine spiegano lo scan di Magic e Pokémon, come inquadrare titolo e numero di collezione, l'auto-scan (soglia e niente doppione di fila) e l'export CSV per CardTrader. L'ultima pagina chiede il permesso della fotocamera e propone il pack neurale Magic e i cataloghi Pokémon, al posto del dialogo precedente. Se il permesso è negato si può continuare. Compare una sola volta: chi aveva già risposto a quel dialogo non la rivede. In Impostazioni, «Rivedi introduzione» la riapre.
 
 ### Modificato
 - Dalle impostazioni di scan è sparita l’opzione «Sessione». Lo scan resta quello di una carta alla volta.

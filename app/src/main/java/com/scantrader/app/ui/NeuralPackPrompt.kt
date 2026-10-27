@@ -4,9 +4,10 @@ import com.scantrader.app.vision.NeuralPackState
 import com.scantrader.app.vision.PokemonCatalogIndex
 
 /**
- * First-launch suggestion for the Magic neural pack and the Pokémon catalogs.
- * Shown once. Hidden while a download is already running, and hidden when
- * Magic is on the device and a Pokémon catalog is already installed.
+ * Copy for the Magic neural pack and the Pokémon catalogs.
+ * The first-launch dialog is gone: this text is the last introduction page.
+ * [shouldShow] stays for the old "offer once, hide while downloading or when
+ * both are already installed" rule.
  */
 object NeuralPackPrompt {
     const val TITLE = "Riconoscimento Magic e Pokémon"

@@ -33,6 +33,8 @@ import com.scantrader.app.ui.collection.CollectionScreen
 import com.scantrader.app.ui.confirm.ConfirmScreen
 import com.scantrader.app.ui.home.HomeScreen
 import com.scantrader.app.ui.scan.ScanScreen
+import com.scantrader.app.ui.onboarding.OnboardingScreen
+import com.scantrader.app.ui.onboarding.OnboardingViewModel
 import com.scantrader.app.ui.settings.SettingsScreen
 
 @Composable
@@ -49,6 +51,9 @@ fun AppNav() {
                 onScan = { nav.navigate("scan?collectionId=") },
                 onSettings = { nav.navigate("settings") },
                 onAbout = { nav.navigate("about") },
+                onShowOnboarding = {
+                    nav.navigate("onboarding") { launchSingleTop = true }
+                },
             )
         }
         composable(
@@ -123,7 +128,15 @@ fun AppNav() {
         }
         composable("settings") {
             val vm: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(app))
-            SettingsScreen(viewModel = vm, onBack = { nav.popBackStack() })
+            SettingsScreen(
+                viewModel = vm,
+                onBack = { nav.popBackStack() },
+                onReviewIntro = { nav.navigate("onboarding") { launchSingleTop = true } },
+            )
+        }
+        composable("onboarding") {
+            val vm: OnboardingViewModel = viewModel(factory = OnboardingViewModel.factory(app))
+            OnboardingScreen(viewModel = vm, onDone = { nav.popBackStack() })
         }
         composable("about") {
             AboutScreen(onBack = { nav.popBackStack() })

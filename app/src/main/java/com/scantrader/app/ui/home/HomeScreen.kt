@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,7 +47,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.scantrader.app.data.db.CollectionWithCount
 import com.scantrader.app.data.repo.RenameCollection
 import com.scantrader.app.ui.HomeViewModel
-import com.scantrader.app.ui.NeuralPackPrompt
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -57,20 +57,17 @@ fun HomeScreen(
     onScan: () -> Unit,
     onSettings: () -> Unit,
     onAbout: () -> Unit,
+    onShowOnboarding: () -> Unit,
 ) {
     val collections by viewModel.collections.collectAsStateWithLifecycle()
-    val defaults by viewModel.defaults.collectAsStateWithLifecycle()
-    val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
-    val catalogs by viewModel.pokemonCatalogs.collectAsStateWithLifecycle()
+    val showOnboarding by viewModel.showOnboarding.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<CollectionWithCount?>(null) }
     var renameError by remember { mutableStateOf<String?>(null) }
-    val showNeuralPrompt = NeuralPackPrompt.shouldShow(
-        defaults.neuralPromptShown,
-        neural,
-        catalogs.anyInstalled,
-    )
+    LaunchedEffect(showOnboarding) {
+        if (viewModel.consumeOnboardingLaunch()) onShowOnboarding()
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -218,20 +215,6 @@ fun HomeScreen(
         )
     }
 
-    if (showNeuralPrompt) {
-        AlertDialog(
-            onDismissRequest = viewModel::dismissNeuralPrompt,
-            shape = RoundedCornerShape(28.dp),
-            title = { Text(NeuralPackPrompt.TITLE) },
-            text = { Text(NeuralPackPrompt.body(catalogs.promptCatalogs)) },
-            confirmButton = {
-                TextButton(onClick = viewModel::downloadNeuralPack) { Text("Scarica") }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::dismissNeuralPrompt) { Text("Non ora") }
-            },
-        )
-    }
 }
 
 @Composable

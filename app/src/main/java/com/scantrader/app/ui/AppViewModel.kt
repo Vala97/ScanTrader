@@ -20,6 +20,7 @@ import com.scantrader.app.ui.collection.collectionConditionChoices
 import com.scantrader.app.ui.collection.collectionLanguageChoices
 import com.scantrader.app.ui.collection.collectionSearchDelay
 import com.scantrader.app.ui.collection.collectionSetChoices
+import com.scantrader.app.ui.onboarding.Onboarding
 import com.scantrader.app.data.catalog.CatalogQueryDebounce
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
@@ -68,25 +69,26 @@ import kotlinx.coroutines.withContext
 class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
     val collections: StateFlow<List<CollectionWithCount>> =
         app.repository.collections().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val defaults: StateFlow<ScanDefaults> =
-        app.prefs.defaults.stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5_000),
-            ScanDefaults(CardLanguage.ENGLISH, CardCondition.NEAR_MINT),
-        )
-    val neuralPackState = app.neuralPack.mtgState
-    val pokemonCatalogs = app.pokemonCatalogs.ui
+    val showOnboarding: StateFlow<Boolean> = app.prefs.defaults
+        .map { Onboarding.shouldShow(it.onboardingCompleted, it.neuralPromptShown) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    private val onboardingLaunchConsumed = AtomicBoolean(false)
 
     init {
         viewModelScope.launch { app.repository.ensureDefaultCollection() }
         viewModelScope.launch {
-            val magicReady = app.neuralPack.isInstalled(Game.MTG)
-            val pokemonReady = app.pokemonCatalogs.hasLocalCatalog()
-            if (!app.prefs.currentDefaults().neuralPromptShown && magicReady && pokemonReady) {
-                app.prefs.setNeuralPromptShown(true)
+            val current = app.prefs.currentDefaults()
+            if (current.neuralPromptShown && !current.onboardingCompleted) {
+                app.prefs.setOnboardingCompleted(true)
             }
         }
         app.pokemonCatalogs.refresh()
+    }
+
+    /** True only the first time this process should open the introduction. */
+    fun consumeOnboardingLaunch(): Boolean {
+        if (!showOnboarding.value) return false
+        return onboardingLaunchConsumed.compareAndSet(false, true)
     }
 
     fun create(name: String) {
@@ -99,20 +101,6 @@ class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun delete(id: Long) {
         viewModelScope.launch { app.repository.deleteCollection(id) }
-    }
-
-    fun dismissNeuralPrompt() {
-        viewModelScope.launch { app.prefs.setNeuralPromptShown(true) }
-    }
-
-    fun downloadNeuralPack() {
-        viewModelScope.launch {
-            app.prefs.setNeuralPromptShown(true)
-            if (!app.neuralPack.isInstalled(Game.MTG)) {
-                launch { app.neuralPack.downloadAndInstall() }
-            }
-            app.pokemonCatalogs.downloadMissing()
-        }
     }
 
     companion object {

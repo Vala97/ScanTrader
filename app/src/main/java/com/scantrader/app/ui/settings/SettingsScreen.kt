@@ -61,6 +61,7 @@ import com.scantrader.app.vision.PokemonCatalogRow
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     onBack: () -> Unit,
+    onReviewIntro: () -> Unit,
 ) {
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val tokenSaved by viewModel.hasCardTraderToken.collectAsStateWithLifecycle()
@@ -104,6 +105,7 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             SettingsSection(title = "Impostazioni generali") {
+                TextButton(onClick = onReviewIntro) { Text("Rivedi introduzione") }
                 SimpleDropdown(
                     label = "Lingua",
                     options = CardLanguage.entries.toList(),
