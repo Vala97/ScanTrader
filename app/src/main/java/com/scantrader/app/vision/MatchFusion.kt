@@ -284,7 +284,50 @@ object MatchFusion {
         return when (top.game) {
             Game.POKEMON -> evaluatePokemonSoft(top, parsed, confidence, visual, ocr)
             Game.MTG -> evaluateMtgSoft(top, parsed, confidence, visual, ocr, candidates)
+            Game.RIFTBOUND -> evaluateRiftbound(top, parsed, confidence, ocr)
+            Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> evaluateCtCode(top, parsed, confidence, ocr)
+            Game.OTHER -> AutoMatchDecision(accepted = false, reason = "notScannable", confidence = confidence)
         }
+    }
+
+    /**
+     * One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: il codice stampato porta a UNA carta solo se su CardTrader
+     * non ci sono versioni con lo stesso codice (Alternate Art, promo). Il catalogo da' EXACT_SCORE solo in quel caso.
+     */
+    private fun evaluateCtCode(top: IdentifiedCard, parsed: ParsedCardText, confidence: Float, ocr: Float): AutoMatchDecision {
+        val setOk = !parsed.setCode.isNullOrBlank()
+        val cnOk = !parsed.collectorNumber.isNullOrBlank() &&
+            com.scantrader.app.data.catalog.CtGameCatalog.base(parsed.collectorNumber!!) == com.scantrader.app.data.catalog.CtGameCatalog.base(top.collectorNumber)
+        val accepted = setOk && cnOk && ocr >= com.scantrader.app.data.catalog.CtGameCatalog.EXACT_SCORE - 0.01f
+        return AutoMatchDecision(
+            accepted = accepted, strict = accepted,
+            reason = if (accepted) "ctCode" else if (cnOk) "ctVariants (scegli la versione)" else "ctNoCode",
+            cnOk = cnOk, setOk = setOk, confidence = confidence,
+        )
+    }
+
+    /**
+     * Riftbound: the bottom-left code (`OGN • 007a/298`) is one CardTrader blueprint, and the
+     * title is in the middle band (not read). An exact set + number read is the identity.
+     */
+    private fun evaluateRiftbound(
+        top: IdentifiedCard,
+        parsed: ParsedCardText,
+        confidence: Float,
+        ocr: Float,
+    ): AutoMatchDecision {
+        val setOk = !parsed.setCode.isNullOrBlank() && parsed.setCode.equals(top.setCode, ignoreCase = true)
+        val cnOk = com.scantrader.app.data.catalog.RiftboundCatalog.numberKey(parsed.collectorNumber)
+            ?.let { it == com.scantrader.app.data.catalog.RiftboundCatalog.numberKey(top.collectorNumber) } == true
+        val accepted = setOk && cnOk && ocr >= 0.95f
+        return AutoMatchDecision(
+            accepted = accepted,
+            strict = accepted,
+            reason = if (accepted) "riftboundCode" else "riftboundNoCode set=$setOk cn=$cnOk",
+            cnOk = cnOk,
+            setOk = setOk,
+            confidence = confidence,
+        )
     }
 
     /**

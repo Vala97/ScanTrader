@@ -43,6 +43,7 @@ class NeuralPackManager(
     val mtgState: StateFlow<NeuralPackState> = _mtgState.asStateFlow()
 
     private val _pokemonState = MutableStateFlow(inspectGame(Game.POKEMON))
+    private val _riftboundState = MutableStateFlow<NeuralPackState>(NeuralPackState.NotInstalled)
     val pokemonState: StateFlow<NeuralPackState> = _pokemonState.asStateFlow()
 
     /** Back-compat alias used by Settings MTG section. */
@@ -60,6 +61,7 @@ class NeuralPackManager(
     fun isReady(game: Game): Boolean = when (game) {
         Game.MTG -> _mtgState.value is NeuralPackState.Ready
         Game.POKEMON -> _pokemonState.value is NeuralPackState.Ready
+        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> false // nessun pack visivo per Riftbound (per ora)
     }
 
     fun isReady(): Boolean = isReady(Game.MTG)
@@ -67,6 +69,7 @@ class NeuralPackManager(
     fun isInstalled(game: Game): Boolean = when (game) {
         Game.MTG -> modelFile.exists() && mtgCatalogFile.exists()
         Game.POKEMON -> modelFile.exists() && pokemonCatalogFiles().isNotEmpty()
+        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> false
     }
 
     fun isInstalled(): Boolean = isInstalled(Game.MTG)
@@ -76,6 +79,7 @@ class NeuralPackManager(
     fun catalogOrNull(game: Game): EmbeddingCatalog? = when (game) {
         Game.MTG -> mtgCatalog
         Game.POKEMON -> pokemonCatalog
+        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> null
     }
 
     fun catalogOrNull(): EmbeddingCatalog? = mtgCatalog
@@ -85,6 +89,7 @@ class NeuralPackManager(
             val targets = when (game) {
                 Game.MTG -> listOf(Game.MTG)
                 Game.POKEMON -> listOf(Game.POKEMON)
+                Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> emptyList()
                 null -> listOf(Game.MTG, Game.POKEMON)
             }
             var any = false
@@ -345,6 +350,7 @@ class NeuralPackManager(
                     NeuralPackState.InstalledNotLoaded
                 }
             }
+            Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> Unit
         }
         if (!mtgCatalogFile.exists() && pokemonCatalogFiles().isEmpty()) {
             embedder?.close()
@@ -369,17 +375,20 @@ class NeuralPackManager(
     private fun catalogFile(game: Game): File = when (game) {
         Game.MTG -> mtgCatalogFile
         Game.POKEMON -> pokemonCatalogFile
+        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> File(root, "riftbound-nessun-pack")
     }
 
     private fun stateFlow(game: Game): MutableStateFlow<NeuralPackState> = when (game) {
         Game.MTG -> _mtgState
         Game.POKEMON -> _pokemonState
+        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> _riftboundState
     }
 
     private fun setCatalog(game: Game, catalog: EmbeddingCatalog?) {
         when (game) {
             Game.MTG -> mtgCatalog = catalog
             Game.POKEMON -> pokemonCatalog = catalog
+            Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> Unit
         }
     }
 
@@ -387,6 +396,7 @@ class NeuralPackManager(
         val present = when (game) {
             Game.MTG -> mtgCatalogFile.exists()
             Game.POKEMON -> pokemonCatalogFiles().isNotEmpty()
+            Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> false
         }
         return if (present) NeuralPackState.InstalledNotLoaded else NeuralPackState.NotInstalled
     }

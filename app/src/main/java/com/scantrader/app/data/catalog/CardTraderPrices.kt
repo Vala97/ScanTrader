@@ -29,6 +29,7 @@ class CardTraderPrices(
         extraScryfallIds: List<String> = emptyList(),
     ): PriceQuote? {
         if (token()?.isBlank() != false) return null
+        if (card.game == Game.RIFTBOUND || (card.game != Game.MTG && card.ctBlueprintId != null)) return riftboundQuote(card, language, condition, foil)
         if (card.game != Game.MTG) return null
         return runCatching {
             val expansionId = CardTraderCatalog.expansionId(loadExpansions(), card.setCode) ?: return null
@@ -47,6 +48,19 @@ class CardTraderPrices(
         }.getOrNull()
     }
 
+    /** Riftbound: the blueprint id comes with the catalog hit, so the listings are one call. */
+    private suspend fun riftboundQuote(card: IdentifiedCard, language: CardLanguage, condition: CardCondition, foil: Boolean): PriceQuote? {
+        val id = card.ctBlueprintId ?: return null
+        return runCatching {
+            ListingAverage.average(
+                listings = api.products(id).values.flatten().map { it.toListing() },
+                language = language.cardTraderLang(),
+                condition = if (condition == CardCondition.DAMAGED) "Poor" else condition.csvValue,
+                foil = foil,
+            )
+        }.onFailure { com.scantrader.app.scan.ScanDebug.w("CardTrader Riftbound price failed", it) }.getOrNull()
+    }
+
     private suspend fun loadExpansions(): List<CtExpansion> {
         expansions?.let { return it }
         val loaded = api.expansions()
@@ -57,8 +71,8 @@ class CardTraderPrices(
     private fun CtProduct.toListing(): MarketListing = MarketListing(
         cents = price?.cents ?: 0,
         currency = price?.currency.orEmpty(),
-        language = properties?.mtgLanguage ?: properties?.pokemonLanguage,
+        language = properties?.mtgLanguage ?: properties?.pokemonLanguage ?: properties?.riftboundLanguage ?: properties?.otherLanguage(),
         condition = properties?.condition,
-        foil = properties?.mtgFoil,
+        foil = properties?.mtgFoil ?: properties?.riftboundFoil,
     )
 }

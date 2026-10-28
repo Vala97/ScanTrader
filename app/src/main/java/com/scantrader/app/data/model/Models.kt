@@ -1,8 +1,34 @@
 package com.scantrader.app.data.model
 
-enum class Game(val csvLabel: String, val shareLabel: String) {
+enum class Game(val csvLabel: String, val shareLabel: String, val scannable: Boolean = true, val foilChoice: Boolean = true) {
     MTG("mtg", "Magic"),
-    POKEMON("pokemon", "Pokémon"),
+    POKEMON("pokemon", "Pokémon", foilChoice = false),
+    RIFTBOUND("riftbound", "Riftbound"),
+    // Catalogo CardTrader per espansione (CtGameCatalog); su CardTrader non hanno l'opzione foil
+    ONE_PIECE("onepiece", "One Piece", foilChoice = false),
+    DRAGON_BALL("dragonball", "Dragon Ball Super", foilChoice = false),
+    YUGIOH("yugioh", "Yu-Gi-Oh!", foilChoice = false),
+    UNION_ARENA("unionarena", "Union Arena", foilChoice = false),
+    // Solo inventario (collezione "Cardtrader" allineata dal DLS Tracker)
+    OTHER("other", "Altri giochi", scannable = false, foilChoice = false),
+    ;
+
+    companion object {
+        /** Nome del gioco su Cardtrader -> gioco dell'app. */
+        fun fromCardTrader(name: String): Game {
+            val n = name.lowercase().replace(Regex("[^a-z]"), "")
+            return when {
+                n.contains("riftbound") -> RIFTBOUND
+                n.contains("magic") -> MTG
+                n.contains("pok") -> POKEMON
+                n.contains("onepiece") -> ONE_PIECE
+                n.contains("dragonball") -> DRAGON_BALL
+                n.contains("yugioh") -> YUGIOH
+                n.contains("unionarena") -> UNION_ARENA
+                else -> OTHER
+            }
+        }
+    }
 }
 
 enum class CardCondition(val csvValue: String, val label: String) {
@@ -134,6 +160,10 @@ data class IdentifiedCard(
      * Null when [scryfallId] is already the English card CardTrader stores.
      */
     val catalogScryfallId: String? = null,
+    /** CardTrader blueprint id (Riftbound catalog comes from CardTrader). */
+    val ctBlueprintId: Int? = null,
+    /** CardTrader rarity (`Common`, `Showcase`, `Alternate Art`, …). Riftbound uses it for the foil default. */
+    val rarity: String? = null,
 ) {
     /** Pokémon has no foil price. Magic keeps the foil EUR when the copy is foil. */
     fun priceForExport(foil: Boolean): String? =

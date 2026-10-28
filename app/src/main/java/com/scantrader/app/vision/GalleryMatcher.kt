@@ -82,6 +82,7 @@ class GalleryMatcher(
                     when (game) {
                         Game.MTG -> hydrateMtg(id, score, parsed, printedLang)
                         Game.POKEMON -> hydratePokemon(id, score, parsed)
+                        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> null
                     }
                 }
             }.awaitAll().filterNotNull()

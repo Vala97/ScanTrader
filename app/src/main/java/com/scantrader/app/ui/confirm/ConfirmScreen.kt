@@ -109,6 +109,17 @@ fun ConfirmScreen(
     var condition by conditionState
     val foilState = remember { mutableStateOf(false) }
     var foil by foilState
+    // Riftbound: Rara, Epica, Leggendaria, Showcase e Alternate Art esistono solo foil
+    val riftboundAlwaysFoil = selected?.let {
+        it.game == com.scantrader.app.data.model.Game.RIFTBOUND &&
+            com.scantrader.app.data.catalog.RiftboundCatalog.alwaysFoil(it.rarity)
+    } == true
+    LaunchedEffect(selected?.identityKey()) {
+        val card = selected
+        if (card != null && card.game == com.scantrader.app.data.model.Game.RIFTBOUND) {
+            foil = com.scantrader.app.data.catalog.RiftboundCatalog.alwaysFoil(card.rarity)
+        }
+    }
     val collectionIdState = remember { mutableStateOf(viewModel.preferredCollectionId) }
     var collectionId by collectionIdState
     val scanIdentity = listOf(
@@ -453,16 +464,17 @@ fun ConfirmScreen(
                         labelOf = { it.label },
                     )
                 }
-                if (current.game != com.scantrader.app.data.model.Game.POKEMON) {
+                if (current.game.foilChoice) {
                     item {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("Foil / holo")
+                            Text(if (riftboundAlwaysFoil) "Foil · sempre (${selected?.rarity})" else "Foil / holo")
                             Switch(
                                 checked = foil,
+                                enabled = !riftboundAlwaysFoil,
                                 onCheckedChange = {
                                     cancelAutoSave(AutoSaveControl.Gesture.FOIL)
                                     foil = it

@@ -22,12 +22,17 @@ class CatalogLookup(
     private val scryfall: ScryfallClient,
     private val tcgdex: TcgdexApi,
     private val localSets: LocalSetCatalog? = null,
+    private val riftbound: RiftboundCatalog? = null,
+    private val ctGames: Map<Game, CtGameCatalog> = emptyMap(),
 ) {
     suspend fun identify(game: Game, parsed: ParsedCardText, manualQuery: String? = null): List<IdentifiedCard> {
         val queryName = manualQuery?.trim()?.takeIf { it.isNotBlank() } ?: parsed.nameGuess
         return when (game) {
             Game.MTG -> lookupMtg(parsed, queryName)
             Game.POKEMON -> lookupPokemon(parsed, queryName)
+            Game.RIFTBOUND -> riftbound?.identify(parsed, manualQuery).orEmpty()
+            Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> ctGames[game]?.identify(parsed, manualQuery).orEmpty()
+            Game.OTHER -> emptyList() // solo inventario
         }.distinctBy { it.scryfallId ?: "${it.imageUrl}-${it.setCode}-${it.collectorNumber}-${it.name}" }
             .take(12)
     }
