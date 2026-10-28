@@ -117,7 +117,8 @@ class CtGameCatalog(
         val exact = narrowed.filter { (_, b) -> collector(b).equals(number, ignoreCase = true) }
         val score = if (narrowed.size == 1) EXACT_SCORE else CHOOSE_SCORE
         val ordered = exact + narrowed.filter { it !in exact }
-        return ordered.map { (e, b) -> b.toIdentified(e, score) }
+        // con piu' versioni il numero esatto (senza suffisso: la versione normale) resta il primo proposto
+        return ordered.map { (e, b) -> b.toIdentified(e, if (narrowed.size > 1 && (e to b) in exact) CHOOSE_SCORE + 0.01f else score) }
     }
 
     /** Ricerca per nome nelle espansioni gia' scaricate di questo gioco (Cerca per nome della conferma). */

@@ -121,6 +121,8 @@ class CtGamesTest {
         assertEquals(listOf(1, 2), two.map { it.ctBlueprintId })
         assertEquals("Portgas.D.Ace (Alternate Art)", two[1].name)
         assertFalse(MatchFusion.evaluateAutoMatch(MatchFusion.fuse(two, p2).first(), p2).accepted)
+        // la versione normale (numero esatto) resta la prima anche dopo la fusione (Kaido ST04-003 / ST04-003p)
+        assertEquals(1, MatchFusion.fuse(two.reversed(), p2).first().ctBlueprintId)
         // un'espansione si scarica una volta sola; mai quelle dello stesso codice di altri giochi (op02 Yu-Gi-Oh)
         assertEquals(1, api.calls.count { it == "bp2" })
         assertFalse(api.calls.contains("bp9"))

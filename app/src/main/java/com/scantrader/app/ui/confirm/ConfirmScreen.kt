@@ -129,6 +129,8 @@ fun ConfirmScreen(
         viewModel.parsed?.setCode,
     ).joinToString("|")
     val autoSaveCancelledState = remember(scanIdentity) { mutableStateOf(false) }
+    // una versione toccata a mano resta quella scelta: la carta dell'autoscan non la sostituisce piu'
+    val userPickedState = remember(scanIdentity) { mutableStateOf(false) }
     val secondsLeftState = remember(scanIdentity) { mutableIntStateOf(0) }
     val autoSaveOfferedState = remember { mutableStateOf(false) }
     val autoSaveCancelled = autoSaveCancelledState.value
@@ -228,7 +230,7 @@ fun ConfirmScreen(
     val lockedNow = viewModel.autoMatchCardKey
     val preferredNow = candidates.firstOrNull { lockedNow != null && it.identityKey() == lockedNow }
         ?: candidates.firstOrNull()
-    val lockedMismatchNow = lockedNow != null &&
+    val lockedMismatchNow = lockedNow != null && !userPickedState.value &&
         selected?.identityKey() != lockedNow &&
         preferredNow?.identityKey() == lockedNow
     // Follow the live list in this frame. A catalog lookup clears it, so the
@@ -555,6 +557,7 @@ fun ConfirmScreen(
                         )
                         .clickable {
                             cancelAutoSave(AutoSaveControl.Gesture.CANDIDATE)
+                            userPickedState.value = true
                             selected = card
                         },
                 ) {

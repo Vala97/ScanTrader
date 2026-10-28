@@ -413,6 +413,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private val catalogDebounce = CatalogQueryDebounce()
     private val rejectedSets = RejectedSetCodes()
     private val stableTop = StableTopAccept()
+    /** Ultimo codice con piu' versioni gia' aperto in conferma dall'autoscan (non si riapre finche' non cambia carta). */
+    private var lastVariantKey: String? = null
     private val speculativeCatalog = SpeculativeCatalog()
     private val speculativeInFlight = AtomicBoolean(false)
 
@@ -1451,7 +1453,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     com.scantrader.app.scan.ScanDebug.d("card image async (autosave)")
                 }
                 catalogHits
-            } else if (fingerprint != null && catalogHits.isNotEmpty()) {
+            } else if (fingerprint != null && catalogHits.isNotEmpty() &&
+                game.value != Game.RIFTBOUND && game.value !in app.ctGames
+            ) {
+                // giochi CardTrader: le versioni (normale, Pre-release, promo) hanno quasi la stessa arte,
+                // l'ordine resta quello del catalogo (prima il numero esatto)
                 runCatching { app.visualRanker.rank(fingerprint, catalogHits) }
                     .onFailure { com.scantrader.app.scan.ScanDebug.w("visualRanker failed", it) }
                     .getOrDefault(catalogHits)
@@ -1539,6 +1545,18 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             val consecutiveBlocked = repeatCard != null
             val acceptAuto = autoOk && !blockedSameCard && !duplicateBlocked && !consecutiveBlocked
+            // One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: codice letto ma piu' versioni con lo stesso codice.
+            // L'autoscan apre la conferma per scegliere (senza salvataggio automatico), una volta per codice.
+            val readCode = matched.collectorNumber?.takeIf { it.isNotBlank() }?.let { "${matched.setCode}|$it" }
+            if (readCode != null && readCode != lastVariantKey) lastVariantKey = null
+            val variantKey = readCode.takeIf {
+                requireMatch && !autoOk && game.value in app.ctGames && gate.cnOk && candidates.size > 1
+            }
+            val chooseVersion = variantKey != null && variantKey != lastVariantKey && !duplicateBlocked && !consecutiveBlocked
+            if (chooseVersion) {
+                lastVariantKey = variantKey
+                com.scantrader.app.scan.ScanDebug.d("ct variants: conferma per scegliere la versione code=$variantKey n=${candidates.size}")
+            }
             if (duplicateBlocked) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "autosave: skipped (same card still in frame key=$topKey)",
@@ -1632,7 +1650,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             if (requireMatch && acceptAuto && isPokemon) {
                 scheduleRulesOcr(croppedFull)
             }
-            if (requireMatch) acceptAuto else true
+            if (requireMatch) acceptAuto || chooseVersion else true
         }
     }
 
