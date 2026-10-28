@@ -525,6 +525,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     fun setGame(value: Game) {
         game.value = value
         app.scanSession.game = value
+        // One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: galleria visiva in background (resta sul telefono)
+        if (value in app.ctGames && com.scantrader.app.BuildConfig.CT_GALLERY_URL.isNotBlank()) {
+            viewModelScope.launch { app.neuralPack.ensureCtGallery(value, com.scantrader.app.BuildConfig.CT_GALLERY_URL) }
+        }
     }
 
     /** Game the user already confirmed for this scan visit. Survives confirm. */
@@ -1332,7 +1336,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 )
             }
             // Auto + cn+set: catalog only (skip gallery + fingerprint).
-            val skipHeavyVision = autoMode && idReady
+            // giochi CardTrader: l'immagine serve anche con il codice letto (sceglie fra le versioni)
+            val skipHeavyVision = autoMode && idReady && !(game.value in app.ctGames && neuralOn)
             val fingerprint = if (skipHeavyVision || !queryCatalog) {
                 com.scantrader.app.scan.ScanDebug.d("fingerprint skipped (auto id-ready)")
                 null
@@ -1388,7 +1393,14 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                     .getOrDefault(emptyList())
                             }
                         }
-                        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> emptyList<IdentifiedCard>() // nessun pack visivo
+                        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> if (neuralOn) {
+                            runCatching { app.galleryMatcher.matchCt(game.value, cropped, matched) }
+                                .onFailure { com.scantrader.app.scan.ScanDebug.e("gallery.matchCt failed", it) }
+                                .getOrDefault(emptyList())
+                        } else {
+                            emptyList()
+                        }
+                        Game.RIFTBOUND, Game.OTHER -> emptyList<IdentifiedCard>() // nessun pack visivo
                         Game.POKEMON -> {
                             if (!app.neuralPack.isInstalled(Game.POKEMON)) {
                                 com.scantrader.app.scan.ScanDebug.d("gallery skipped (Pokémon pack not installed)")
@@ -1547,10 +1559,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val acceptAuto = autoOk && !blockedSameCard && !duplicateBlocked && !consecutiveBlocked
             // One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: codice letto ma piu' versioni con lo stesso codice.
             // L'autoscan apre la conferma per scegliere (senza salvataggio automatico), una volta per codice.
+            // Anche senza codice, se l'immagine indica una carta ma non abbastanza netta per salvarla da sola.
             val readCode = matched.collectorNumber?.takeIf { it.isNotBlank() }?.let { "${matched.setCode}|$it" }
+                ?: top?.ctBlueprintId?.takeIf { (top.visualScore ?: 0f) >= com.scantrader.app.vision.MatchFusion.CT_VISUAL_MIN }?.let { "bp|$it" }
             if (readCode != null && readCode != lastVariantKey) lastVariantKey = null
             val variantKey = readCode.takeIf {
-                requireMatch && !autoOk && game.value in app.ctGames && gate.cnOk && candidates.size > 1
+                requireMatch && !autoOk && game.value in app.ctGames &&
+                    it != null && ((gate.cnOk && candidates.size > 1) || it.startsWith("bp|"))
             }
             val chooseVersion = variantKey != null && variantKey != lastVariantKey && !duplicateBlocked && !consecutiveBlocked
             if (chooseVersion) {

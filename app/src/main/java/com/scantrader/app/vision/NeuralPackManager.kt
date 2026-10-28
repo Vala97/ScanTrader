@@ -61,7 +61,8 @@ class NeuralPackManager(
     fun isReady(game: Game): Boolean = when (game) {
         Game.MTG -> _mtgState.value is NeuralPackState.Ready
         Game.POKEMON -> _pokemonState.value is NeuralPackState.Ready
-        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> false // nessun pack visivo per Riftbound (per ora)
+        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> embedder != null && ctCatalogs[game] != null
+        Game.RIFTBOUND, Game.OTHER -> false // nessun pack visivo per Riftbound (per ora)
     }
 
     fun isReady(): Boolean = isReady(Game.MTG)
@@ -69,7 +70,8 @@ class NeuralPackManager(
     fun isInstalled(game: Game): Boolean = when (game) {
         Game.MTG -> modelFile.exists() && mtgCatalogFile.exists()
         Game.POKEMON -> modelFile.exists() && pokemonCatalogFiles().isNotEmpty()
-        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> false
+        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> modelFile.exists() && ctFile(game).exists()
+        Game.RIFTBOUND, Game.OTHER -> false
     }
 
     fun isInstalled(): Boolean = isInstalled(Game.MTG)
@@ -79,7 +81,8 @@ class NeuralPackManager(
     fun catalogOrNull(game: Game): EmbeddingCatalog? = when (game) {
         Game.MTG -> mtgCatalog
         Game.POKEMON -> pokemonCatalog
-        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> null
+        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> ctCatalogs[game]
+        Game.RIFTBOUND, Game.OTHER -> null
     }
 
     fun catalogOrNull(): EmbeddingCatalog? = mtgCatalog
@@ -89,7 +92,8 @@ class NeuralPackManager(
             val targets = when (game) {
                 Game.MTG -> listOf(Game.MTG)
                 Game.POKEMON -> listOf(Game.POKEMON)
-                Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> emptyList()
+                Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> return@withLock loadCtLocked(game)
+                Game.RIFTBOUND, Game.OTHER -> emptyList()
                 null -> listOf(Game.MTG, Game.POKEMON)
             }
             var any = false
@@ -352,7 +356,7 @@ class NeuralPackManager(
             }
             Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> Unit
         }
-        if (!mtgCatalogFile.exists() && pokemonCatalogFiles().isEmpty()) {
+        if (!mtgCatalogFile.exists() && pokemonCatalogFiles().isEmpty() && CT_GAMES.none { ctFile(it).exists() }) {
             embedder?.close()
             embedder = null
             modelFile.delete()
@@ -409,6 +413,57 @@ class NeuralPackManager(
         return downloaded + manual
     }
 
+    // ---- One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: galleria costruita dalle immagini CardTrader ----
+    private val ctCatalogs = java.util.concurrent.ConcurrentHashMap<Game, EmbeddingCatalog>()
+    private fun ctFile(game: Game) = File(root, "ct-${game.csvLabel}.stcat")
+    private val ctChecked = java.util.Collections.synchronizedSet(mutableSetOf<Game>())
+
+    private fun loadCtLocked(game: Game): Boolean {
+        ctCatalogs[game]?.let { if (embedder != null) return true }
+        val file = ctFile(game)
+        if (!modelFile.exists() || !file.exists()) return false
+        return runCatching {
+            if (embedder == null) embedder = MiloEmbedder(modelFile)
+            ctCatalogs[game] = EmbeddingCatalog.load(file)
+            com.scantrader.app.scan.ScanDebug.d("neural: ready game=$game cards=${ctCatalogs[game]?.size}")
+            true
+        }.getOrElse {
+            com.scantrader.app.scan.ScanDebug.e("neural: load failed game=$game", it)
+            false
+        }
+    }
+
+    /**
+     * Scarica (se manca o sul server e' cambiata) la galleria del gioco da `<baseUrl><gioco>.stcat`
+     * e il modello Milo se non c'e'. Senza indirizzo o senza rete resta quella gia' sul telefono.
+     */
+    suspend fun ensureCtGallery(game: Game, baseUrl: String): Boolean = withContext(Dispatchers.IO) {
+        if (game !in CT_GAMES) return@withContext false
+        mutex.withLock {
+            val file = ctFile(game)
+            val url = baseUrl.trimEnd('/') + "/" + game.csvLabel + ".stcat"
+            // una volta per apertura dell'app: si riscarica se sul server c'e' una galleria diversa (altra misura)
+            val stale = baseUrl.isNotBlank() && game !in ctChecked && runCatching {
+                http.newCall(Request.Builder().url(url).head().build()).execute().use { r ->
+                    r.isSuccessful && r.header("Content-Length")?.toLongOrNull()?.let { it != file.length() } != false
+                }
+            }.getOrDefault(false)
+            ctChecked += game
+            if (stale) {
+                runCatching {
+                    if (!modelFile.exists()) downloadTo(MODEL_URL, modelFile) {}
+                    val tmp = File(root, file.name + ".download")
+                    downloadTo(url, tmp) {}
+                    EmbeddingCatalog.load(tmp) // valida prima di sostituire
+                    if (!tmp.renameTo(file)) { tmp.copyTo(file, overwrite = true); tmp.delete() }
+                    ctCatalogs.remove(game)
+                    com.scantrader.app.scan.ScanDebug.d("neural: galleria $game scaricata")
+                }.onFailure { com.scantrader.app.scan.ScanDebug.w("neural: galleria $game non scaricata", it) }
+            }
+            loadCtLocked(game)
+        }
+    }
+
     private fun downloadTo(url: String, dest: File, onFraction: (Float) -> Unit) {
         val request = Request.Builder().url(url).get().build()
         http.newCall(request).execute().use { response ->
@@ -443,6 +498,7 @@ class NeuralPackManager(
         const val CATALOG_NPZ_URL =
             "$HF/catalogs/milo1-scryfall-mtg-2026-07-09.npz"
         const val APPROX_SIZE_LABEL = "~60 MB"
+        val CT_GAMES = setOf(Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA)
     }
 }
 

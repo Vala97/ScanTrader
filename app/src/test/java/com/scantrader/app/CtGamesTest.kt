@@ -56,6 +56,33 @@ class CtGamesTest {
     }
 
     @Test
+    fun imageChoosesTheVersion() {
+        fun card(bp: Int, n: String, v: Float?, ocr: Float) = com.scantrader.app.data.model.IdentifiedCard(
+            game = Game.ONE_PIECE, name = "Kaido $bp", setCode = "st04", setName = "ST-04", collectorNumber = n,
+            ctBlueprintId = bp, visualScore = v, ocrScore = ocr,
+        )
+        val withCode = OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "ST04-003 SR")
+        val noCode = OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "")
+        fun gate(p: com.scantrader.app.data.model.ParsedCardText, vararg c: com.scantrader.app.data.model.IdentifiedCard): MatchFusion.AutoMatchDecision {
+            val fused = MatchFusion.fuse(c.toList(), p)
+            return MatchFusion.evaluateAutoMatch(fused.first(), p, fused)
+        }
+        val v = MatchFusion.CT_VISUAL_MIN + 0.05f
+        // codice letto, due versioni: l'immagine netta sceglie
+        val clear = gate(withCode, card(1, "ST04-003", v, 0.91f), card(2, "ST04-003p", v - MatchFusion.CT_VISUAL_MARGIN - 0.02f, 0.9f))
+        assertTrue(clear.reason, clear.accepted)
+        assertTrue(MatchFusion.allowsAutoSave(clear))
+        // due versioni quasi uguali all'immagine (timbro Pre-release): si sceglie a mano
+        assertFalse(gate(withCode, card(1, "ST04-003", v, 0.91f), card(2, "ST04-003p", v - 0.01f, 0.9f)).accepted)
+        // codice non letto: solo un'immagine molto netta
+        val s = MatchFusion.CT_VISUAL_STRONG + 0.02f
+        assertTrue(gate(noCode, card(1, "ST04-003", s, 0f), card(9, "OP01-001", s - MatchFusion.CT_VISUAL_MARGIN_STRONG - 0.02f, 0f)).accepted)
+        assertFalse(gate(noCode, card(1, "ST04-003", MatchFusion.CT_VISUAL_STRONG - 0.03f, 0f), card(9, "OP01-001", 0.5f, 0f)).accepted)
+        // codice letto che non coincide con l'immagine: mai da sola
+        assertFalse(gate(withCode, card(9, "OP01-001", 0.97f, 0f)).accepted)
+    }
+
+    @Test
     fun codeCorners() {
         // centro del codice misurato sulle immagini CardTrader (frazioni della carta)
         val centers = mapOf(
