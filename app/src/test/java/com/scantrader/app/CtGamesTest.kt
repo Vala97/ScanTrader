@@ -56,6 +56,20 @@ class CtGamesTest {
     }
 
     @Test
+    fun codeCorners() {
+        // centro del codice misurato sulle immagini CardTrader (frazioni della carta)
+        val centers = mapOf(
+            Game.ONE_PIECE to (0.87f to 0.984f), Game.DRAGON_BALL to (0.93f to 0.90f),
+            Game.YUGIOH to (0.80f to 0.73f), Game.UNION_ARENA to (0.15f to 0.97f),
+        )
+        for ((g, c) in centers) {
+            val r = com.scantrader.app.scan.CardFrameGeometry.ctCodeRegion(g)!!
+            assertTrue("$g", c.first in r[0]..r[2] && c.second in r[1]..r[3])
+        }
+        assertNull(com.scantrader.app.scan.CardFrameGeometry.ctCodeRegion(Game.RIFTBOUND))
+    }
+
+    @Test
     fun baseNumbers() {
         assertEquals("op02013", CtGameCatalog.base("OP02-013a"))
         assertEquals("st01004", CtGameCatalog.base("ST01-004P6"))

@@ -825,8 +825,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             val isMtg = game.value == Game.MTG
             val isPokemon = game.value == Game.POKEMON
-            // One Piece e Dragon Ball stampano il codice in basso a destra (come i Pokémon vecchi)
-            val readRight = isPokemon || game.value == Game.ONE_PIECE || game.value == Game.DRAGON_BALL
+            // One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: l'angolo del codice a piena risoluzione,
+            // letto al posto della fascia in basso a destra dei Pokémon vecchi
+            val ctCorner = com.scantrader.app.scan.CardFrameGeometry.ctCodeStrip(croppedFull, game.value)
+            val readRight = isPokemon || ctCorner != null
             // Bottom strips stay at 480. The title strip keeps enough pixels for a long name.
             fun scaled(full: android.graphics.Bitmap): Pair<android.graphics.Bitmap, android.graphics.Bitmap> {
                 val bottomCap = if (autoMode) AUTO_STRIP_MAX_SIDE else MANUAL_OCR_MAX_SIDE
@@ -878,7 +880,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     }
                     // Vintage Pokémon prints the collector on the bottom-right. Read it with the title.
                     val brJob = async {
-                        if (!readRight || (!autoMode && isPokemon)) {
+                        if (ctCorner != null) {
+                            runCatching { app.ocr.recognize(ctCorner, enhance = true) }.getOrDefault("")
+                        } else if (!readRight || (!autoMode && isPokemon)) {
                             ""
                         } else {
                             runCatching {
@@ -913,8 +917,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             }.getOrDefault(bl)
                         }
                         val ebrJob = async {
-                            if (!readRight) {
-                                ""
+                            if (!readRight || ctCorner != null) {
+                                "" // l'angolo del codice e' gia' letto ingrandito
                             } else {
                                 runCatching {
                                     app.ocr.recognize(
@@ -1120,7 +1124,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             }.getOrDefault("")
                         }
                         val fullBrJob = async {
-                            if (!readRight || br.isNotBlank()) {
+                            if (!readRight || br.isNotBlank() || ctCorner != null) {
                                 br
                             } else {
                                 runCatching {
