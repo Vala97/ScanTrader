@@ -11,7 +11,9 @@ La versione è solo in `app/version.properties` (`VERSION_NAME` e `VERSION_CODE`
 ## Cosa fa
 
 - **Scelta del gioco** prima dello scan (sette giochi, la lista scorre) e nel selettore sulla schermata di scan, che scorre in orizzontale.
-- Scan di una carta o di una sessione. **Auto-scan** riconosce la carta e, se il match supera la soglia forte (74%), la **salva da solo** dopo un’attesa configurabile, poi **torna allo scan dello stesso gioco** con fotocamera pronta e auto-scan riarmato. I match deboli restano da confermare a mano.
+- In alto nello scan, accanto all’icona della **torcia**, un pulsante accende o spegne l’**auto-scan** (la stessa scelta di Impostazioni scan; un avviso dice «Auto-scan attivo» o «Auto-scan disattivato»). La torcia rapida è solo quell’icona: nella barra chiusa di «Impostazioni scan» non c’è il chip della torcia (l’interruttore resta nel pannello aperto). Con l’auto-scan acceso il cerchio centrale non si preme: è un anello di attesa fisso. A destra, «Scatto manuale» è sempre usabile, anche mentre un frame è in analisi: mette in pausa l’auto-scan, apre sempre la conferma e l’auto-scan riprende solo quando la conferma si chiude.
+- **Auto-scan** riconosce la carta e, se il match supera la soglia scelta, la **salva da solo** dopo un’attesa configurabile, poi **torna allo scan dello stesso gioco** con fotocamera pronta e auto-scan riarmato. Sotto la soglia la carta resta da confermare a mano. La soglia è lo slider «Soglia auto-salvataggio» in Impostazioni scan, dal 50% al 99% (predefinito **74%**). L’attesa si sceglie in Impostazioni generali («Auto-Scan · attesa salvataggio»); a 0 secondi il salvataggio automatico non parte.
+- Il nome della carta viene solo dalla fascia del titolo. Set e numero di collezione, senza un nome letto lì, non si salvano da soli. In auto-scan la stessa stampa non passa due volte di fila: un’altra lingua o un’altra versione della stessa carta sì. Un codice set che non esiste nel catalogo si scarta prima della ricerca.
 - Durante lo scan lo **schermo resta acceso**.
 - **Lente e zoom**: Automatica, Principale, Ultra-grandangolo, Teleobiettivo. Se una lente fisica non si apre, i preset 0,5× / 1× / 2× / 5× restano dentro l’intervallo dello zoom. Lente e zoom (anche il pinch) restano dopo il salvataggio.
 - Riconoscimento **ibrido**: OCR, fingerprint dell’arte e **pack neurali** Milo on-device (opzionali, AGPL). Magic usa una gallery Scryfall; Pokémon una gallery TCGdex in inglese.
@@ -23,8 +25,9 @@ La versione è solo in `app/version.properties` (`VERSION_NAME` e `VERSION_CODE`
 - Chiamate Scryfall in coda (~10 al secondo), con cache e pausa dopo un HTTP 429.
 - Conferma di lingua, condizione, foil (solo Magic), quantità e collezione, con la percentuale di match e la fonte del prezzo (`Scryfall`, `Scryfall (circa)`, `CardTrader`, `Cardmarket`).
 - **Export CSV CardTrader**, un file per gioco, nel formato `POST /product_imports`.
-- **Collezione divisa per gioco e per espansione**, con le sezioni che si chiudono.
+- **Collezione divisa per gioco e per espansione**, con le sezioni che si chiudono. Si cerca per nome (stampato o di catalogo) e per espansione (nome del set, codice, e i nomi già presenti nella cache locale). I filtri stanno in un pannello chiuso di default, accanto alla ricerca. Una collezione si rinomina dalla home (pressione lunga o matita) e dalla sua schermata. Nella scheda carta si può scrivere un prezzo: sostituisce quello automatico finché non si tocca «Ripristina prezzo automatico». Le copie identiche stanno su una riga e la quantità si somma. Foil e variante restano righe diverse (il foil Pokémon resta spento); contano anche lingua e condizione.
 - **Collegamento al DLS Tracker** (facoltativo): le carte salvate vanno nel registro del proprio utente e da lì su CardTrader. Vedi [DLS Tracker](#dls-tracker).
+- Al primo avvio un’introduzione a pagine. L’ultima, «Fotocamera e pacchetti», chiede la fotocamera e propone il pack neurale Magic e i cataloghi Pokémon. In Impostazioni generali, «Rivedi introduzione» la riapre. «Mostra informazioni aggiuntive (debug)» è spento: acceso, in conferma compaiono il banner «Conferma a mano» e la percentuale di riconoscimento.
 - Interfaccia **Material 3 blu** (chiaro e scuro). L’icona è il medaglione blu e oro (cristallo, teschio, due uccelli e i simboli elementali) su fondo blu navy; la stessa compare in **Informazioni**.
 
 Nessun account, nessun backend a pagamento. Unico costo eventuale: account sviluppatore Google Play (~25 USD) se pubblichi.
@@ -91,7 +94,7 @@ Il tracker deve essere raggiungibile dal telefono (per esempio su Tailscale, con
 2. File → Open → cartella `ScanTrader`.
 3. Lascia che Gradle sincronizzi, poi Run su un telefono USB o un emulatore.
 
-`minSdk` 26, `compileSdk` 35. La build vuole **JDK 17** (sorgenti e bytecode), Android Gradle Plugin **8.13.2** e Gradle **8.13** (lo wrapper è già nel repo).
+`minSdk` 26, `compileSdk` 35. La build vuole **JDK 17** (sorgenti e bytecode), Android Gradle Plugin **8.13.2** e Gradle **8.13** (lo wrapper è già nel repo). `gradle.properties` non ha un percorso JDK della macchina: da terminale imposta `JAVA_HOME` su un JDK 17 prima di lanciare Gradle.
 
 Da terminale, con SDK Android installato e `local.properties` (`sdk.dir=...`):
 
@@ -103,6 +106,8 @@ gradlew.bat :app:assembleRelease
 `assembleRelease` attiva minify e `shrinkResources` (regole in `app/proguard-rules.pro`: ONNX Runtime, ML Kit, Room, Retrofit e i model Gson). Moshi e kotlinx.serialization non sono dipendenze. La release include solo l’ABI `arm64-v8a`. La debug tiene tutte le ABI, così un emulatore x86_64 parte ancora.
 
 Senza keystore l’APK di release si compila lo stesso e resta non firmato (`app-release-unsigned.apk`): in log compare un avviso. Una build Play Store, senza l’aggiornamento da GitHub, si ottiene con `-Pscantrader.githubSelfUpdate=false` (il task resta `assembleRelease` / `assembleDebug`).
+
+Se `local.properties` contiene `cardtrader.token`, o se si passa `-Pscantrader.cardTraderToken`, la configurazione di Gradle si ferma di proposito. Il token non entra nell’APK: si scrive solo nell’app, in Impostazioni.
 
 ## Firma della release
 
@@ -136,6 +141,20 @@ Non usa `releases/latest`: quell’URL deve restare il release dei cataloghi (`s
 Per una build destinata al Play Store il controllo GitHub si spegne con `-Pscantrader.githubSelfUpdate=false`. L’interfaccia `UpdateSource` è il punto in cui infilare gli aggiornamenti in-app di Play.
 
 L’indice si prepara con [`tools/publish_app_update`](tools/publish_app_update/README.md): lo script non carica nulla. Il workflow sul tag `v*` carica l’APK firmato e `app-update.json` sul release `app-update`, e lo lascia prerelease.
+
+## Pubblicare una versione
+
+1. In `app/version.properties` alza `VERSION_CODE` (un intero maggiore di quello già in giro) e, se serve, `VERSION_NAME`. È l’unico posto: l’APK e **Informazioni** li leggono da lì.
+2. Fai il merge su `main`.
+3. Dal commit su `main`, crea e pusha il tag `v` più la versione, per esempio `v1.2`:
+
+```bat
+git tag v1.2
+git push origin v1.2
+```
+
+4. Parte `.github/workflows/release-apk.yml` (sui tag `v*`). Se nel repository ci sono i quattro secret di firma, compila l’APK firmato e lo carica, insieme a `app-update.json`, sul release **prerelease** `app-update`. Senza quei secret il job di build non parte. `app-update` resta prerelease così `stcat` continua a essere `releases/latest` per i cataloghi.
+5. Controlla il run nella scheda **Actions** del repository, e che l’APK e `app-update.json` siano sul release `app-update`.
 
 ## Import su CardTrader
 
