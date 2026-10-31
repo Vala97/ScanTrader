@@ -77,6 +77,7 @@ import kotlinx.coroutines.launch
 import com.scantrader.app.ui.ConfirmViewModel
 import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
+import com.scantrader.app.scan.AutoScanQuick
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
 import com.scantrader.app.vision.MatchFusion
 import kotlinx.coroutines.delay
@@ -140,7 +141,13 @@ fun ConfirmScreen(
     val selectedKey = selected?.identityKey()
     val selectedMatchesGate = gatedKey == null || selectedKey == null || gatedKey == selectedKey
     val minConfidence = defaults.autoSaveConfidencePercent / 100f
-    val autoSaveOffered = viewModel.fromAutoScan &&
+    val openedWithAutoScan = remember { viewModel.fromAutoScan }
+    val fromAutoScan = AutoScanQuick.modeForCard(
+        setting = viewModel.fromAutoScan,
+        openedWith = openedWithAutoScan,
+        confirmOpen = true,
+    )
+    val autoSaveOffered = fromAutoScan &&
         defaults.autoSaveWaitSeconds > 0 &&
         MatchFusion.allowsAutoSave(autoMatch, minConfidence)
     autoSaveOfferedState.value = autoSaveOffered
@@ -156,7 +163,7 @@ fun ConfirmScreen(
         MatchFusion.confirmNoteForDisplay(
             MatchFusion.confirmMatchNote(
                 decision = decision,
-                fromAutoScan = viewModel.fromAutoScan,
+                fromAutoScan = fromAutoScan,
                 autoSaveWaitSeconds = defaults.autoSaveWaitSeconds,
                 selectedMatchesGate = selectedMatchesGate,
                 autoSaveCancelled = autoSaveCancelled,

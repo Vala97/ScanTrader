@@ -43,6 +43,13 @@ class ScanSession {
     var torchOn: Boolean = false
     var lightIntensity: Float = 0.75f
     var autoScan: Boolean = false
+
+    /**
+     * The confirmation currently shown came from the shutter (or a failed
+     * shutter that fell through to search), not from an auto-scan hit.
+     * Not cleared by [resetResults], so the sheet still refuses autosave.
+     */
+    var manualConfirm: Boolean = false
     /**
      * Last framing: pinch zoom or the lens-picker preset, whichever the user left.
      * Restored after the camera binds again. Not cleared by [resetResults].

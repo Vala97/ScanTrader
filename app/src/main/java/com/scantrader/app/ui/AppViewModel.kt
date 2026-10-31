@@ -400,6 +400,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private val acceptedLock = AcceptedCandidateLock(clearFramesNeeded = SAME_CARD_CLEAR_FRAMES)
     private val duplicateGuard = AutosaveDuplicateGuard()
     private val consecutiveGuard = ConsecutivePrintingGuard()
+    /** Shutter capture in flight. Auto frames must not accept or autosave until the sheet closes. */
+    private val manualCapture = AtomicBoolean(false)
+    private var autoFrameJob: kotlinx.coroutines.Job? = null
+    private var manualSheetLogged = false
+    val manualShotBusy = MutableStateFlow(false)
 
     /** Set when this frame's match is the printing we just accepted. */
     @Volatile
@@ -678,9 +683,15 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setAutoSaveConfidencePercent(percent) }
     }
 
-    fun setAutoScan(value: Boolean) {
+    /**
+     * Same flag as Impostazioni scan ([ScanSession.autoScan]), kept for the next visit.
+     * With a confirmation open, only the flag changes: the current card keeps its mode
+     * and the analyzer picks the new value up after that sheet closes.
+     */
+    fun setAutoScan(value: Boolean, confirmOpen: Boolean = false) {
         autoScan.value = value
         app.scanSession.autoScan = value
+        if (confirmOpen) return
         autoHitPending.set(false)
         autoBusy.set(false)
         lastAutoAttemptMs = 0
@@ -736,8 +747,55 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         app.scanSession.targetCollectionId = id
     }
 
+    /**
+     * Pause auto-scan for a shutter press. Returns false when a manual shot is already running.
+     * The in-flight auto frame is cancelled and must not publish. Auto frames stay paused
+     * until [endManualCapture], which runs when the confirmation sheet closes.
+     */
+    fun beginManualCapture(): Boolean {
+        synchronized(manualCapture) {
+            if (manualCapture.get()) return false
+            manualCapture.set(true)
+            autoHitPending.set(false)
+        }
+        autoFrameJob?.cancel()
+        autoFrameJob = null
+        autoBusy.set(false)
+        cancelSpeculative()
+        app.scanSession.ocrGeneration++
+        app.scanSession.rulesPending = false
+        manualSheetLogged = false
+        manualShotBusy.value = true
+        return true
+    }
+
+    fun isManualCaptureInFlight(): Boolean = manualCapture.get()
+
+    /** Confirmation is on screen. Stop the button ring; keep auto-scan paused. */
+    fun onManualSheetShown() {
+        manualShotBusy.value = false
+        if (manualCapture.get() && !manualSheetLogged) {
+            manualSheetLogged = true
+            com.scantrader.app.scan.ScanDebug.d("manual: confirm shown")
+        }
+    }
+
+    /** Resume auto-scan. True when this close ended a manual shot. */
+    fun endManualCapture(): Boolean {
+        val wasManual = manualCapture.getAndSet(false)
+        manualShotBusy.value = false
+        manualSheetLogged = false
+        return wasManual
+    }
+
+    /** This confirmation must not autosave, even when the auto-scan switch is on. */
+    fun noteManualConfirm() {
+        app.scanSession.manualConfirm = true
+    }
+
     fun canAcceptAutoFrame(nowMs: Long = System.currentTimeMillis()): Boolean {
-        if (!autoScan.value || autoHitPending.get() || autoBusy.get() || processing.value) return false
+        if (!com.scantrader.app.scan.ManualShutter.allowAutoFrame(autoScan.value, manualCapture.get())) return false
+        if (autoHitPending.get() || autoBusy.get() || processing.value) return false
         // The catalog job outlives the frame that started it, so the next OCR can overlap it.
         if (speculativeInFlight.get()) return true
         return nowMs - lastAutoAttemptMs >= AUTO_COOLDOWN_MS
@@ -747,13 +805,22 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         bitmap: android.graphics.Bitmap,
         onDone: (ok: Boolean) -> Unit,
     ) {
+        if (!manualCapture.get()) beginManualCapture()
         viewModelScope.launch {
             processing.value = true
             autoStatus.value = null
             try {
+                // Manual path: requireMatch is false, so the consecutive-printing
+                // and autosave duplicate guards are not updated.
                 analyze(bitmap, requireMatch = false)
+                val name = app.scanSession.candidates.firstOrNull()?.name
+                com.scantrader.app.scan.ScanDebug.d("manual: result ${name ?: "null"}")
+                noteManualConfirm()
                 onDone(true)
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                com.scantrader.app.scan.ScanDebug.d("manual: result null")
+                noteManualConfirm()
                 app.scanSession.errorMessage = t.message ?: "Errore durante lo scan"
                 onDone(true)
             } finally {
@@ -769,14 +836,20 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         val now = System.currentTimeMillis()
         if (!canAcceptAutoFrame(now)) return
         if (!autoBusy.compareAndSet(false, true)) return
-        viewModelScope.launch {
+        val job = viewModelScope.launch {
+            if (manualCapture.get()) {
+                autoBusy.set(false)
+                return@launch
+            }
             processing.value = true
             autoStatus.value = "Analisi in corso…"
             try {
                 autoHold = AutoHold.NONE
                 repeatPrinting = false
                 val matched = analyze(bitmap, requireMatch = true)
+                if (manualCapture.get()) return@launch
                 if (matched) {
+                    app.scanSession.manualConfirm = false
                     autoHitPending.set(true)
                     autoStatus.value = "Carta trovata"
                     onHit()
@@ -796,7 +869,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         "Inquadra meglio…"
                     }
                 }
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 autoStatus.value = if (lastAcceptedCardKey != null) {
                     "Metti un’altra carta…"
                 } else {
@@ -811,6 +885,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 }
             }
         }
+        autoFrameJob = job
+        if (manualCapture.get()) job.cancel()
     }
 
     private suspend fun analyze(
@@ -1231,6 +1307,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 com.scantrader.app.scan.ScanDebug.d("OCR bottom snippet=${bottomFull.take(120).replace("\n", " | ")}")
             }
 
+            if (autoMode && manualCapture.get()) return@withContext false
             // Auto: empty strips → skip network/vision entirely.
             if (autoMode && topNameText.isBlank() && bottomLeft.isBlank() &&
                 text.isBlank() && bottomText.isBlank()
@@ -1264,6 +1341,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "candidate lock released name=${parsed.nameGuess} cn=${parsed.collectorNumber}",
                 )
             }
+            if (autoMode && manualCapture.get()) return@withContext false
             if (autoMode) duplicateGuard.observe(parsed)
             // One Piece e Riftbound: il codice è piccolo. Un frame stabile che non lo rilegge
             // tiene l'ultimo codice, così il catalogo parte lo stesso. Un movimento azzera il codice.
@@ -1576,7 +1654,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 autoOk &&
                 topKey != null &&
                 !duplicateGuard.allowAutoSave(topKey)
-            val repeatCard = if (copyTop != null && requireMatch && autoOk && consecutiveGuard.sameAsLast(copyTop)) {
+            val repeatCard = if (
+                copyTop != null &&
+                com.scantrader.app.scan.ManualShutter.blockRepeatPrinting(
+                    autoMode = requireMatch && autoOk,
+                    sameAsLast = consecutiveGuard.sameAsLast(copyTop),
+                )
+            ) {
                 copyTop
             } else {
                 null
@@ -1612,19 +1696,27 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         "finish=${repeatCard.finish ?: "standard"})",
                 )
             }
-            if (requireMatch && acceptAuto) {
-                copyTop?.let { acceptedCard ->
-                    acceptedLock.lock(
-                        key = autoCardKey(acceptedCard),
-                        collectorNumber = acceptedCard.collectorNumber,
-                        name = FrameNameGate.confidentTitle(parsed.nameGuess)
-                            ?: matched.nameGuess
-                            ?: acceptedCard.printedName
-                            ?: acceptedCard.name,
-                    )
-                    consecutiveGuard.noteAccepted(acceptedCard)
+            val publishAuto = synchronized(manualCapture) {
+                if (requireMatch && manualCapture.get()) {
+                    false
+                } else {
+                    if (requireMatch && acceptAuto) {
+                        copyTop?.let { acceptedCard ->
+                            acceptedLock.lock(
+                                key = autoCardKey(acceptedCard),
+                                collectorNumber = acceptedCard.collectorNumber,
+                                name = FrameNameGate.confidentTitle(parsed.nameGuess)
+                                    ?: matched.nameGuess
+                                    ?: acceptedCard.printedName
+                                    ?: acceptedCard.name,
+                            )
+                            consecutiveGuard.noteAccepted(acceptedCard)
+                        }
+                    }
+                    true
                 }
             }
+            if (!publishAuto) return@withContext false
             candidates.take(3).forEachIndexed { i, c ->
                 com.scantrader.app.scan.ScanDebug.d(
                     "cand[$i] ${c.name} | set=${c.setCode} cn=${c.collectorNumber} " +
@@ -1886,7 +1978,11 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     val sessionLanguage: CardLanguage? get() = app.scanSession.language
     val sessionCondition: CardCondition? get() = app.scanSession.condition
     /** True when the confirm screen was reached via auto-scan hit. */
-    val fromAutoScan: Boolean get() = app.scanSession.autoScan
+    val fromAutoScan: Boolean
+        get() = com.scantrader.app.scan.ManualShutter.confirmFromAutoScan(
+            app.scanSession.autoScan,
+            app.scanSession.manualConfirm,
+        )
     val autoMatch: com.scantrader.app.vision.MatchFusion.AutoMatchDecision?
         get() = app.scanSession.autoMatch
     val autoMatchCardKey: String? get() = app.scanSession.autoMatchCardKey

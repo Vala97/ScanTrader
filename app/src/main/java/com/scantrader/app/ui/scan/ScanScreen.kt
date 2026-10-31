@@ -11,8 +11,10 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.os.Build
+import android.view.HapticFeedbackConstants
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.Camera2CameraControl
@@ -62,6 +64,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.WbSunny
@@ -95,9 +98,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -111,7 +118,9 @@ import androidx.lifecycle.Observer
 import androidx.compose.ui.res.stringResource
 import com.scantrader.app.R
 import com.scantrader.app.data.model.Game
+import com.scantrader.app.scan.AutoScanQuick
 import com.scantrader.app.scan.CameraDevices
+import com.scantrader.app.scan.ManualShutter
 import com.scantrader.app.scan.CardFrameGeometry
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
@@ -171,6 +180,8 @@ fun ScanScreen(
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
     val guideViewWidth by viewModel.guideViewWidth.collectAsStateWithLifecycle()
     val guideViewHeight by viewModel.guideViewHeight.collectAsStateWithLifecycle()
+    val manualShotBusy by viewModel.manualShotBusy.collectAsStateWithLifecycle()
+    var autoScanToast by remember { mutableStateOf<Toast?>(null) }
 
     var granted by remember {
         mutableStateOf(
@@ -277,8 +288,10 @@ fun ScanScreen(
         handleZoomStep(step)
     }
 
-    fun goToConfirm() {
-        if (navigated.compareAndSet(false, true)) {
+    fun goToConfirm(fromManual: Boolean = false) {
+        if (!fromManual && viewModel.isManualCaptureInFlight()) return
+        if (fromManual) navigated.set(true)
+        if (fromManual || navigated.compareAndSet(false, true)) {
             persistZoom(controller, viewModel)
             viewModel.holdFraming()
             onCaptured()
@@ -462,6 +475,10 @@ fun ScanScreen(
         viewModel.resumeScanning()
     }
 
+    LaunchedEffect(confirmVisible) {
+        if (confirmVisible) viewModel.onManualSheetShown()
+    }
+
     // Confirm covers the scanner in this same composition, so the camera stays
     // bound. Stop analysis until the overlay closes; do not rebind.
     var confirmWasShown by remember { mutableStateOf(false) }
@@ -475,6 +492,9 @@ fun ScanScreen(
             confirmWasShown = false
             navigated.set(false)
             viewModel.onZoomRestoreSettled()
+            if (viewModel.endManualCapture()) {
+                ScanDebug.d("manual: confirm closed, auto resume")
+            }
             viewModel.resumeScanning()
         }
     }
@@ -578,6 +598,30 @@ fun ScanScreen(
                 }
                 Surface(
                     shape = CircleShape,
+                    color = if (autoScan) Gold.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f),
+                ) {
+                    IconButton(
+                        onClick = {
+                            val next = !autoScan
+                            viewModel.setAutoScan(next, confirmOpen = confirmVisible)
+                            autoScanToast?.cancel()
+                            autoScanToast = Toast.makeText(
+                                context,
+                                AutoScanQuick.message(next),
+                                Toast.LENGTH_SHORT,
+                            ).also { it.show() }
+                        },
+                    ) {
+                        Icon(
+                            Icons.Filled.CenterFocusStrong,
+                            contentDescription = AutoScanQuick.contentDescription(autoScan),
+                            tint = if (autoScan) Gold else FrameAccent.copy(alpha = 0.45f),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(4.dp))
+                Surface(
+                    shape = CircleShape,
                     color = if (torchOn) Gold.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f),
                 ) {
                     IconButton(onClick = { viewModel.setTorchOn(!torchOn) }, enabled = granted) {
@@ -661,13 +705,6 @@ fun ScanScreen(
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (!panelExpanded) {
-                                CompactChip(
-                                    icon = if (torchOn) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
-                                    label = if (torchOn) "Torcia" else "Off",
-                                    active = torchOn,
-                                    onClick = { viewModel.setTorchOn(!torchOn) },
-                                )
-                                Spacer(Modifier.width(6.dp))
                                 if (autoScan) {
                                     CompactChip(
                                         icon = Icons.Filled.CenterFocusStrong,
@@ -793,6 +830,53 @@ fun ScanScreen(
                 }
             }
 
+            val view = LocalView.current
+            val captureManual = { fromAutoButton: Boolean ->
+                val accepted = granted && ManualShutter.acceptManualTap(
+                    autoScanOn = fromAutoButton,
+                    processing = processing,
+                    alreadyCapturing = viewModel.isManualCaptureInFlight(),
+                )
+                if (accepted && viewModel.beginManualCapture()) {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    ScanDebug.d("manual: tap")
+                    panelExpanded = false
+                    if (fromAutoButton) controller.clearImageAnalysisAnalyzer()
+                    val photo = File(context.cacheDir, "scan-capture.jpg")
+                    val options = ImageCapture.OutputFileOptions.Builder(photo).build()
+                    ScanDebug.d("manual: capture start")
+                    controller.takePicture(
+                        options,
+                        cameraExecutor,
+                        object : ImageCapture.OnImageSavedCallback {
+                            override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                                val bitmap = com.scantrader.app.scan.CameraBitmaps.fromJpegFile(
+                                    photo.absolutePath,
+                                )
+                                mainExecutor.execute {
+                                    if (bitmap != null) {
+                                        viewModel.processBitmap(bitmap) {
+                                            goToConfirm(fromManual = true)
+                                        }
+                                    } else {
+                                        viewModel.noteManualConfirm()
+                                        ScanDebug.d("manual: result null")
+                                        onManualSearch()
+                                    }
+                                }
+                            }
+
+                            override fun onError(exception: ImageCaptureException) {
+                                mainExecutor.execute {
+                                    viewModel.noteManualConfirm()
+                                    ScanDebug.d("manual: result null")
+                                    onManualSearch()
+                                }
+                            }
+                        },
+                    )
+                }
+            }
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -804,60 +888,74 @@ fun ScanScreen(
                     Text("Cerca", color = Gold)
                 }
 
-                if (!autoScan) {
-                    Box(
-                        modifier = Modifier
-                            .size(76.dp)
-                            .clip(CircleShape)
-                            .border(3.dp, FrameAccent.copy(alpha = 0.9f), CircleShape)
-                            .clickable(enabled = granted && !processing) {
-                                panelExpanded = false
-                                navigated.set(false)
-                                val photo = File(context.cacheDir, "scan-capture.jpg")
-                                val options = ImageCapture.OutputFileOptions.Builder(photo).build()
-                                controller.takePicture(
-                                    options,
-                                    cameraExecutor,
-                                    object : ImageCapture.OnImageSavedCallback {
-                                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                            val bitmap = com.scantrader.app.scan.CameraBitmaps.fromJpegFile(
-                                                photo.absolutePath,
-                                            )
-                                            mainExecutor.execute {
-                                                if (bitmap != null) {
-                                                    viewModel.processBitmap(bitmap) {
-                                                        goToConfirm()
-                                                    }
-                                                } else {
-                                                    onManualSearch()
-                                                }
-                                            }
-                                        }
-
-                                        override fun onError(exception: ImageCaptureException) {
-                                            mainExecutor.execute { onManualSearch() }
-                                        }
-                                    },
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (ManualShutter.showManualButton(autoScan)) {
+                        Spacer(Modifier.size(ManualShutter.MANUAL_DIAMETER_DP.dp))
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    if (ManualShutter.showWaitingRing(autoScan)) {
+                        Box(
+                            modifier = Modifier
+                                .size(ManualShutter.MAIN_DIAMETER_DP.dp)
+                                .border(3.dp, FrameAccent.copy(alpha = 0.9f), CircleShape)
+                                .semantics { contentDescription = ManualShutter.WAITING_DESCRIPTION },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(36.dp),
+                                color = Gold,
+                                strokeWidth = 3.dp,
+                            )
+                        }
+                    } else {
+                        val shutterReady = granted && !processing
+                        Box(
+                            modifier = Modifier
+                                .size(ManualShutter.MAIN_DIAMETER_DP.dp)
+                                .clip(CircleShape)
+                                .border(3.dp, FrameAccent.copy(alpha = 0.9f), CircleShape)
+                                .semantics { contentDescription = ManualShutter.CONTENT_DESCRIPTION }
+                                .clickable(enabled = ManualShutter.centerClickable(autoScan) && shutterReady) {
+                                    captureManual(false)
+                                }
+                                .padding(6.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .clip(CircleShape)
+                                    .background(if (shutterReady) Gold else Gold.copy(alpha = 0.35f)),
+                            )
+                        }
+                    }
+                    if (ManualShutter.showManualButton(autoScan)) {
+                        Spacer(Modifier.width(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(ManualShutter.MANUAL_DIAMETER_DP.dp)
+                                .graphicsLayer { alpha = ManualShutter.manualButtonAlpha() }
+                                .clip(CircleShape)
+                                .background(Gold)
+                                .semantics { contentDescription = ManualShutter.CONTENT_DESCRIPTION }
+                                .clickable(enabled = granted) { captureManual(true) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (manualShotBusy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    color = ScanColors.onAccent,
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Filled.PhotoCamera,
+                                    contentDescription = null,
+                                    tint = ScanColors.onAccent,
+                                    modifier = Modifier.size(22.dp),
                                 )
                             }
-                            .padding(6.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .clip(CircleShape)
-                                .background(if (granted && !processing) Gold else Gold.copy(alpha = 0.35f)),
-                        )
-                    }
-                } else {
-                    Surface(shape = RoundedCornerShape(24.dp), color = Gold.copy(alpha = 0.18f)) {
-                        Text(
-                            "Auto attivo",
-                            color = Gold,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            fontWeight = FontWeight.Medium,
-                        )
+                        }
                     }
                 }
 
