@@ -413,6 +413,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private val catalogDebounce = CatalogQueryDebounce()
     private val rejectedSets = RejectedSetCodes()
     private val stableTop = StableTopAccept()
+    /** Ultimo codice con piu' versioni gia' aperto in conferma dall'autoscan (non si riapre finche' non cambia carta). */
+    private var lastVariantKey: String? = null
     private val speculativeCatalog = SpeculativeCatalog()
     private val speculativeInFlight = AtomicBoolean(false)
 
@@ -523,6 +525,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     fun setGame(value: Game) {
         game.value = value
         app.scanSession.game = value
+        // One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: galleria visiva in background (resta sul telefono)
+        if (value in app.ctGames && com.scantrader.app.BuildConfig.CT_GALLERY_URL.isNotBlank()) {
+            viewModelScope.launch { app.neuralPack.ensureCtGallery(value, com.scantrader.app.BuildConfig.CT_GALLERY_URL) }
+        }
     }
 
     /** Game the user already confirmed for this scan visit. Survives confirm. */
@@ -825,6 +831,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             val isMtg = game.value == Game.MTG
             val isPokemon = game.value == Game.POKEMON
+            // One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: l'angolo del codice a piena risoluzione,
+            // letto al posto della fascia in basso a destra dei Pokémon vecchi
+            val ctCorner = com.scantrader.app.scan.CardFrameGeometry.ctCodeStrip(croppedFull, game.value)
+            val readRight = isPokemon || ctCorner != null
             // Bottom strips stay at 480. The title strip keeps enough pixels for a long name.
             fun scaled(full: android.graphics.Bitmap): Pair<android.graphics.Bitmap, android.graphics.Bitmap> {
                 val bottomCap = if (autoMode) AUTO_STRIP_MAX_SIDE else MANUAL_OCR_MAX_SIDE
@@ -876,7 +886,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     }
                     // Vintage Pokémon prints the collector on the bottom-right. Read it with the title.
                     val brJob = async {
-                        if (!autoMode || !isPokemon) {
+                        if (ctCorner != null) {
+                            runCatching { app.ocr.recognize(ctCorner, enhance = true) }.getOrDefault("")
+                        } else if (!readRight || (!autoMode && isPokemon)) {
                             ""
                         } else {
                             runCatching {
@@ -911,8 +923,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             }.getOrDefault(bl)
                         }
                         val ebrJob = async {
-                            if (!isPokemon) {
-                                ""
+                            if (!readRight || ctCorner != null) {
+                                "" // l'angolo del codice e' gia' letto ingrandito
                             } else {
                                 runCatching {
                                     app.ocr.recognize(
@@ -1118,7 +1130,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             }.getOrDefault("")
                         }
                         val fullBrJob = async {
-                            if (!isPokemon || br.isNotBlank()) {
+                            if (!readRight || br.isNotBlank() || ctCorner != null) {
                                 br
                             } else {
                                 runCatching {
@@ -1324,7 +1336,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 )
             }
             // Auto + cn+set: catalog only (skip gallery + fingerprint).
-            val skipHeavyVision = autoMode && idReady
+            // giochi CardTrader: l'immagine serve anche con il codice letto (sceglie fra le versioni)
+            val skipHeavyVision = autoMode && idReady && !(game.value in app.ctGames && neuralOn)
             val fingerprint = if (skipHeavyVision || !queryCatalog) {
                 com.scantrader.app.scan.ScanDebug.d("fingerprint skipped (auto id-ready)")
                 null
@@ -1349,6 +1362,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         throw busy
                     } catch (t: Throwable) {
                         com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", t)
+                        if (game.value == Game.RIFTBOUND || game.value in app.ctGames) app.scanSession.errorMessage = t.message
                         emptyList()
                     }
                 }
@@ -1379,6 +1393,14 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                     .getOrDefault(emptyList())
                             }
                         }
+                        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> if (neuralOn) {
+                            runCatching { app.galleryMatcher.matchCt(game.value, cropped, matched) }
+                                .onFailure { com.scantrader.app.scan.ScanDebug.e("gallery.matchCt failed", it) }
+                                .getOrDefault(emptyList())
+                        } else {
+                            emptyList()
+                        }
+                        Game.RIFTBOUND, Game.OTHER -> emptyList<IdentifiedCard>() // nessun pack visivo
                         Game.POKEMON -> {
                             if (!app.neuralPack.isInstalled(Game.POKEMON)) {
                                 com.scantrader.app.scan.ScanDebug.d("gallery skipped (Pokémon pack not installed)")
@@ -1443,7 +1465,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     com.scantrader.app.scan.ScanDebug.d("card image async (autosave)")
                 }
                 catalogHits
-            } else if (fingerprint != null && catalogHits.isNotEmpty()) {
+            } else if (fingerprint != null && catalogHits.isNotEmpty() &&
+                game.value != Game.RIFTBOUND && game.value !in app.ctGames
+            ) {
+                // giochi CardTrader: le versioni (normale, Pre-release, promo) hanno quasi la stessa arte,
+                // l'ordine resta quello del catalogo (prima il numero esatto)
                 runCatching { app.visualRanker.rank(fingerprint, catalogHits) }
                     .onFailure { com.scantrader.app.scan.ScanDebug.w("visualRanker failed", it) }
                     .getOrDefault(catalogHits)
@@ -1531,6 +1557,21 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             val consecutiveBlocked = repeatCard != null
             val acceptAuto = autoOk && !blockedSameCard && !duplicateBlocked && !consecutiveBlocked
+            // One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: codice letto ma piu' versioni con lo stesso codice.
+            // L'autoscan apre la conferma per scegliere (senza salvataggio automatico), una volta per codice.
+            // Anche senza codice, se l'immagine indica una carta ma non abbastanza netta per salvarla da sola.
+            val readCode = matched.collectorNumber?.takeIf { it.isNotBlank() }?.let { "${matched.setCode}|$it" }
+                ?: top?.ctBlueprintId?.takeIf { (top.visualScore ?: 0f) >= com.scantrader.app.vision.MatchFusion.CT_VISUAL_MIN }?.let { "bp|$it" }
+            if (readCode != null && readCode != lastVariantKey) lastVariantKey = null
+            val variantKey = readCode.takeIf {
+                requireMatch && !autoOk && game.value in app.ctGames &&
+                    it != null && ((gate.cnOk && candidates.size > 1) || it.startsWith("bp|"))
+            }
+            val chooseVersion = variantKey != null && variantKey != lastVariantKey && !duplicateBlocked && !consecutiveBlocked
+            if (chooseVersion) {
+                lastVariantKey = variantKey
+                com.scantrader.app.scan.ScanDebug.d("ct variants: conferma per scegliere la versione code=$variantKey n=${candidates.size}")
+            }
             if (duplicateBlocked) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "autosave: skipped (same card still in frame key=$topKey)",
@@ -1611,6 +1652,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             if (candidates.isEmpty() && text.isBlank() && bottomText.isBlank()) {
                 app.scanSession.errorMessage =
                     "Nessun testo letto. Inquadra tutta la carta, soprattutto il basso a sinistra (numero + set)."
+            } else if (candidates.isEmpty() && game.value == Game.RIFTBOUND && app.riftbound.lastError != null) {
+                app.scanSession.errorMessage = app.riftbound.lastError
+            } else if (candidates.isEmpty() && app.ctGames[game.value]?.lastError != null) {
+                app.scanSession.errorMessage = app.ctGames[game.value]?.lastError
             } else if (candidates.isEmpty()) {
                 app.scanSession.errorMessage =
                     "Carta non trovata. Verifica numero e set in basso a sinistra, oppure cerca manualmente."
@@ -1620,7 +1665,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             if (requireMatch && acceptAuto && isPokemon) {
                 scheduleRulesOcr(croppedFull)
             }
-            if (requireMatch) acceptAuto else true
+            if (requireMatch) acceptAuto || chooseVersion else true
         }
     }
 
@@ -1775,7 +1820,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
 class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     val collections: StateFlow<List<CollectionEntity>> =
-        app.repository.collectionList().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        app.repository.collectionList()
+            .map { list -> list.filter { it.id != app.tracker.mirrorId } } // non si salvano scansioni nella collezione "Cardtrader"
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val defaults: StateFlow<ScanDefaults> =
         app.prefs.defaults.stateIn(
             viewModelScope,
@@ -1819,8 +1866,9 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
                 }
                 val fused = com.scantrader.app.vision.MatchFusion.fuse(ranked, parsedText)
                 app.scanSession.candidates = fused
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
                 app.scanSession.candidates = emptyList()
+                if (app.scanSession.game == Game.RIFTBOUND) app.scanSession.errorMessage = t.message
             } finally {
                 searching.value = false
             }
@@ -1833,6 +1881,8 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     suspend fun detectCardLanguage(card: IdentifiedCard): CardLanguage? {
+        // Yu-Gi-Oh!: la lingua e' nel codice stampato (POTD-IT003)
+        if (card.game == Game.YUGIOH) app.scanSession.parsed?.printedLang?.let { CardLanguage.fromCatalogCode(it) }?.let { return it }
         val started = System.currentTimeMillis()
         while (app.scanSession.rulesPending && System.currentTimeMillis() - started < RULES_WAIT_MS) {
             delay(40)
@@ -1851,6 +1901,10 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         condition: CardCondition,
         foil: Boolean,
     ): IdentifiedCard {
+        if (card.game == Game.RIFTBOUND || card.ctBlueprintId != null) {
+            val market = runCatching { app.cardTraderPrices.quote(card, language, condition, foil) }.getOrNull()
+            return if (market != null) com.scantrader.app.data.catalog.ListingAverage.apply(card, market, foil) else card
+        }
         if (card.game != Game.MTG) return card
         if (app.secrets.hasCardTraderToken()) {
             val englishId = if (card.setCode.isNotBlank() && card.collectorNumber.isNotBlank()) {
@@ -1899,7 +1953,8 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch {
             saving.value = true
             try {
-                app.repository.saveCard(collectionId, card, quantity, language, condition, foil)
+                val rowId = app.repository.saveCard(collectionId, card, quantity, language, condition, foil)
+                app.tracker.cardSaved(card, quantity, language, condition, foil, rowId) // al DLS Tracker, poi Cardtrader
                 app.scanSession.targetCollectionId = collectionId
                 app.scanSession.language = language
                 app.scanSession.condition = condition

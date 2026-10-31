@@ -28,6 +28,7 @@ class BlueprintNames(
         val updated = when (entry.game) {
             Game.MTG -> fillMtg(entry)
             Game.POKEMON -> fillPokemon(entry)
+            Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> null // il nome CardTrader e' gia' quello del blueprint
         } ?: return entry
         if (updated.catalogName.isNullOrBlank()) return entry
         save(updated)

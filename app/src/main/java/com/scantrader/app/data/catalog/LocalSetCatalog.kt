@@ -154,6 +154,8 @@ class LocalSetCatalog(
     fun cachedSetNames(game: Game, setCode: String): List<String> = when (game) {
         Game.MTG -> cachedMtgSetNames(setCode)
         Game.POKEMON -> cachedPokemonSetNames(setCode)
+        // giochi con il catalogo CardTrader: il nome del set e' gia' salvato sulla carta
+        else -> emptyList()
     }
 
     fun logHit(setCode: String, elapsedMs: Long) {

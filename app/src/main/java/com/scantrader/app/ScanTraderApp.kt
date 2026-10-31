@@ -8,6 +8,7 @@ import com.scantrader.app.data.export.BlueprintNames
 import com.scantrader.app.data.catalog.CardTraderPrices
 import com.scantrader.app.data.catalog.CatalogLookup
 import com.scantrader.app.data.catalog.LocalSetCatalog
+import com.scantrader.app.data.catalog.RiftboundCatalog
 import com.scantrader.app.data.catalog.ScryfallEurPrices
 import com.scantrader.app.data.catalog.ScryfallSetDownloader
 import com.scantrader.app.data.catalog.TcgdexSetDownloader
@@ -47,6 +48,13 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
     lateinit var repository: CardRepository
         private set
     lateinit var catalog: CatalogLookup
+
+    lateinit var riftbound: RiftboundCatalog
+
+    /** One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: catalogo CardTrader per espansione. */
+    lateinit var ctGames: Map<com.scantrader.app.data.model.Game, com.scantrader.app.data.catalog.CtGameCatalog>
+
+    lateinit var tracker: com.scantrader.app.tracker.TrackerLink
         private set
     lateinit var localSets: LocalSetCatalog
         private set
@@ -101,16 +109,25 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
             pokemonSource = TcgdexSetDownloader(tcgdexRetrofit.create(TcgdexSetApi::class.java)),
             scope = appScope,
         )
-        catalog = CatalogLookup(scryfall, tcgdex, localSets)
         scryfallEur = ScryfallEurPrices(scryfall)
         secrets = SecretStore(this)
-        cardTraderPrices = CardTraderPrices(
-            NetworkModule.retrofit(
-                "https://api.cardtrader.com/api/v2/",
-                NetworkModule.cardTraderClient { secrets.getCardTraderToken() },
-            ).create(CardTraderApi::class.java),
+        val cardTraderApi = NetworkModule.retrofit(
+            "https://api.cardtrader.com/api/v2/",
+            NetworkModule.cardTraderClient { secrets.getCardTraderToken() },
+        ).create(CardTraderApi::class.java)
+        cardTraderPrices = CardTraderPrices(cardTraderApi, token = { secrets.getCardTraderToken() })
+        // Riftbound: catalogo da CardTrader (serve il token), salvato sul telefono
+        riftbound = RiftboundCatalog(
+            api = cardTraderApi,
             token = { secrets.getCardTraderToken() },
+            file = File(filesDir, "riftbound/catalog.json"),
         )
+        ctGames = com.scantrader.app.data.catalog.CtGameCatalog.GAME_IDS.mapValues { (g, id) ->
+            com.scantrader.app.data.catalog.CtGameCatalog(g, id, cardTraderApi, { secrets.getCardTraderToken() }, File(filesDir, "catalogo-${g.csvLabel}"))
+        }
+        catalog = CatalogLookup(scryfall, tcgdex, localSets, riftbound, ctGames)
+        // collegamento con il DLS Tracker: le carte salvate vanno nel registro e da li' su Cardtrader
+        tracker = com.scantrader.app.tracker.TrackerLink(this, secrets, appScope, database)
         languageResolver = CardLanguageResolver(scryfall, tcgdex)
         blueprintNames = BlueprintNames(scryfall, tcgdex) { repository.updateCard(it) }
         prefs = UserPreferences(this)

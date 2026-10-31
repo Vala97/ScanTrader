@@ -24,6 +24,9 @@ object KnownSetCodes {
         return when (game) {
             Game.MTG -> MtgSets.isKnown(key)
             Game.POKEMON -> pokemonKnown(key)
+            Game.RIFTBOUND -> key in com.scantrader.app.scan.OcrParser.RIFTBOUND_SETS
+            Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> true // li verifica il catalogo CardTrader
+            Game.OTHER -> false
         }
     }
 

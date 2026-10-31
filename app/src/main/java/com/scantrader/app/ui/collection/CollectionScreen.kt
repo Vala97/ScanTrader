@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import kotlinx.coroutines.launch
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Remove
@@ -96,6 +98,35 @@ fun CollectionScreen(
     val context = LocalContext.current
     val title = collection?.name ?: "Collezione"
     var editingId by remember { mutableStateOf<Long?>(null) }
+    // giochi ed espansioni chiusi a mano (restano chiusi girando il telefono)
+    var collapsed by rememberSaveable { mutableStateOf(setOf<String>()) }
+    // "Manda al tracker": copie non ancora mandate (le carte salvate dopo il collegamento partono gia' da sole)
+    val tracker = (androidx.compose.ui.platform.LocalContext.current.applicationContext as com.scantrader.app.ScanTraderApp).tracker
+    val trackerScope = androidx.compose.runtime.rememberCoroutineScope()
+    var askSend by remember { mutableStateOf(false) }
+    var toSend by remember { mutableStateOf(0) }
+    var sendMsg by remember { mutableStateOf<String?>(null) }
+    if (askSend) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { askSend = false },
+            title = { Text("Manda al DLS Tracker") },
+            text = {
+                Text(
+                    sendMsg ?: if (toSend == 0) "Tutte le carte di questa collezione sono già state mandate al tracker."
+                    else "$toSend copie non ancora mandate. Arrivano nel tuo registro e dopo 10 minuti su Cardtrader, con le tue Regole prezzi; nel frattempo puoi toglierle dal tracker.\n\nSe le hai già caricate su Cardtrader in un altro modo (file CSV), non mandarle: verrebbero aggiunte di nuovo."
+                )
+            },
+            confirmButton = {
+                if (toSend > 0 && sendMsg == null) {
+                    androidx.compose.material3.TextButton(onClick = {
+                        val id = collection?.id ?: return@TextButton
+                        trackerScope.launch { sendMsg = runCatching { "Mandate ${tracker.sendCollection(id)} copie al tracker." }.getOrElse { it.message ?: "Invio non riuscito." } }
+                    }) { Text("Manda $toSend copie") }
+                } else androidx.compose.material3.TextButton(onClick = { askSend = false }) { Text("OK") }
+            },
+            dismissButton = { if (toSend > 0 && sendMsg == null) androidx.compose.material3.TextButton(onClick = { askSend = false }) { Text("Annulla") } },
+        )
+    }
     var renaming by rememberSaveable { mutableStateOf(false) }
     var renameError by remember { mutableStateOf<String?>(null) }
     val editing = cards.firstOrNull { it.id == editingId }
@@ -113,6 +144,14 @@ fun CollectionScreen(
                     }
                 },
                 actions = {
+                    if (tracker.linked) {
+                        IconButton(onClick = {
+                            val id = collection?.id ?: return@IconButton
+                            trackerScope.launch { toSend = tracker.unsent(id).sumOf { it.second }; sendMsg = null; askSend = true }
+                        }, enabled = collection != null) {
+                            Icon(Icons.Default.ShoppingCart, contentDescription = "Manda al DLS Tracker")
+                        }
+                    }
                     IconButton(onClick = {
                         renameError = null
                         renaming = true
@@ -184,15 +223,31 @@ fun CollectionScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        var lastGame: Game? = null
                         sections.forEach { section ->
                             if (browser.result.grouped) {
+                                // un'intestazione per gioco, poi le sue espansioni; tutte e due si chiudono toccandole
+                                val g = section.game
+                                if (g != null && g != lastGame) {
+                                    lastGame = g
+                                    val gameCopies = sections.filter { it.game == g }.sumOf { it.copies }
+                                    item(key = "game-${g.name}", span = { GridItemSpan(maxLineSpan) }, contentType = "game") {
+                                        GameHeader(g, gameCopies, open = "g:${g.name}" !in collapsed) {
+                                            collapsed = collapsed.toggle("g:${g.name}")
+                                        }
+                                    }
+                                }
+                                if (g != null && "g:${g.name}" in collapsed) return@forEach
                                 item(
                                     key = "section-${section.key}",
                                     span = { GridItemSpan(maxLineSpan) },
                                     contentType = "header",
                                 ) {
-                                    SectionHeader(section)
+                                    SectionHeader(section, open = "s:${section.key}" !in collapsed) {
+                                        collapsed = collapsed.toggle("s:${section.key}")
+                                    }
                                 }
+                                if ("s:${section.key}" in collapsed) return@forEach
                             }
                             items(section.cards, key = { it.id }, contentType = { _ -> "card" }) { card ->
                                 GalleryTile(card = card, onClick = { editingId = card.id })
@@ -455,17 +510,44 @@ private fun SortMenuItem(
 }
 
 @Composable
-private fun SectionHeader(section: CollectionSection) {
+private fun GameHeader(game: Game, copies: Int, open: Boolean, onToggle: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(top = 14.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = (if (open) "▾ " else "▸ ") + game.shareLabel,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = if (copies == 1) "1 copia" else "$copies copie",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun Set<String>.toggle(key: String): Set<String> = if (key in this) this - key else this + key
+
+@Composable
+private fun SectionHeader(section: CollectionSection, open: Boolean = true, onToggle: () -> Unit = {}) {
     val copies = if (section.copies == 1) "1 copia" else "${section.copies} copie"
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onToggle)
             .padding(top = 8.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
-            text = section.title,
+            text = (if (open) "▾ " else "▸ ") + section.title,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,

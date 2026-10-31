@@ -42,6 +42,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -877,18 +880,21 @@ private fun GameSegmentedControl(
         modifier
             .clip(RoundedCornerShape(16.dp))
             .background(Color.Black.copy(alpha = 0.38f))
+            .horizontalScroll(androidx.compose.foundation.rememberScrollState()) // piu' giochi: la fila scorre
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Game.entries.forEach { option ->
+        Game.entries.filter { it.scannable }.forEach { option ->
             val active = option == selected
             val label = when (option) {
                 Game.MTG -> "Magic"
                 Game.POKEMON -> "Pokémon"
+                Game.RIFTBOUND -> "Riftbound"
+                else -> option.shareLabel
             }
             Row(
                 Modifier
-                    .weight(1f)
+                    .widthIn(min = 72.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(if (active) Gold else Color.Transparent)
                     .clickable { onSelect(option) }
@@ -1208,8 +1214,9 @@ private fun GamePickOverlay(
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
             .navigationBarsPadding()
+            .verticalScroll(androidx.compose.foundation.rememberScrollState()) // 7 giochi: si scorre
             .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         IconButton(onClick = onBack) {
             Icon(
@@ -1232,7 +1239,12 @@ private fun GamePickOverlay(
         Spacer(Modifier.height(8.dp))
         GamePickCard(Game.POKEMON, "Pokémon", onPick)
         GamePickCard(Game.MTG, "Magic: The Gathering", onPick)
-        Spacer(Modifier.weight(1f))
+        GamePickCard(Game.RIFTBOUND, "Riftbound", onPick)
+        GamePickCard(Game.ONE_PIECE, "One Piece", onPick)
+        GamePickCard(Game.YUGIOH, "Yu-Gi-Oh!", onPick)
+        GamePickCard(Game.DRAGON_BALL, "Dragon Ball Super Fusion World", onPick)
+        GamePickCard(Game.UNION_ARENA, "Union Arena", onPick)
+        Spacer(Modifier.height(16.dp))
     }
 }
 
@@ -1251,16 +1263,16 @@ private fun GamePickCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            Modifier.padding(horizontal = 20.dp, vertical = 22.dp),
+            Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             GameLogo(
                 game = game,
                 contentDescription = label,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(88.dp),
+                    .height(56.dp),
             )
             Text(
                 label,

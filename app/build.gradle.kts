@@ -73,6 +73,8 @@ android {
         versionName = appVersionName
         // Play builds pass -Pscantrader.githubSelfUpdate=false. Debug stays `assembleDebug`.
         buildConfigField("boolean", "GITHUB_SELF_UPDATE", githubSelfUpdate.toString())
+        // Gallerie visive dei giochi CardTrader (`<indirizzo><gioco>.stcat`). Vuoto: nessuna galleria scaricata.
+        buildConfigField("String", "CT_GALLERY_URL", "\"" + (project.findProperty("scantrader.ctGalleryUrl") ?: "") + "\"")
     }
 
     signingConfigs {

@@ -76,6 +76,8 @@ data class CollectionSection(
     val title: String,
     val copies: Int,
     val cards: List<CardEntryEntity>,
+    /** Game of the section: the collection shows one header per game, then its expansions. */
+    val game: com.scantrader.app.data.model.Game? = null,
 )
 
 /**
@@ -98,9 +100,11 @@ fun collectionSections(
                 title = title,
                 copies = rows.sumOf { it.quantity.coerceAtLeast(0) },
                 cards = rows.sortedWith(cardOrder(sort)),
+                game = rows.first().game,
             )
         }
-        .sortedWith(compareBy({ it.title.lowercase() }, { it.key }))
+        // per gioco, poi per espansione
+        .sortedWith(compareBy({ it.game?.ordinal ?: Int.MAX_VALUE }, { it.title.lowercase() }, { it.key }))
 }
 
 /** Euro amount used for price sorting. Same side as the price shown on the tile. */

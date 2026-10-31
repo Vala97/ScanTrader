@@ -196,4 +196,31 @@ object CardFrameGeometry {
         val x = (strip.width - w).coerceAtLeast(0)
         return android.graphics.Bitmap.createBitmap(strip, x, 0, w, strip.height)
     }
+
+    /**
+     * Zona del codice stampato (sinistra, alto, destra, basso in frazioni della carta) per i giochi
+     * con il catalogo CardTrader. Misurata sulle immagini CardTrader:
+     * One Piece `OP12-023 UC` in basso a destra (~98%), Dragon Ball `FB02-091` a destra (~90%),
+     * Yu-Gi-Oh! `YGLD-ENG01` sotto il disegno a destra (~73%), Union Arena `UE20BT/TSK-1-090` in basso a sinistra (~97%).
+     */
+    fun ctCodeRegion(game: com.scantrader.app.data.model.Game): FloatArray? = when (game) {
+        com.scantrader.app.data.model.Game.ONE_PIECE -> floatArrayOf(0.50f, 0.89f, 1f, 1f)
+        com.scantrader.app.data.model.Game.DRAGON_BALL -> floatArrayOf(0.55f, 0.83f, 1f, 1f)
+        com.scantrader.app.data.model.Game.YUGIOH -> floatArrayOf(0.40f, 0.68f, 1f, 0.81f)
+        com.scantrader.app.data.model.Game.UNION_ARENA -> floatArrayOf(0f, 0.89f, 0.55f, 1f)
+        else -> null
+    }
+
+    /**
+     * Angolo del codice ritagliato dalla carta a PIENA risoluzione: questi codici sono alti ~1,5% della carta
+     * e sulla carta ridotta a 480 px (le altre fasce) restano 5-6 pixel, illeggibili.
+     */
+    fun ctCodeStrip(cardCrop: android.graphics.Bitmap, game: com.scantrader.app.data.model.Game): android.graphics.Bitmap? {
+        val r = ctCodeRegion(game) ?: return null
+        val x = (cardCrop.width * r[0]).toInt().coerceIn(0, cardCrop.width - 1)
+        val y = (cardCrop.height * r[1]).toInt().coerceIn(0, cardCrop.height - 1)
+        val w = ((cardCrop.width * r[2]).toInt() - x).coerceIn(1, cardCrop.width - x)
+        val h = ((cardCrop.height * r[3]).toInt() - y).coerceIn(1, cardCrop.height - y)
+        return android.graphics.Bitmap.createBitmap(cardCrop, x, y, w, h)
+    }
 }

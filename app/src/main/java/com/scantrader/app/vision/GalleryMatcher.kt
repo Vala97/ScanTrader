@@ -28,6 +28,14 @@ class GalleryMatcher(
         printedLang: String? = null,
     ): List<IdentifiedCard> = matchGame(Game.MTG, cardCrop, parsed, topK, printedLang)
 
+    /** One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: l'id della galleria porta gia' i dati del blueprint CardTrader. */
+    suspend fun matchCt(
+        game: Game,
+        cardCrop: Bitmap,
+        parsed: ParsedCardText,
+        topK: Int = 8,
+    ): List<IdentifiedCard> = matchGame(game, cardCrop, parsed, topK)
+
     suspend fun matchPokemon(
         cardCrop: Bitmap,
         parsed: ParsedCardText,
@@ -82,10 +90,42 @@ class GalleryMatcher(
                     when (game) {
                         Game.MTG -> hydrateMtg(id, score, parsed, printedLang)
                         Game.POKEMON -> hydratePokemon(id, score, parsed)
+                        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> ctFromId(game, id, score, parsed)
+                        Game.RIFTBOUND, Game.OTHER -> null
                     }
                 }
             }.awaitAll().filterNotNull()
         }
+    }
+
+    /**
+     * Id scritto da `costruisci.py`: bp, espansione (id, codice, nome), numero, nome, versione, rarita', immagine,
+     * separati da \u001f. Nome e codice come [com.scantrader.app.data.catalog.CtGameCatalog], cosi' la stessa carta
+     * trovata dal codice e dall'immagine diventa una riga sola.
+     */
+    private fun ctFromId(game: Game, id: String, score: Float, parsed: ParsedCardText): IdentifiedCard? {
+        val f = id.split('\u001f')
+        if (f.size < 9) return null
+        val bp = f[0].toIntOrNull() ?: return null
+        val number = f[4]
+        val codeOk = parsed.collectorNumber?.let {
+            com.scantrader.app.data.catalog.CtGameCatalog.base(it) == com.scantrader.app.data.catalog.CtGameCatalog.base(number)
+        } == true
+        val name = f[5].trim()
+        return IdentifiedCard(
+            game = game,
+            name = name + (f[6].takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""),
+            setCode = f[2].lowercase(java.util.Locale.ROOT),
+            setName = f[3],
+            collectorNumber = number,
+            imageUrl = f[8].let { if (it.startsWith("http")) it else "https://www.cardtrader.com$it" },
+            visualScore = score.coerceIn(0f, 1f),
+            ocrScore = if (codeOk) com.scantrader.app.data.catalog.CtGameCatalog.CHOOSE_SCORE else 0f,
+            catalogName = name,
+            ctBlueprintId = bp,
+            rarity = f[7].takeIf { it.isNotBlank() },
+            catalogLang = "en",
+        )
     }
 
     private suspend fun hydrateMtg(

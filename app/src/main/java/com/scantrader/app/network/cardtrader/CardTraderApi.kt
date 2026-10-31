@@ -28,6 +28,10 @@ data class CtBlueprint(
     val name: String = "",
     @SerializedName("expansion_id") val expansionId: Int? = null,
     @SerializedName("scryfall_id") val scryfallId: String? = null,
+    val version: String? = null,
+    @SerializedName("game_id") val gameId: Int? = null,
+    @SerializedName("fixed_properties") val fixedProperties: Map<String, Any?>? = null,
+    @SerializedName("image_url") val imageUrl: String? = null,
 )
 
 data class CtProduct(
@@ -47,7 +51,15 @@ data class CtProperties(
     @SerializedName("mtg_language") val mtgLanguage: String? = null,
     @SerializedName("mtg_foil") val mtgFoil: Boolean? = null,
     @SerializedName("pokemon_language") val pokemonLanguage: String? = null,
-)
+    @SerializedName("riftbound_language") val riftboundLanguage: String? = null,
+    @SerializedName("riftbound_foil") val riftboundFoil: Boolean? = null,
+    @SerializedName("onepiece_language") val onepieceLanguage: String? = null,
+    @SerializedName("dragonball_language") val dragonballLanguage: String? = null,
+    @SerializedName("yugioh_language") val yugiohLanguage: String? = null,
+    @SerializedName("union_arena_language") val unionArenaLanguage: String? = null,
+) {
+    fun otherLanguage(): String? = onepieceLanguage ?: dragonballLanguage ?: yugiohLanguage ?: unionArenaLanguage
+}
 
 object CardTraderCatalog {
     fun expansionId(expansions: List<CtExpansion>, setCode: String, gameId: Int = 1): Int? {

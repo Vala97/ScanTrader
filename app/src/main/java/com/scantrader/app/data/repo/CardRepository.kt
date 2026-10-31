@@ -57,7 +57,7 @@ class CardRepository(private val db: AppDatabase) {
         language: CardLanguage,
         condition: CardCondition,
         foil: Boolean,
-    ) {
+    ): Long? {
         val stored = card.withoutPokemonFoil()
         val incoming = CardEntryEntity(
             collectionId = collectionId,
@@ -96,6 +96,8 @@ class CardRepository(private val db: AppDatabase) {
                 absorb(raced, incoming)
             }
         }
+        // la riga dove sono finite le copie (serve allo scanner per sapere cosa ha gia' mandato al tracker)
+        return (db.cards().findByCopyKey(collectionId, incoming.copyKey) ?: existing)?.id
     }
 
     /**
