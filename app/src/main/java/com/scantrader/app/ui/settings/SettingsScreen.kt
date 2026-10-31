@@ -69,6 +69,7 @@ fun SettingsScreen(
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val tokenSaved by viewModel.hasCardTraderToken.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
+    val mtgCatalog by viewModel.mtgCatalog.collectAsStateWithLifecycle()
     val pokemonNeural by viewModel.pokemonPackState.collectAsStateWithLifecycle()
     val pokemonCatalogs by viewModel.pokemonCatalogs.collectAsStateWithLifecycle()
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
@@ -244,6 +245,11 @@ fun SettingsScreen(
                     neuralStatusLabel(neural),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                Text(
+                    mtgCatalog.settingsLine(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (neural is NeuralPackState.Downloading) {
                     LinearProgressIndicator(
                         progress = { (neural as NeuralPackState.Downloading).progress },
@@ -255,14 +261,16 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     val busy = neural is NeuralPackState.Downloading || neural is NeuralPackState.Loading
+                    val canInstall = !busy && (neural !is NeuralPackState.Ready || mtgCatalog.updateAvailable)
                     Button(
                         onClick = viewModel::downloadNeuralPack,
-                        enabled = !busy && neural !is NeuralPackState.Ready,
+                        enabled = canInstall,
                     ) {
                         Text(
-                            when (neural) {
-                                is NeuralPackState.Ready -> "Installato"
-                                is NeuralPackState.Downloading -> "Download…"
+                            when {
+                                neural is NeuralPackState.Downloading -> "Download…"
+                                neural is NeuralPackState.Ready && mtgCatalog.updateAvailable -> "Aggiorna"
+                                neural is NeuralPackState.Ready -> "Installato"
                                 else -> "Scarica"
                             },
                         )

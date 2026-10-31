@@ -34,7 +34,7 @@ Nessun account, nessun backend a pagamento. Unico costo eventuale: account svilu
 
 ### Pack neurali
 
-- **MTG**: **Impostazioni** → download da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0). Senza pack il riconoscimento resta sull’OCR e lo scan lo segnala.
+- **MTG**: **Impostazioni** → download del modello da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0) e del catalogo Magic pubblicato nell’indice `stcat-index.json` (id `mtg`, con sha256). Non è più un file fisso del 2026-07-09: la data letta dall’indice compare in Impostazioni e, se è più nuova, il pulsante diventa «Aggiorna». Senza pack il riconoscimento resta sull’OCR e lo scan lo segnala.
 - **Pokémon**: **Impostazioni → Riconoscimento Pokémon** scarica i `.stcat` dal release GitHub (`stcat-index.json` su `releases/latest`). L’importazione manuale di un `.stcat` resta in quella sezione, visibile solo con le informazioni di debug. I file si generano con [`tools/build_pokemon_stcat`](tools/build_pokemon_stcat/README.md) e l’indice con [`tools/publish_stcat`](tools/publish_stcat/README.md).
 
 ## Riftbound, One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena

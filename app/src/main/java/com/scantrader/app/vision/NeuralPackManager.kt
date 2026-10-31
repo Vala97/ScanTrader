@@ -51,6 +51,9 @@ class NeuralPackManager(
     /** Back-compat alias used by Settings MTG section. */
     val state: StateFlow<NeuralPackState> get() = mtgState
 
+    private val _mtgCatalogStatus = MutableStateFlow(readMtgCatalogStatus())
+    val mtgCatalogStatus: StateFlow<MtgCatalogStatus> = _mtgCatalogStatus.asStateFlow()
+
     @Volatile
     private var embedder: MiloEmbedder? = null
 
@@ -222,30 +225,59 @@ class NeuralPackManager(
         }
     }
 
-    /** Download Milo + Scryfall MTG NPZ → mtg.stcat. */
+    /** Reads the Magic row from the published catalog index, without downloading it. */
+    suspend fun refreshMtgIndex() {
+        val remote = withContext(Dispatchers.IO) { runCatching { fetchMtgEntry() }.getOrNull() }
+        _mtgCatalogStatus.value = readMtgCatalogStatus(remoteVersion = remote?.version)
+    }
+
+    /** Download Milo and the Magic catalog named in the published index. */
     suspend fun downloadAndInstall(
         onProgress: (String) -> Unit = {},
     ): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
             try {
+                val entry = try {
+                    fetchMtgEntry()
+                } catch (t: Throwable) {
+                    if (t is kotlinx.coroutines.CancellationException) throw t
+                    _mtgState.value = NeuralPackState.Error("Elenco catalogo Magic non raggiungibile.")
+                    return@withLock false
+                }
+                if (entry == null) {
+                    _mtgState.value = NeuralPackState.Error("Catalogo Magic assente dall'elenco.")
+                    return@withLock false
+                }
+                _mtgCatalogStatus.value = readMtgCatalogStatus(remoteVersion = entry.version)
                 _mtgState.value = NeuralPackState.Downloading(0f, "Download modello…")
                 onProgress("Download modello Milo…")
                 downloadTo(MODEL_URL, modelFile, MODEL_SHA256) { p ->
                     _mtgState.value = NeuralPackState.Downloading(p * 0.15f, "Download modello…")
                 }
 
-                val npz = File(root, "mtg-download.npz")
+                val extension = if (entry.url.substringBefore('?').endsWith(".npz", ignoreCase = true)) {
+                    ".npz"
+                } else {
+                    ".stcat"
+                }
+                val part = File(root, "mtg-download$extension")
                 _mtgState.value = NeuralPackState.Downloading(0.15f, "Download catalogo MTG…")
-                onProgress("Download catalogo MTG (~55 MB)…")
-                downloadTo(CATALOG_NPZ_URL, npz, CATALOG_NPZ_SHA256) { p ->
+                onProgress("Download catalogo MTG…")
+                downloadTo(entry.url, part, entry.sha256) { p ->
                     _mtgState.value = NeuralPackState.Downloading(0.15f + p * 0.70f, "Download catalogo…")
                 }
 
                 _mtgState.value = NeuralPackState.Downloading(0.90f, "Conversione catalogo…")
                 onProgress("Conversione catalogo…")
-                val converted = EmbeddingCatalog.fromNpz(npz)
+                val converted = if (extension == ".npz") {
+                    EmbeddingCatalog.fromNpz(part)
+                } else {
+                    EmbeddingCatalog.load(part)
+                }
                 converted.save(mtgCatalogFile)
-                npz.delete()
+                part.delete()
+                versionFile().writeText(entry.version)
+                _mtgCatalogStatus.value = readMtgCatalogStatus(remoteVersion = entry.version)
 
                 if (embedder == null) {
                     embedder = MiloEmbedder(modelFile)
@@ -259,6 +291,9 @@ class NeuralPackManager(
                 onProgress("Pack neurale MTG pronto (${converted.size} carte)")
                 true
             } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                File(root, "mtg-download.npz").delete()
+                File(root, "mtg-download.stcat").delete()
                 if (mtgCatalog == null && pokemonCatalog == null) {
                     embedder?.close()
                     embedder = null
@@ -344,6 +379,8 @@ class NeuralPackManager(
             Game.MTG -> {
                 mtgCatalog = null
                 mtgCatalogFile.delete()
+                versionFile().delete()
+                _mtgCatalogStatus.value = readMtgCatalogStatus(remoteVersion = _mtgCatalogStatus.value.remoteVersion)
                 _mtgState.value = NeuralPackState.NotInstalled
             }
             Game.POKEMON -> {
@@ -511,6 +548,31 @@ class NeuralPackManager(
         }
     }
 
+    private fun fetchMtgEntry(): StcatCatalogEntry? {
+        val request = Request.Builder()
+            .url(PokemonCatalogIndex.INDEX_URL)
+            .header("Accept", "application/json")
+            .header("User-Agent", "ScanTrader")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("HTTP ${response.code}")
+            val body = response.body?.string() ?: error("Elenco vuoto")
+            return PokemonCatalogIndex.mtgEntry(PokemonCatalogIndex.parse(body))
+        }
+    }
+
+    private fun versionFile(): File = File(root, "mtg.version")
+
+    private fun readMtgCatalogStatus(remoteVersion: String? = null): MtgCatalogStatus {
+        val installed = versionFile().takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+        return MtgCatalogStatus(
+            installedVersion = installed,
+            remoteVersion = remoteVersion?.trim()?.takeIf { it.isNotEmpty() },
+            catalogInstalled = mtgCatalogFile.isFile,
+        )
+    }
+
     private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
@@ -527,17 +589,46 @@ class NeuralPackManager(
     companion object {
         private const val HF = "https://huggingface.co/HanClinto/milo/resolve/main"
         const val MODEL_URL = "$HF/model.onnx"
-        const val CATALOG_NPZ_URL =
-            "$HF/catalogs/milo1-scryfall-mtg-2026-07-09.npz"
         const val APPROX_SIZE_LABEL = "~60 MB"
         const val CHECKSUM_ERROR = "File danneggiato (checksum). Il pack non è stato installato."
 
         /** Hugging Face LFS oid for `model.onnx` on HanClinto/milo. */
         const val MODEL_SHA256 = "bd13d8d60383c69da04dce261f32e93fdaeaa8fd618fbc991e7385f71b3d45df"
 
-        /** Hugging Face LFS oid for `catalogs/milo1-scryfall-mtg-2026-07-09.npz`. */
-        const val CATALOG_NPZ_SHA256 = "c5cb0dc150eb9f5b183396dd25aecaa9efc5ce3d001dd8bef282fcc73ee778be"
         val CT_GAMES = setOf(Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA)
+    }
+}
+
+/**
+ * Date of the Magic catalog. [installedVersion] is written when a download
+ * succeeds. [remoteVersion] comes from the published index.
+ */
+data class MtgCatalogStatus(
+    val installedVersion: String? = null,
+    val remoteVersion: String? = null,
+    val catalogInstalled: Boolean = false,
+) {
+    val updateAvailable: Boolean
+        get() {
+            val remote = remoteVersion?.takeIf { it.isNotBlank() } ?: return false
+            if (!catalogInstalled) return false
+            val installed = installedVersion?.takeIf { it.isNotBlank() } ?: return true
+            return PokemonCatalogIndex.compareVersions(remote, installed) > 0
+        }
+
+    fun settingsLine(): String {
+        val installed = installedVersion?.takeIf { it.isNotBlank() }
+        val remote = remoteVersion?.takeIf { it.isNotBlank() }
+        return when {
+            installed != null && remote != null &&
+                PokemonCatalogIndex.compareVersions(remote, installed) > 0 ->
+                "Catalogo del $installed. Disponibile $remote."
+            installed != null -> "Catalogo del $installed."
+            catalogInstalled && remote != null -> "Catalogo già sul telefono. Disponibile $remote."
+            catalogInstalled -> "Catalogo già sul telefono. Data non registrata."
+            remote != null -> "Catalogo del $remote, da scaricare."
+            else -> "Data del catalogo non ancora letta."
+        }
     }
 }
 

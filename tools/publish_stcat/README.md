@@ -27,6 +27,8 @@ python build_pokemon_stcat.py --out pokemon.stcat
 copy pokemon.stcat ..\publish_stcat\pokemon-en.stcat
 ```
 
+Il catalogo Magic usa lo stesso indice, con id `mtg` (o `mtg-…`). La versione, per esempio `2026.10.31`, è la data che l’app mostra in Impostazioni. Il file può essere uno `.stcat` già convertito oppure il `.npz` Milo. Non va un secondo release: `stcat` deve restare l’ultimo non prerelease.
+
 Poi, da `tools\publish_stcat` (serve solo Python 3, nessun pacchetto). Il nome del file, senza estensione, è l’id:
 
 ```bat
