@@ -96,9 +96,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -114,6 +117,7 @@ import com.scantrader.app.R
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.scan.AutoScanQuick
 import com.scantrader.app.scan.CameraDevices
+import com.scantrader.app.scan.ManualShutter
 import com.scantrader.app.scan.CardFrameGeometry
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
@@ -455,6 +459,12 @@ fun ScanScreen(
         if (!gamePicked) return@LaunchedEffect
         navigated.set(false)
         viewModel.resumeScanning()
+    }
+
+    // Resume auto frames once the manual shot has opened confirm (or search).
+    // While that sheet is up the analyzer stays detached, then starts again on close.
+    LaunchedEffect(confirmVisible) {
+        if (confirmVisible) viewModel.endManualCapture()
     }
 
     // Confirm covers the scanner in this same composition, so the camera stays
@@ -804,61 +814,61 @@ fun ScanScreen(
                     Text("Cerca", color = Gold)
                 }
 
-                if (!autoScan) {
-                    Box(
-                        modifier = Modifier
-                            .size(76.dp)
-                            .clip(CircleShape)
-                            .border(3.dp, FrameAccent.copy(alpha = 0.9f), CircleShape)
-                            .clickable(enabled = granted && !processing) {
-                                panelExpanded = false
-                                navigated.set(false)
-                                val photo = File(context.cacheDir, "scan-capture.jpg")
-                                val options = ImageCapture.OutputFileOptions.Builder(photo).build()
-                                controller.takePicture(
-                                    options,
-                                    cameraExecutor,
-                                    object : ImageCapture.OnImageSavedCallback {
-                                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                            val bitmap = com.scantrader.app.scan.CameraBitmaps.fromJpegFile(
-                                                photo.absolutePath,
-                                            )
-                                            mainExecutor.execute {
-                                                if (bitmap != null) {
-                                                    viewModel.processBitmap(bitmap) {
-                                                        goToConfirm()
-                                                    }
-                                                } else {
-                                                    onManualSearch()
+                Box(
+                    modifier = Modifier
+                        .size(ManualShutter.diameterDp(autoScan).dp)
+                        .graphicsLayer { alpha = ManualShutter.alpha(autoScan) }
+                        .clip(CircleShape)
+                        .border(
+                            3.dp,
+                            FrameAccent.copy(alpha = if (autoScan) 0.45f else 0.9f),
+                            CircleShape,
+                        )
+                        .semantics { contentDescription = ManualShutter.CONTENT_DESCRIPTION }
+                        .clickable(enabled = granted && !processing) {
+                            panelExpanded = false
+                            navigated.set(false)
+                            viewModel.beginManualCapture()
+                            val photo = File(context.cacheDir, "scan-capture.jpg")
+                            val options = ImageCapture.OutputFileOptions.Builder(photo).build()
+                            controller.takePicture(
+                                options,
+                                cameraExecutor,
+                                object : ImageCapture.OnImageSavedCallback {
+                                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                                        val bitmap = com.scantrader.app.scan.CameraBitmaps.fromJpegFile(
+                                            photo.absolutePath,
+                                        )
+                                        mainExecutor.execute {
+                                            if (bitmap != null) {
+                                                viewModel.processBitmap(bitmap) {
+                                                    goToConfirm()
                                                 }
+                                            } else {
+                                                viewModel.noteManualConfirm()
+                                                onManualSearch()
                                             }
                                         }
+                                    }
 
-                                        override fun onError(exception: ImageCaptureException) {
-                                            mainExecutor.execute { onManualSearch() }
+                                    override fun onError(exception: ImageCaptureException) {
+                                        mainExecutor.execute {
+                                            viewModel.noteManualConfirm()
+                                            onManualSearch()
                                         }
-                                    },
-                                )
-                            }
-                            .padding(6.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .clip(CircleShape)
-                                .background(if (granted && !processing) Gold else Gold.copy(alpha = 0.35f)),
-                        )
-                    }
-                } else {
-                    Surface(shape = RoundedCornerShape(24.dp), color = Gold.copy(alpha = 0.18f)) {
-                        Text(
-                            "Auto attivo",
-                            color = Gold,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
+                                    }
+                                },
+                            )
+                        }
+                        .padding(6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(if (granted && !processing) Gold else Gold.copy(alpha = 0.35f)),
+                    )
                 }
 
                 Spacer(Modifier.width(72.dp))
