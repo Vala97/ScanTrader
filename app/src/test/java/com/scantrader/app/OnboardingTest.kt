@@ -1,5 +1,6 @@
 package com.scantrader.app
 
+import com.scantrader.app.ui.NeuralPackCatalogLine
 import com.scantrader.app.ui.onboarding.CameraPrompt
 import com.scantrader.app.ui.onboarding.Onboarding
 import org.junit.Assert.assertEquals
@@ -19,7 +20,10 @@ class OnboardingTest {
 
     @Test
     fun fivePagesCoverWelcomeFramingAutoscanExportAndCamera() {
-        val pages = Onboarding.pages(listOf("Pokémon (inglese)" to 13_000_000L))
+        val pages = Onboarding.pages(
+            magicInstalled = false,
+            catalogs = listOf(NeuralPackCatalogLine("Pokémon (inglese)", 13_000_000L, installed = false)),
+        )
         assertEquals(Onboarding.PAGE_COUNT, pages.size)
         assertEquals(
             listOf("Benvenuto", "Come inquadrare", "Auto-scan", "Esporta", "Fotocamera e pacchetti"),
@@ -38,8 +42,13 @@ class OnboardingTest {
         assertTrue(pages[3].body.contains("CardTrader"))
         assertTrue(pages[4].requestsCamera)
         assertTrue(pages[4].body.contains("fotocamera"))
-        assertTrue(pages[4].body.contains("pack neurale Magic"))
-        assertTrue(pages[4].body.contains("Pokémon (inglese)"))
+        val packs = pages[4].body
+        assertTrue(packs.contains("pack neurale Magic"))
+        assertTrue(packs.contains("Pokémon (inglese)"))
+        val magicGroup = packs.indexOf("\nMagic\n")
+        val pokemonGroup = packs.indexOf("\nPokémon\n")
+        assertTrue(magicGroup >= 0 && pokemonGroup > magicGroup)
+        assertTrue(packs.contains("da scaricare"))
         assertFalse(pages[0].requestsCamera)
     }
 
@@ -75,5 +84,22 @@ class OnboardingTest {
         assertTrue(Onboarding.offerDownload(magicInstalled = true, pokemonCatalogInstalled = false))
         assertTrue(Onboarding.offerDownload(magicInstalled = false, pokemonCatalogInstalled = true))
         assertFalse(Onboarding.offerDownload(magicInstalled = true, pokemonCatalogInstalled = true))
+    }
+
+    @Test
+    fun downloadLabelMatchesWhatIsStillMissing() {
+        assertEquals(
+            "Scarica tutto",
+            Onboarding.downloadLabel(magicInstalled = false, pokemonCatalogInstalled = false),
+        )
+        assertEquals(
+            "Scarica pack Magic",
+            Onboarding.downloadLabel(magicInstalled = false, pokemonCatalogInstalled = true),
+        )
+        assertEquals(
+            "Scarica cataloghi Pokémon",
+            Onboarding.downloadLabel(magicInstalled = true, pokemonCatalogInstalled = false),
+        )
+        assertNull(Onboarding.downloadLabel(magicInstalled = true, pokemonCatalogInstalled = true))
     }
 }

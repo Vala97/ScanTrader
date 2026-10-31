@@ -1,5 +1,6 @@
 package com.scantrader.app.ui.onboarding
 
+import com.scantrader.app.ui.NeuralPackCatalogLine
 import com.scantrader.app.ui.NeuralPackPrompt
 
 /**
@@ -13,7 +14,9 @@ object Onboarding {
     const val SKIP = "Salta"
     const val NEXT = "Avanti"
     const val START = "Inizia"
-    const val DOWNLOAD = "Scarica"
+    const val DOWNLOAD_ALL = "Scarica tutto"
+    const val DOWNLOAD_MAGIC = "Scarica pack Magic"
+    const val DOWNLOAD_POKEMON = "Scarica cataloghi Pokémon"
     const val RETRY_CAMERA = "Riprova"
     const val ALLOW_CAMERA = "Consenti fotocamera"
 
@@ -30,7 +33,10 @@ object Onboarding {
 
     fun primaryAction(page: Int): String = if (page >= LAST_PAGE) START else NEXT
 
-    fun pages(catalogs: List<Pair<String, Long>> = emptyList()): List<OnboardingPage> = listOf(
+    fun pages(
+        magicInstalled: Boolean = false,
+        catalogs: List<NeuralPackCatalogLine> = emptyList(),
+    ): List<OnboardingPage> = listOf(
         OnboardingPage(
             title = "Benvenuto",
             body = "ScanTrader scansiona le carte Magic e Pokémon, le organizza in collezioni " +
@@ -54,7 +60,7 @@ object Onboarding {
             title = "Fotocamera e pacchetti",
             body = "La fotocamera serve per inquadrare la carta durante lo scan. " +
                 "Senza questo permesso non si può scansionare.\n\n" +
-                NeuralPackPrompt.body(catalogs),
+                NeuralPackPrompt.body(magicInstalled, catalogs),
             requestsCamera = true,
         ),
     )
@@ -89,6 +95,14 @@ object Onboarding {
 
     fun offerDownload(magicInstalled: Boolean, pokemonCatalogInstalled: Boolean): Boolean =
         !magicInstalled || !pokemonCatalogInstalled
+
+    /** Null when nothing is missing: the page shows [PACKS_READY] and no button. */
+    fun downloadLabel(magicInstalled: Boolean, pokemonCatalogInstalled: Boolean): String? = when {
+        magicInstalled && pokemonCatalogInstalled -> null
+        !magicInstalled && !pokemonCatalogInstalled -> DOWNLOAD_ALL
+        !magicInstalled -> DOWNLOAD_MAGIC
+        else -> DOWNLOAD_POKEMON
+    }
 }
 
 data class OnboardingPage(
