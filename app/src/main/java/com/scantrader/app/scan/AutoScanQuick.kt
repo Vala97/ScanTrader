@@ -24,14 +24,33 @@ object AutoScanQuick {
 /**
  * Manual shutter while auto-scan stays on.
  * The shot always opens confirm and never counts as an auto-scan accept.
+ *
+ * The center control used to follow [processing] on every auto frame, so it
+ * looked like it was toggling enabled and disabled. While auto-scan is on,
+ * that control is only a steady waiting ring and does not read processing.
  */
 object ManualShutter {
     const val CONTENT_DESCRIPTION = "Scatto manuale"
+    const val WAITING_DESCRIPTION = "In attesa del riconoscimento"
+    const val MAIN_DIAMETER_DP = 76
+    const val MANUAL_DIAMETER_DP = 48
 
-    fun diameterDp(autoScanOn: Boolean): Int = if (autoScanOn) 52 else 76
+    fun showWaitingRing(autoScanOn: Boolean): Boolean = autoScanOn
 
-    /** Secondary, faded control while auto-scan is the primary mode. */
-    fun alpha(autoScanOn: Boolean): Float = if (autoScanOn) 0.5f else 1f
+    fun showManualButton(autoScanOn: Boolean): Boolean = autoScanOn
+
+    /** The center disk is the shutter only when auto-scan is off. */
+    fun centerClickable(autoScanOn: Boolean): Boolean = !autoScanOn
+
+    /**
+     * Per-frame analysis must not change the auto-scan controls.
+     * The manual shutter (auto-scan off) still dims for the one capture in flight.
+     */
+    fun centerDependsOnProcessing(autoScanOn: Boolean): Boolean = !autoScanOn
+
+    fun manualButtonDependsOnProcessing(): Boolean = false
+
+    fun manualButtonAlpha(): Float = 1f
 
     /** No auto frame, and therefore no autosave, while the shutter capture is in flight. */
     fun allowAutoFrame(autoScanOn: Boolean, captureInFlight: Boolean): Boolean =
