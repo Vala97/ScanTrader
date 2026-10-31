@@ -34,3 +34,14 @@
 
 # CameraX pulls in optional classes that are not packaged.
 -dontwarn com.google.devtools.build.android.desugar.runtime.**
+
+# Gson TypeToken under R8 full mode: keep generic signatures of TypeToken subclasses
+# (e.g. object : TypeToken<List<...>>() {} in CachingTcgdexApi).
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep,allowobfuscation,allowshrinking class com.google.gson.reflect.TypeToken
+-keep,allowobfuscation,allowshrinking class * extends com.google.gson.reflect.TypeToken
+-keepclassmembers,allowobfuscation class * {
+    @com.google.gson.annotations.SerializedName <fields>;
+}
+-keep class com.scantrader.app.vision.** { *; }
+-dontwarn com.google.gson.**
