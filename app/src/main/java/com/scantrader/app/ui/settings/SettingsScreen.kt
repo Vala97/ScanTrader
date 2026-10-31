@@ -41,12 +41,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import com.scantrader.app.R
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensOption
+import com.scantrader.app.ui.NeuralPackPrompt
 import com.scantrader.app.ui.SettingsViewModel
 import com.scantrader.app.ui.components.SimpleDropdown
 import com.scantrader.app.ui.update.AppUpdateDialog
@@ -236,6 +238,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                MiloLicenseNote()
                 Spacer(Modifier.height(4.dp))
                 Text(
                     neuralStatusLabel(neural),
@@ -282,6 +285,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                MiloLicenseNote()
                 if (pokemonCatalogs.checking) {
                     Text("Controllo elenco…", style = MaterialTheme.typography.bodyMedium)
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -505,6 +509,14 @@ private fun LensDropdown(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+@Composable
+private fun MiloLicenseNote() {
+    val links = LocalUriHandler.current
+    TextButton(onClick = { runCatching { links.openUri(NeuralPackPrompt.MILO_SOURCE_URL) } }) {
+        Text(NeuralPackPrompt.MILO_LICENSE_NOTE)
+    }
 }
 
 private fun neuralStatusLabel(state: NeuralPackState): String = when (state) {

@@ -57,17 +57,28 @@ fun releaseKeystore(): Map<String, String>? {
 
 val releaseSigning = releaseKeystore()
 
-/** Token CardTrader di questa build. Sta in `local.properties` (ignorato da git), non nel sorgente. */
-val cardTraderToken = run {
+/**
+ * The CardTrader token is entered in the app and stored encrypted on the device.
+ * A value in local.properties or -Pscantrader.cardTraderToken would be compiled
+ * into the APK, so the build stops instead.
+ */
+fun rejectBundledCardTraderToken() {
     val local = Properties()
     val localFile = rootProject.file("local.properties")
     if (localFile.isFile) localFile.inputStream().use { local.load(it) }
-    (local.getProperty("cardtrader.token") ?: findProperty("scantrader.cardTraderToken") as? String)
-        ?.trim()
-        .orEmpty()
-        .replace("\\", "\\\\")
-        .replace("\"", "\\\"")
+    val fromFile = local.getProperty("cardtrader.token")?.trim().orEmpty()
+    val fromProperty = (findProperty("scantrader.cardTraderToken") as? String)?.trim().orEmpty()
+    if (fromFile.isNotEmpty() || fromProperty.isNotEmpty()) {
+        throw org.gradle.api.GradleException(
+            "ScanTrader: do not put the CardTrader token in the build. " +
+                "Remove cardtrader.token from local.properties and do not pass " +
+                "-Pscantrader.cardTraderToken. Enter the token in the app, under Impostazioni.",
+        )
+    }
 }
+
+rejectBundledCardTraderToken()
+
 val githubSelfUpdate = (findProperty("scantrader.githubSelfUpdate") as? String)
     ?.equals("false", ignoreCase = true)
     ?.not()
@@ -87,7 +98,6 @@ android {
         buildConfigField("boolean", "GITHUB_SELF_UPDATE", githubSelfUpdate.toString())
         // Gallerie visive dei giochi CardTrader (`<indirizzo><gioco>.stcat`). Vuoto: nessuna galleria scaricata.
         buildConfigField("String", "CT_GALLERY_URL", "\"" + (project.findProperty("scantrader.ctGalleryUrl") ?: "") + "\"")
-        buildConfigField("String", "CARDTRADER_TOKEN", "\"$cardTraderToken\"")
     }
 
     signingConfigs {

@@ -87,6 +87,8 @@ class NeuralPackPromptTest {
         )
         assertTrue(listed.contains("pack neurale Magic"))
         assertTrue(listed.contains("cataloghi Pokémon"))
+        assertTrue(listed.contains(NeuralPackPrompt.MILO_LICENSE_NOTE))
+        assertTrue(listed.contains(NeuralPackPrompt.MILO_SOURCE_URL))
         assertTrue(listed.contains("Pokémon (inglese)"))
         assertTrue(listed.contains("12,4"))
         assertTrue(listed.contains("(${NeuralPackManager.APPROX_SIZE_LABEL})"))

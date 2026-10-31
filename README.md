@@ -4,6 +4,8 @@ App Android non ufficiale: scansiona carte **Magic: The Gathering**, **Pokémon*
 
 Non è affiliata a Wizards of the Coast, The Pokémon Company, Nintendo, Riot Games, Bandai, Konami o CardTrader.
 
+Licenza [GNU AGPL-3.0](LICENSE) (copyright 2026 Daniele Valacchi / WillyCo). Informativa: [docs/privacy.md](docs/privacy.md).
+
 La versione è solo in `app/version.properties` (`VERSION_NAME` e `VERSION_CODE`; oggi 1.1, build 2). **Informazioni** la legge da lì (`Versione V1.1 (build 2)`; le build debug aggiungono `· debug`).
 
 ## Cosa fa
@@ -17,7 +19,7 @@ La versione è solo in `app/version.properties` (`VERSION_NAME` e `VERSION_CODE`
 - **Codice set.** In basso l’OCR legge il codice stampato: `0181 • DFT • IT`, `0181 DFT IT`, oppure il set attaccato alla lingua e all’artista (`ELDITTAYLOR` → `ELD`). Sulle carte vecchie vale `74/165` (numero / carte nel set): un copyright o il costo di mana non diventano set o numero. Su Pokémon il codice sta accanto alla frazione (`ASC 072/217`, `D30C006/128`).
 - **«Rileva lingua dalla carta»** in Impostazioni generali (attivo di default). In conferma la lingua proposta è quella del titolo letto; se il confronto non è chiaro, resta l’ultima lingua scelta. Con l’interruttore spento si usa solo l’ultima lingua.
 - **Prezzi in euro.** Magic usa Scryfall (`prices.eur` / `prices.eur_foil`), senza token: stampa esatta, poi la stampa inglese dello stesso set e numero, poi la ristampa di carta più economica (a parità, la più recente). I fallback sono segnati come approssimati (`Scryfall (circa)`). Pokémon usa Cardmarket e **non ha un prezzo foil**: in conferma non c’è l’interruttore foil e non si mostra un importo holo. Il prezzo in dollari non viene mostrato.
-- **Token API CardTrader** opzionale, in Impostazioni, cifrato nel Keystore del telefono. Solo con un token il prezzo Magic è la media delle inserzioni (lingua, condizione e foil se ci sono). Senza token non parte nessuna chiamata a CardTrader.
+- **Token API CardTrader** opzionale, scritto in Impostazioni e cifrato nel Keystore del telefono. Non viene compilato nell’APK. Solo con un token il prezzo Magic è la media delle inserzioni (lingua, condizione e foil se ci sono). Senza token non parte nessuna chiamata a CardTrader.
 - Chiamate Scryfall in coda (~10 al secondo), con cache e pausa dopo un HTTP 429.
 - Conferma di lingua, condizione, foil (solo Magic), quantità e collezione, con la percentuale di match e la fonte del prezzo (`Scryfall`, `Scryfall (circa)`, `CardTrader`, `Cardmarket`).
 - **Export CSV CardTrader**, un file per gioco, nel formato `POST /product_imports`.

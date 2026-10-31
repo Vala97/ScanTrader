@@ -17,12 +17,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -30,7 +32,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.scantrader.app.BuildConfig
 import com.scantrader.app.R
+import com.scantrader.app.ui.NeuralPackPrompt
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
+
+private const val LICENSE_URL = "https://github.com/Vala97/ScanTrader/blob/main/LICENSE"
+private const val PRIVACY_URL = "https://github.com/Vala97/ScanTrader/blob/main/docs/privacy.md"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,10 +97,24 @@ fun AboutScreen(onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    val links = LocalUriHandler.current
+                    TextButton(onClick = { openLink(links, LICENSE_URL) }) {
+                        Text("Licenza (AGPL-3.0)")
+                    }
+                    TextButton(onClick = { openLink(links, PRIVACY_URL) }) {
+                        Text("Informativa privacy")
+                    }
+                    TextButton(onClick = { openLink(links, NeuralPackPrompt.MILO_SOURCE_URL) }) {
+                        Text(NeuralPackPrompt.MILO_LICENSE_NOTE)
+                    }
                 }
             }
         }
     }
+}
+
+private fun openLink(links: androidx.compose.ui.platform.UriHandler, url: String) {
+    runCatching { links.openUri(url) }
 }
 
 @Composable
