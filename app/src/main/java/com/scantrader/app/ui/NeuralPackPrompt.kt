@@ -25,6 +25,8 @@ object NeuralPackPrompt {
     const val MAGIC_PACK = "Pack neurale Magic"
     const val TO_DOWNLOAD = "da scaricare"
     const val ALREADY_INSTALLED = "già installato"
+    const val MILO_SOURCE_URL = "https://github.com/HanClinto/milo"
+    const val MILO_LICENSE_NOTE = "Il modello Milo è sotto licenza AGPL-3.0."
 
     fun shouldShow(
         alreadyShown: Boolean,
@@ -57,7 +59,8 @@ object NeuralPackPrompt {
     ): String {
         val intro =
             "Per riconoscere meglio le carte puoi scaricare il pack neurale Magic e i cataloghi Pokémon. " +
-                "Restano sul telefono e funzionano offline. Puoi scaricarli anche dopo da Impostazioni."
+                "Restano sul telefono e funzionano offline. Puoi scaricarli anche dopo da Impostazioni. " +
+                "$MILO_LICENSE_NOTE $MILO_SOURCE_URL"
         val magic = bullet(
             MAGIC_PACK,
             magicSizeLabel?.trim()?.takeIf { it.isNotEmpty() },

@@ -41,12 +41,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import com.scantrader.app.R
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensOption
+import com.scantrader.app.ui.NeuralPackPrompt
 import com.scantrader.app.ui.SettingsViewModel
 import com.scantrader.app.ui.components.SimpleDropdown
 import com.scantrader.app.ui.update.AppUpdateDialog
@@ -67,6 +69,7 @@ fun SettingsScreen(
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val tokenSaved by viewModel.hasCardTraderToken.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
+    val mtgCatalog by viewModel.mtgCatalog.collectAsStateWithLifecycle()
     val pokemonNeural by viewModel.pokemonPackState.collectAsStateWithLifecycle()
     val pokemonCatalogs by viewModel.pokemonCatalogs.collectAsStateWithLifecycle()
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
@@ -236,10 +239,16 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                MiloLicenseNote()
                 Spacer(Modifier.height(4.dp))
                 Text(
                     neuralStatusLabel(neural),
                     style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    mtgCatalog.settingsLine(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (neural is NeuralPackState.Downloading) {
                     LinearProgressIndicator(
@@ -252,14 +261,16 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     val busy = neural is NeuralPackState.Downloading || neural is NeuralPackState.Loading
+                    val canInstall = !busy && (neural !is NeuralPackState.Ready || mtgCatalog.updateAvailable)
                     Button(
                         onClick = viewModel::downloadNeuralPack,
-                        enabled = !busy && neural !is NeuralPackState.Ready,
+                        enabled = canInstall,
                     ) {
                         Text(
-                            when (neural) {
-                                is NeuralPackState.Ready -> "Installato"
-                                is NeuralPackState.Downloading -> "Download…"
+                            when {
+                                neural is NeuralPackState.Downloading -> "Download…"
+                                neural is NeuralPackState.Ready && mtgCatalog.updateAvailable -> "Aggiorna"
+                                neural is NeuralPackState.Ready -> "Installato"
                                 else -> "Scarica"
                             },
                         )
@@ -282,6 +293,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                MiloLicenseNote()
                 if (pokemonCatalogs.checking) {
                     Text("Controllo elenco…", style = MaterialTheme.typography.bodyMedium)
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -505,6 +517,14 @@ private fun LensDropdown(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+@Composable
+private fun MiloLicenseNote() {
+    val links = LocalUriHandler.current
+    TextButton(onClick = { runCatching { links.openUri(NeuralPackPrompt.MILO_SOURCE_URL) } }) {
+        Text(NeuralPackPrompt.MILO_LICENSE_NOTE)
+    }
 }
 
 private fun neuralStatusLabel(state: NeuralPackState): String = when (state) {
