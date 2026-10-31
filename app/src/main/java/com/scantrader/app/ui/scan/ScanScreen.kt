@@ -668,13 +668,6 @@ fun ScanScreen(
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (!panelExpanded) {
-                                CompactChip(
-                                    icon = if (torchOn) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
-                                    label = if (torchOn) "Torcia" else "Off",
-                                    active = torchOn,
-                                    onClick = { viewModel.setTorchOn(!torchOn) },
-                                )
-                                Spacer(Modifier.width(6.dp))
                                 if (autoScan) {
                                     CompactChip(
                                         icon = Icons.Filled.CenterFocusStrong,
