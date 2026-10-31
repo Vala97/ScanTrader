@@ -400,8 +400,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private val acceptedLock = AcceptedCandidateLock(clearFramesNeeded = SAME_CARD_CLEAR_FRAMES)
     private val duplicateGuard = AutosaveDuplicateGuard()
     private val consecutiveGuard = ConsecutivePrintingGuard()
-    /** Shutter capture in flight. Auto frames must not accept or autosave until it ends. */
+    /** Shutter capture in flight. Auto frames must not accept or autosave until the sheet closes. */
     private val manualCapture = AtomicBoolean(false)
+    private var autoFrameJob: kotlinx.coroutines.Job? = null
+    private var manualSheetLogged = false
+    val manualShotBusy = MutableStateFlow(false)
 
     /** Set when this frame's match is the printing we just accepted. */
     @Volatile
@@ -738,16 +741,45 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         app.scanSession.targetCollectionId = id
     }
 
-    /** Pause auto-scan for a shutter press. Call [endManualCapture] on success, error, or cancel. */
-    fun beginManualCapture() {
+    /**
+     * Pause auto-scan for a shutter press. Returns false when a manual shot is already running.
+     * The in-flight auto frame is cancelled and must not publish. Auto frames stay paused
+     * until [endManualCapture], which runs when the confirmation sheet closes.
+     */
+    fun beginManualCapture(): Boolean {
         synchronized(manualCapture) {
+            if (manualCapture.get()) return false
             manualCapture.set(true)
             autoHitPending.set(false)
         }
+        autoFrameJob?.cancel()
+        autoFrameJob = null
+        autoBusy.set(false)
+        cancelSpeculative()
+        app.scanSession.ocrGeneration++
+        app.scanSession.rulesPending = false
+        manualSheetLogged = false
+        manualShotBusy.value = true
+        return true
     }
 
-    fun endManualCapture() {
-        manualCapture.set(false)
+    fun isManualCaptureInFlight(): Boolean = manualCapture.get()
+
+    /** Confirmation is on screen. Stop the button ring; keep auto-scan paused. */
+    fun onManualSheetShown() {
+        manualShotBusy.value = false
+        if (manualCapture.get() && !manualSheetLogged) {
+            manualSheetLogged = true
+            com.scantrader.app.scan.ScanDebug.d("manual: confirm shown")
+        }
+    }
+
+    /** Resume auto-scan. True when this close ended a manual shot. */
+    fun endManualCapture(): Boolean {
+        val wasManual = manualCapture.getAndSet(false)
+        manualShotBusy.value = false
+        manualSheetLogged = false
+        return wasManual
     }
 
     /** This confirmation must not autosave, even when the auto-scan switch is on. */
@@ -767,7 +799,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         bitmap: android.graphics.Bitmap,
         onDone: (ok: Boolean) -> Unit,
     ) {
-        beginManualCapture()
+        if (!manualCapture.get()) beginManualCapture()
         viewModelScope.launch {
             processing.value = true
             autoStatus.value = null
@@ -775,9 +807,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 // Manual path: requireMatch is false, so the consecutive-printing
                 // and autosave duplicate guards are not updated.
                 analyze(bitmap, requireMatch = false)
+                val name = app.scanSession.candidates.firstOrNull()?.name
+                com.scantrader.app.scan.ScanDebug.d("manual: result ${name ?: "null"}")
                 noteManualConfirm()
                 onDone(true)
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                com.scantrader.app.scan.ScanDebug.d("manual: result null")
                 noteManualConfirm()
                 app.scanSession.errorMessage = t.message ?: "Errore durante lo scan"
                 onDone(true)
@@ -794,7 +830,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         val now = System.currentTimeMillis()
         if (!canAcceptAutoFrame(now)) return
         if (!autoBusy.compareAndSet(false, true)) return
-        viewModelScope.launch {
+        val job = viewModelScope.launch {
+            if (manualCapture.get()) {
+                autoBusy.set(false)
+                return@launch
+            }
             processing.value = true
             autoStatus.value = "Analisi in corso…"
             try {
@@ -821,7 +861,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         "Inquadra meglio…"
                     }
                 }
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
                 autoStatus.value = if (lastAcceptedCardKey != null) {
                     "Metti un’altra carta…"
                 } else {
@@ -836,6 +877,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 }
             }
         }
+        autoFrameJob = job
+        if (manualCapture.get()) job.cancel()
     }
 
     private suspend fun analyze(

@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.os.Build
+import android.view.HapticFeedbackConstants
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Toast
@@ -101,6 +102,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -170,6 +172,7 @@ fun ScanScreen(
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
     val guideViewWidth by viewModel.guideViewWidth.collectAsStateWithLifecycle()
     val guideViewHeight by viewModel.guideViewHeight.collectAsStateWithLifecycle()
+    val manualShotBusy by viewModel.manualShotBusy.collectAsStateWithLifecycle()
     var autoScanToast by remember { mutableStateOf<Toast?>(null) }
 
     var granted by remember {
@@ -277,8 +280,10 @@ fun ScanScreen(
         handleZoomStep(step)
     }
 
-    fun goToConfirm() {
-        if (navigated.compareAndSet(false, true)) {
+    fun goToConfirm(fromManual: Boolean = false) {
+        if (!fromManual && viewModel.isManualCaptureInFlight()) return
+        if (fromManual) navigated.set(true)
+        if (fromManual || navigated.compareAndSet(false, true)) {
             persistZoom(controller, viewModel)
             viewModel.holdFraming()
             onCaptured()
@@ -462,10 +467,8 @@ fun ScanScreen(
         viewModel.resumeScanning()
     }
 
-    // Resume auto frames once the manual shot has opened confirm (or search).
-    // While that sheet is up the analyzer stays detached, then starts again on close.
     LaunchedEffect(confirmVisible) {
-        if (confirmVisible) viewModel.endManualCapture()
+        if (confirmVisible) viewModel.onManualSheetShown()
     }
 
     // Confirm covers the scanner in this same composition, so the camera stays
@@ -481,6 +484,9 @@ fun ScanScreen(
             confirmWasShown = false
             navigated.set(false)
             viewModel.onZoomRestoreSettled()
+            if (viewModel.endManualCapture()) {
+                ScanDebug.d("manual: confirm closed, auto resume")
+            }
             viewModel.resumeScanning()
         }
     }
@@ -804,13 +810,21 @@ fun ScanScreen(
                 }
             }
 
-            val captureManual = {
-                if (granted && !processing) {
+            val view = LocalView.current
+            val captureManual = { fromAutoButton: Boolean ->
+                val accepted = granted && ManualShutter.acceptManualTap(
+                    autoScanOn = fromAutoButton,
+                    processing = processing,
+                    alreadyCapturing = viewModel.isManualCaptureInFlight(),
+                )
+                if (accepted && viewModel.beginManualCapture()) {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    ScanDebug.d("manual: tap")
                     panelExpanded = false
-                    navigated.set(false)
-                    viewModel.beginManualCapture()
+                    if (fromAutoButton) controller.clearImageAnalysisAnalyzer()
                     val photo = File(context.cacheDir, "scan-capture.jpg")
                     val options = ImageCapture.OutputFileOptions.Builder(photo).build()
+                    ScanDebug.d("manual: capture start")
                     controller.takePicture(
                         options,
                         cameraExecutor,
@@ -822,10 +836,11 @@ fun ScanScreen(
                                 mainExecutor.execute {
                                     if (bitmap != null) {
                                         viewModel.processBitmap(bitmap) {
-                                            goToConfirm()
+                                            goToConfirm(fromManual = true)
                                         }
                                     } else {
                                         viewModel.noteManualConfirm()
+                                        ScanDebug.d("manual: result null")
                                         onManualSearch()
                                     }
                                 }
@@ -834,6 +849,7 @@ fun ScanScreen(
                             override fun onError(exception: ImageCaptureException) {
                                 mainExecutor.execute {
                                     viewModel.noteManualConfirm()
+                                    ScanDebug.d("manual: result null")
                                     onManualSearch()
                                 }
                             }
@@ -880,7 +896,7 @@ fun ScanScreen(
                                 .border(3.dp, FrameAccent.copy(alpha = 0.9f), CircleShape)
                                 .semantics { contentDescription = ManualShutter.CONTENT_DESCRIPTION }
                                 .clickable(enabled = ManualShutter.centerClickable(autoScan) && shutterReady) {
-                                    captureManual()
+                                    captureManual(false)
                                 }
                                 .padding(6.dp),
                             contentAlignment = Alignment.Center,
@@ -902,15 +918,23 @@ fun ScanScreen(
                                 .clip(CircleShape)
                                 .background(Gold)
                                 .semantics { contentDescription = ManualShutter.CONTENT_DESCRIPTION }
-                                .clickable(enabled = granted) { captureManual() },
+                                .clickable(enabled = granted) { captureManual(true) },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(
-                                Icons.Filled.PhotoCamera,
-                                contentDescription = null,
-                                tint = ScanColors.onAccent,
-                                modifier = Modifier.size(22.dp),
-                            )
+                            if (manualShotBusy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    color = ScanColors.onAccent,
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Filled.PhotoCamera,
+                                    contentDescription = null,
+                                    tint = ScanColors.onAccent,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
                         }
                     }
                 }

@@ -52,6 +52,17 @@ object ManualShutter {
 
     fun manualButtonAlpha(): Float = 1f
 
+    /**
+     * Auto-scan's per-frame [processing] flag must not swallow the manual button.
+     * A second tap is ignored only while that manual shot is already in flight.
+     * With auto-scan off, the main shutter still waits out its own capture.
+     */
+    fun acceptManualTap(autoScanOn: Boolean, processing: Boolean, alreadyCapturing: Boolean): Boolean {
+        if (alreadyCapturing) return false
+        if (autoScanOn) return true
+        return !processing
+    }
+
     /** No auto frame, and therefore no autosave, while the shutter capture is in flight. */
     fun allowAutoFrame(autoScanOn: Boolean, captureInFlight: Boolean): Boolean =
         autoScanOn && !captureInFlight
