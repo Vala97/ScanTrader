@@ -34,6 +34,15 @@ Nessun account, nessun backend a pagamento. Unico costo eventuale: account svilu
 
 ## Riftbound, One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena
 
+**Stato (31/10/2026)**
+
+| Gioco | Stato |
+|---|---|
+| Riftbound | ✅ **funziona bene**: provato sul telefono, anche con l'autoscan |
+| One Piece | ⚠️ **autoscan non funziona ancora**: con la foto manuale la carta si riconosce e si sceglie la versione. Ci sta lavorando Vala |
+| Dragon Ball, Yu-Gi-Oh!, Union Arena | 🧪 lettura del codice scritta e coperta dai test, **non ancora provata con carte vere** |
+
+
 Questi giochi non hanno un catalogo gratuito: il catalogo viene da **CardTrader** e serve il **token API** in Impostazioni. Senza token lo scan lo dice («Serve il token CardTrader»).
 
 - **Riftbound**: alla prima carta si scarica tutto il gioco; poi resta sul telefono.
@@ -55,7 +64,7 @@ L’OCR corregge gli scambi tipici (`0`/`O`, `1`/`l`/`I`, `5`/`S`, `8`/`B`). Su 
 
 **Foil.** Riftbound: Comune e Non comune possono essere foil o normali, Rara, Epica, Leggendaria e Showcase sono sempre foil (l’interruttore è bloccato). One Piece, Dragon Ball, Yu-Gi-Oh! e Union Arena non hanno il foil su CardTrader: l’interruttore non compare.
 
-**Riconoscimento per immagine** (facoltativo, provato su One Piece): con una galleria `.stcat` costruita dalle immagini CardTrader, l'immagine sceglie fra le versioni con lo stesso codice e riconosce la carta anche quando il codice non si legge. Si attiva compilando con `-Pscantrader.ctGalleryUrl=<indirizzo>/` (l'app scarica `<indirizzo>/onepiece.stcat`); senza indirizzo è spento e vale solo il codice.
+**Riconoscimento per immagine** (facoltativo, sperimentale: per ora solo One Piece, dove l'autoscan non funziona ancora): con una galleria `.stcat` costruita dalle immagini CardTrader, l'immagine sceglie fra le versioni con lo stesso codice e riconosce la carta anche quando il codice non si legge. Si attiva compilando con `-Pscantrader.ctGalleryUrl=<indirizzo>/` (l'app scarica `<indirizzo>/onepiece.stcat`); senza indirizzo è spento e vale solo il codice.
 
 **Prezzo**: la media delle inserzioni CardTrader della stessa carta (lingua e condizione se ci sono).
 
