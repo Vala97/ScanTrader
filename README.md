@@ -101,11 +101,14 @@ Da terminale, con SDK Android installato e `local.properties` (`sdk.dir=...`):
 ```bat
 gradlew.bat :app:assembleDebug
 gradlew.bat :app:assembleRelease
+gradlew.bat :app:bundleRelease -Pscantrader.githubSelfUpdate=false
 ```
 
-`assembleRelease` attiva minify e `shrinkResources` (regole in `app/proguard-rules.pro`: ONNX Runtime, ML Kit, Room, Retrofit e i model Gson). Moshi e kotlinx.serialization non sono dipendenze. La release include solo l’ABI `arm64-v8a`. La debug tiene tutte le ABI, così un emulatore x86_64 parte ancora.
+`assembleRelease` e `bundleRelease` usano la stessa firma (se c’è `keystore.properties` o le variabili `SCANTRADER_KEYSTORE_*`) e lo stesso minify (`shrinkResources`, regole in `app/proguard-rules.pro`: ONNX Runtime, ML Kit, Room, Retrofit e i model Gson). Moshi e kotlinx.serialization non sono dipendenze. Senza keystore l’APK e l’AAB si compilano lo stesso e restano non firmati (`app-release-unsigned.apk`, `app-release-unsigned.aab`): in log compare un avviso.
 
-Senza keystore l’APK di release si compila lo stesso e resta non firmato (`app-release-unsigned.apk`): in log compare un avviso. Una build Play Store, senza l’aggiornamento da GitHub, si ottiene con `-Pscantrader.githubSelfUpdate=false` (il task resta `assembleRelease` / `assembleDebug`).
+L’APK di release, quello dell’aggiornamento da GitHub, include solo `arm64-v8a`. L’AAB per il Play Store si ottiene con `-Pscantrader.githubSelfUpdate=false`: spegne l’aggiornamento da GitHub e mette anche `armeabi-v7a`. Play spezza il bundle per ABI, quindi il telefono scarica solo la sua. `x86` e `x86_64` non entrano nel bundle (servono all’emulatore). La debug tiene tutte le ABI.
+
+Se `local.properties` contiene `cardtrader.token`, o se si passa `-Pscantrader.cardTraderToken`, la configurazione di Gradle si ferma di proposito. Il token non entra nell’APK: si scrive solo nell’app, in Impostazioni.
 
 Se `local.properties` contiene `cardtrader.token`, o se si passa `-Pscantrader.cardTraderToken`, la configurazione di Gradle si ferma di proposito. Il token non entra nell’APK: si scrive solo nell’app, in Impostazioni.
 
@@ -154,7 +157,8 @@ git push origin v1.2
 ```
 
 4. Parte `.github/workflows/release-apk.yml` (sui tag `v*`). Se nel repository ci sono i quattro secret di firma, compila l’APK firmato e lo carica, insieme a `app-update.json`, sul release **prerelease** `app-update`. Senza quei secret il job di build non parte. `app-update` resta prerelease così `stcat` continua a essere `releases/latest` per i cataloghi.
-5. Controlla il run nella scheda **Actions** del repository, e che l’APK e `app-update.json` siano sul release `app-update`.
+5. Controlla il run nella scheda **Actions** del repository, e che l’APK e `app-update.json` siano sul release `app-update`. Quel workflow carica solo l’APK: l’AAB non va sul release `app-update`.
+6. L’AAB per Play, a parte, si lancia a mano dallo stesso workflow (**Actions → Release APK → Run workflow**). Se i secret di firma ci sono, compila `bundleRelease` con `-Pscantrader.githubSelfUpdate=false` e lascia l’AAB come artifact dell’esecuzione, non come asset del release.
 
 ## Import su CardTrader
 

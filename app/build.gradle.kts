@@ -35,7 +35,7 @@ fun releaseKeystore(): Map<String, String>? {
     val keyPassword = value("keyPassword", "SCANTRADER_KEYSTORE_KEY_PASSWORD")
     if (storePath == null || storePassword == null || keyAlias == null || keyPassword == null) {
         logger.warn(
-            "ScanTrader: release APK will be unsigned. Add keystore.properties " +
+            "ScanTrader: release APK and AAB will be unsigned. Add keystore.properties " +
                 "(storeFile, storePassword, keyAlias, keyPassword) or set " +
                 "SCANTRADER_KEYSTORE_FILE, SCANTRADER_KEYSTORE_PASSWORD, " +
                 "SCANTRADER_KEYSTORE_KEY_ALIAS and SCANTRADER_KEYSTORE_KEY_PASSWORD.",
@@ -44,7 +44,7 @@ fun releaseKeystore(): Map<String, String>? {
     }
     val candidate = file(storePath).let { if (it.isAbsolute) it else rootProject.file(storePath) }
     if (!candidate.isFile) {
-        logger.warn("ScanTrader: keystore not found at ${candidate.absolutePath}. Release APK will be unsigned.")
+            logger.warn("ScanTrader: keystore not found at ${candidate.absolutePath}. Release APK and AAB will be unsigned.")
         return null
     }
     return mapOf(
@@ -122,9 +122,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Phones. Debug keeps every ABI so an x86_64 emulator still runs.
+            // GitHub self-update APK: arm64 only, so the sideload file stays smaller.
+            // Play (`-Pscantrader.githubSelfUpdate=false`) also ships armeabi-v7a.
+            // Play splits the AAB per ABI. x86 stays out of the store bundle; debug
+            // still keeps every ABI so an x86_64 emulator runs.
             ndk {
                 abiFilters += "arm64-v8a"
+                if (!githubSelfUpdate) {
+                    abiFilters += "armeabi-v7a"
+                }
             }
         }
     }
