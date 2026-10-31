@@ -57,6 +57,10 @@ interface CardEntryDao {
     )
     suspend fun findByCopyKey(collectionId: Long, copyKey: String): CardEntryEntity?
 
+    /** Una riga dal suo id (lo scanner scala le carte vendute dalla riga da cui erano partite). */
+    @Query("SELECT * FROM card_entries WHERE id = :id LIMIT 1")
+    suspend fun byId(id: Long): CardEntryEntity?
+
     @Insert
     suspend fun insert(entity: CardEntryEntity): Long
 

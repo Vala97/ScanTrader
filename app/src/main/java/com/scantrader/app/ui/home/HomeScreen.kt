@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ElevatedCard
@@ -57,6 +58,7 @@ fun HomeScreen(
     onOpenCollection: (Long) -> Unit,
     onScan: () -> Unit,
     onSettings: () -> Unit,
+    onTracker: () -> Unit,
     onAbout: () -> Unit,
     onShowOnboarding: () -> Unit,
 ) {
@@ -78,6 +80,7 @@ fun HomeScreen(
                 title = { Text("ScanTrader", fontWeight = FontWeight.SemiBold) },
                 colors = scanTraderAppBarColors(),
                 actions = {
+                    IconButton(onClick = onTracker) { Icon(Icons.Default.ShoppingCart, contentDescription = "DLS Tracker e Cardtrader") }
                     IconButton(onClick = onAbout) { Icon(Icons.Default.Info, contentDescription = "Info") }
                     IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, contentDescription = "Impostazioni") }
                     IconButton(onClick = { showCreate = true }) { Icon(Icons.Default.Add, contentDescription = "Nuova collezione") }

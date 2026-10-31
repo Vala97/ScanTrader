@@ -33,6 +33,17 @@ class SecretStore(context: Context) {
         prefs.edit().putString(TOKEN, encrypt(clean)).apply()
     }
 
+    /** Password del DLS Tracker (per rientrare da solo dopo i riavvii del sito), cifrata come il token. */
+    fun getTrackerPassword(): String? {
+        val payload = prefs.getString(TRACKER_PW, null) ?: return null
+        return runCatching { decrypt(payload) }.getOrNull()?.takeIf { it.isNotEmpty() }
+    }
+
+    fun setTrackerPassword(password: String?) {
+        if (password.isNullOrEmpty()) prefs.edit().remove(TRACKER_PW).apply()
+        else prefs.edit().putString(TRACKER_PW, encrypt(password)).apply()
+    }
+
     private fun encrypt(plain: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
@@ -74,6 +85,7 @@ class SecretStore(context: Context) {
     private companion object {
         const val PREFS = "scantrader_secrets"
         const val TOKEN = "cardtrader_token"
+        const val TRACKER_PW = "tracker_password"
         const val KEY_ALIAS = "scantrader_cardtrader_token"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

@@ -210,6 +210,12 @@ object MatchFusion {
             "strictFail" -> "la soglia forte non è raggiunta"
             "softFail" -> "i segnali OCR non bastano"
             "cnShortWeak" -> "il numero è corto e gli altri segnali sono deboli"
+            "ctCode" -> "il codice stampato indica una carta sola"
+            "ctCode+visual" -> "il codice coincide e l'immagine sceglie la versione"
+            "ctVisual" -> "l'immagine riconosce la carta"
+            "ctVariants (scegli la versione)" -> "lo stesso codice ha più versioni: scegli quella giusta"
+            "ctCodeMismatch" -> "il codice letto non coincide con l'immagine"
+            "ctNoCode" -> "codice non letto e immagine non abbastanza netta"
             "noTop" -> "nessun candidato"
             "noConf" -> "manca la confidenza del match"
             else -> "motivo $reason"
@@ -239,6 +245,8 @@ object MatchFusion {
             ?: return AutoMatchDecision(accepted = false, reason = "noConf")
         val visual = top.visualScore
         val ocr = top.ocrScore ?: 0f
+        // giochi CardTrader: regole proprie (codice + immagine), mai la soglia generica di Magic/Pokémon
+        if (top.game in CT_GAMES) return evaluateCtCode(top, parsed, confidence, ocr, candidates)
         // A missing title is not agreement. Set+number alone must not autosave.
         val readAgrees = parsed?.let { frame ->
             FrameNameGate.confidentTitle(frame.nameGuess) != null &&
@@ -284,7 +292,78 @@ object MatchFusion {
         return when (top.game) {
             Game.POKEMON -> evaluatePokemonSoft(top, parsed, confidence, visual, ocr)
             Game.MTG -> evaluateMtgSoft(top, parsed, confidence, visual, ocr, candidates)
+            Game.RIFTBOUND -> evaluateRiftbound(top, parsed, confidence, ocr)
+            Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> evaluateCtCode(top, parsed, confidence, ocr, candidates)
+            Game.OTHER -> AutoMatchDecision(accepted = false, reason = "notScannable", confidence = confidence)
         }
+    }
+
+    /**
+     * One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: il codice stampato porta a UNA carta solo se su CardTrader
+     * non ci sono versioni con lo stesso codice (Alternate Art, promo). Il catalogo da' EXACT_SCORE solo in quel caso.
+     */
+    private fun evaluateCtCode(
+        top: IdentifiedCard,
+        parsed: ParsedCardText?,
+        confidence: Float,
+        ocr: Float,
+        candidates: List<IdentifiedCard>,
+    ): AutoMatchDecision {
+        val readCn = parsed?.collectorNumber?.takeIf { it.isNotBlank() }
+        val setOk = !parsed?.setCode.isNullOrBlank()
+        val cnOk = readCn != null &&
+            com.scantrader.app.data.catalog.CtGameCatalog.base(readCn) == com.scantrader.app.data.catalog.CtGameCatalog.base(top.collectorNumber)
+        fun decision(accepted: Boolean, reason: String) = AutoMatchDecision(
+            accepted = accepted, strict = accepted, reason = reason, cnOk = cnOk, setOk = setOk,
+            // la percentuale mostrata e confrontata con la soglia: la piu' forte fra codice e immagine
+            confidence = maxOf(confidence, if (accepted) (top.visualScore ?: 0f) else 0f),
+        )
+        // 1) codice letto e una sola carta con quel codice
+        if (setOk && cnOk && ocr >= com.scantrader.app.data.catalog.CtGameCatalog.EXACT_SCORE - 0.01f) return decision(true, "ctCode")
+        val visual = top.visualScore
+        val rival = candidates.filter { it.ctBlueprintId != top.ctBlueprintId }.maxOfOrNull { it.visualScore ?: 0f } ?: 0f
+        // 2) codice letto, piu' versioni: decide l'immagine se e' netta
+        if (cnOk && visual != null && visual >= CT_VISUAL_MIN && visual - rival >= CT_VISUAL_MARGIN) {
+            return decision(true, "ctCode+visual")
+        }
+        // 3) codice non letto: solo un'immagine molto netta
+        if (readCn == null && visual != null && visual >= CT_VISUAL_STRONG && visual - rival >= CT_VISUAL_MARGIN_STRONG) {
+            return decision(true, "ctVisual")
+        }
+        return decision(false, if (cnOk) "ctVariants (scegli la versione)" else if (readCn != null) "ctCodeMismatch" else "ctNoCode")
+    }
+
+    /** Giochi con il catalogo CardTrader. */
+    val CT_GAMES = setOf(Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA)
+    /** Somiglianza Milo con il codice letto e distacco dalla seconda versione (misurati sulla galleria One Piece). */
+    const val CT_VISUAL_MIN = 0.78f
+    const val CT_VISUAL_MARGIN = 0.05f
+    /** Senza codice: somiglianza e distacco dalla seconda carta. */
+    const val CT_VISUAL_STRONG = 0.86f
+    const val CT_VISUAL_MARGIN_STRONG = 0.08f
+
+    /**
+     * Riftbound: the bottom-left code (`OGN • 007a/298`) is one CardTrader blueprint, and the
+     * title is in the middle band (not read). An exact set + number read is the identity.
+     */
+    private fun evaluateRiftbound(
+        top: IdentifiedCard,
+        parsed: ParsedCardText,
+        confidence: Float,
+        ocr: Float,
+    ): AutoMatchDecision {
+        val setOk = !parsed.setCode.isNullOrBlank() && parsed.setCode.equals(top.setCode, ignoreCase = true)
+        val cnOk = com.scantrader.app.data.catalog.RiftboundCatalog.numberKey(parsed.collectorNumber)
+            ?.let { it == com.scantrader.app.data.catalog.RiftboundCatalog.numberKey(top.collectorNumber) } == true
+        val accepted = setOk && cnOk && ocr >= 0.95f
+        return AutoMatchDecision(
+            accepted = accepted,
+            strict = accepted,
+            reason = if (accepted) "riftboundCode" else "riftboundNoCode set=$setOk cn=$cnOk",
+            cnOk = cnOk,
+            setOk = setOk,
+            confidence = confidence,
+        )
     }
 
     /**

@@ -50,6 +50,7 @@ fun AppNav() {
                 onOpenCollection = { nav.navigate("collection/$it") },
                 onScan = { nav.navigate("scan?collectionId=") },
                 onSettings = { nav.navigate("settings") },
+                onTracker = { nav.navigate("tracker") },
                 onAbout = { nav.navigate("about") },
                 onShowOnboarding = {
                     nav.navigate("onboarding") { launchSingleTop = true }
@@ -137,6 +138,9 @@ fun AppNav() {
         composable("onboarding") {
             val vm: OnboardingViewModel = viewModel(factory = OnboardingViewModel.factory(app))
             OnboardingScreen(viewModel = vm, onDone = { nav.popBackStack() })
+        }
+        composable("tracker") {
+            com.scantrader.app.tracker.TrackerScreen(link = app.tracker, onBack = { nav.popBackStack() })
         }
         composable("about") {
             AboutScreen(onBack = { nav.popBackStack() })

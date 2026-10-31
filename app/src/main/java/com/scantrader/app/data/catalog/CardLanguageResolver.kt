@@ -36,6 +36,7 @@ class CardLanguageResolver(
         val (english, printed) = when (card.game) {
             Game.MTG -> mtgNames(card)
             Game.POKEMON -> pokemonNames(card)
+            Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> card.name to emptyMap<CardLanguage, String>() // catalogo solo inglese (CardTrader)
         }
         return CardLanguageDetector.explain(ocrName, english, printed, ocrText, pokemon)
     }

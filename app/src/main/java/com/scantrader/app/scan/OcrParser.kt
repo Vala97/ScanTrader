@@ -206,6 +206,18 @@ object OcrParser {
         if (game == Game.MTG) {
             return parseMtg(rawText, bottomPriorityText, namePriorityText)
         }
+        if (game == Game.RIFTBOUND) {
+            return parseRiftbound(rawText, bottomPriorityText)
+        }
+        if (game in CT_GAMES) {
+            val sources = listOfNotNull(bottomPriorityText?.takeIf { it.isNotBlank() }, rawText.takeIf { it.isNotBlank() })
+            val hit = sources.firstNotNullOfOrNull { ctCode(game, it) }
+            // nome: in alto per Yu-Gi-Oh! e Union Arena (serve a distinguere carte con lo stesso numero)
+            val name = if (game == Game.YUGIOH || game == Game.UNION_ARENA) {
+                namePriorityText?.lines()?.map { it.trim() }?.firstOrNull { it.length >= 3 && it.any(Char::isLetter) }
+            } else null
+            return ParsedCardText(nameGuess = name, collectorNumber = hit?.number, setCode = hit?.set, printedLang = hit?.lang)
+        }
         // Pokémon: bottom first, full card as weak fallback for the collector only.
         val bottomNormalized = bottomPriorityText
         val identityMerged = listOfNotNull(bottomPriorityText, rawText)
@@ -255,6 +267,127 @@ object OcrParser {
             setCode = extractSet(prepared, prepared, Game.MTG) ?: glued?.setCode,
             printedLang = glued?.lang,
         )
+    }
+
+    /**
+     * Riftbound prints its identity bottom-left: `OGN • 001/298`, alternate art `007a/298`,
+     * overnumbered showcase `299/298`, signed `299s/298`. The title sits in the middle band,
+     * not at the top, so the name is left to the catalog (set + number is one card).
+     */
+    private fun parseRiftbound(rawText: String, bottomPriorityText: String?): ParsedCardText {
+        val sources = listOfNotNull(bottomPriorityText?.takeIf { it.isNotBlank() }, rawText.takeIf { it.isNotBlank() })
+        for (src in sources) {
+            val hit = riftboundCode(src) ?: continue
+            return ParsedCardText(nameGuess = null, collectorNumber = hit.second, setCode = hit.first, setCardCount = hit.third)
+        }
+        // Only a number (`001/298`) without a readable set code.
+        for (src in sources) {
+            val m = riftboundNumberOnly.find(src) ?: continue
+            val num = riftboundNumber(m.groupValues[1]) ?: continue
+            return ParsedCardText(nameGuess = null, collectorNumber = num, setCode = null, setCardCount = riftboundDigits(m.groupValues[2])?.toIntOrNull())
+        }
+        return ParsedCardText(nameGuess = null, collectorNumber = null, setCode = null)
+    }
+
+    /** Giochi con il catalogo CardTrader per espansione (vedi CtGameCatalog). */
+    val CT_GAMES = setOf(Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA)
+
+    data class CtCode(val set: String, val number: String, val lang: String? = null)
+
+    private fun digits(raw: String) = raw.replace('O', '0').replace('o', '0').replace('I', '1').replace('l', '1').replace('|', '1')
+        .replace('S', '5').replace('B', '8').takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
+    private fun letters(raw: String) = raw.uppercase().replace('0', 'O').replace('1', 'I').replace('5', 'S').replace('8', 'B')
+
+    private val opCode = Regex("""(?<![A-Za-z0-9])(OP|0P|ST|5T|EB|E8|PRB|PR8)\s?([0-9OoIl]{2})\s?[-–—~]\s?([0-9OoIl]{3})(?![0-9])""", RegexOption.IGNORE_CASE)
+    private val opPromo = Regex("""(?<![A-Za-z0-9])P\s?[-–—]\s?([0-9OoIl]{3})(?![0-9])""")
+    private val dbsCode = Regex("""(?<![A-Za-z0-9])(FB|F8|FS|F5|EB|E8|SB|58)\s?([0-9OoIl]{2})\s?[-–—~]\s?([0-9OoIl]{2,3})(?![0-9])""", RegexOption.IGNORE_CASE)
+    private val ygoCode = Regex("""(?<![A-Za-z0-9])([A-Z0-9]{2,4})\s?[-–—]\s?(EN|IT|DE|FR|SP|ES|PT|JP|KR|E|I|G|F|S|P)?\s?([A-Z]?[0-9OoIl]{2,3})(?![0-9])""")
+    private val uaCode = Regex("""(?<![A-Za-z0-9])(U[A-Z0-9][0-9OoIl]{2}[A-Z0-9]{2,3})\s?/\s?([A-Z0-9]{2,5})\s?[-–—]\s?([0-9OoIl])\s?[-–—]\s?([0-9OoIl]{3})(?![0-9])""")
+    private val YGO_LANG = mapOf("EN" to "en", "E" to "en", "IT" to "it", "I" to "it", "DE" to "de", "G" to "de", "FR" to "fr", "F" to "fr", "SP" to "es", "ES" to "es", "S" to "es", "PT" to "pt", "P" to "pt", "JP" to "jp", "KR" to "kr")
+
+    /**
+     * Codice stampato -> espansione CardTrader e numero come lo scrive CardTrader.
+     * One Piece `OP02-013` / `ST10-014` / `EB01-001` (basso a destra); Dragon Ball Fusion World `FB02-075` /
+     * `FS03-14` (basso a destra); Yu-Gi-Oh! `POTD-EN003` (sotto il disegno: espansione, lingua, numero `003`);
+     * Union Arena `UE20BT/TSK-2-001` (basso a sinistra; numero CardTrader `UE20BT-001`).
+     */
+    fun ctCode(game: Game, text: String): CtCode? {
+        when (game) {
+            Game.ONE_PIECE -> {
+                opCode.find(text)?.let { m ->
+                    val pre = letters(m.groupValues[1]).replace("PRB", "PRB")
+                    val a = digits(m.groupValues[2]) ?: return@let; val b = digits(m.groupValues[3]) ?: return@let
+                    return CtCode((pre + a).lowercase(), "$pre$a-$b")
+                }
+                opPromo.find(text)?.let { m -> digits(m.groupValues[1])?.let { return CtCode("promo", "P-$it") } }
+            }
+            Game.DRAGON_BALL -> dbsCode.find(text)?.let { m ->
+                val pre = letters(m.groupValues[1]); val a = digits(m.groupValues[2]) ?: return null; val b = digits(m.groupValues[3]) ?: return null
+                return CtCode((pre + a).lowercase(), "$pre$a-$b")
+            }
+            Game.YUGIOH -> for (withLang in listOf(true, false)) for (m in ygoCode.findAll(text)) {
+                // prima i codici con la lingua (POTD-EN003), poi quelli vecchi senza (LOB-001)
+                if (withLang != m.groupValues[2].isNotEmpty()) continue
+                val set = m.groupValues[1]; if (set.none(Char::isLetter) || set.length < 3) continue
+                if (Regex("""^(ATK|DEF|LP)$""").matches(set)) continue
+                val num = m.groupValues[3]
+                // A01 / B12 (lettera vera) ma ENOO3 = EN 003: O, I e l in testa sono cifre lette male
+                val n = if (num.first().isLetter() && num.first() !in "OIl") num.first() + (digits(num.drop(1)) ?: continue) else digits(num) ?: continue
+                if (!withLang && n.first().isLetter()) continue
+                return CtCode(set.lowercase(), n, YGO_LANG[m.groupValues[2].uppercase()])
+            }
+            Game.UNION_ARENA -> uaCode.find(text)?.let { m ->
+                val set = m.groupValues[1].uppercase(); val n = digits(m.groupValues[4]) ?: return null
+                return CtCode(set.lowercase(), "$set-$n")
+            }
+            else -> {}
+        }
+        return null
+    }
+
+    /** Set codes CardTrader uses for Riftbound (lowercase). */
+    val RIFTBOUND_SETS = setOf(
+        "ogn", "ogs", "sfd", "unl", "ven", "rad", "arc", "lgc", "pg2", "rec", "t1s",
+        "op", "jdg", "nnp",
+    )
+
+    private val riftboundCodeRx = Regex(
+        """(?<![A-Za-z0-9])([A-Za-z0-9]{2,3})\s*[•·∙●.,:;*~|\-–—]?\s*([0-9OoIl|]{1,3}[asAS]?)\s*[/\\]\s*([0-9OoIl|]{2,3})(?![0-9])""",
+    )
+    private val riftboundNumberOnly = Regex("""(?<![0-9A-Za-z])([0-9OoIl|]{1,3}[asAS]?)\s*/\s*([0-9OoIl|]{3})(?![0-9])""")
+
+    /** Returns (set code, collector number, printed set size) or null. */
+    fun riftboundCode(text: String): Triple<String, String, Int?>? {
+        for (m in riftboundCodeRx.findAll(text)) {
+            val code = riftboundSet(m.groupValues[1]) ?: continue
+            val num = riftboundNumber(m.groupValues[2]) ?: continue
+            return Triple(code, num, riftboundDigits(m.groupValues[3])?.toIntOrNull())
+        }
+        return null
+    }
+
+    /** OCR swaps letters and digits in the code (`0GN`, `SFO`): keep the reading that is a real set. */
+    private fun riftboundSet(raw: String): String? {
+        val r = raw.lowercase()
+        if (r in RIFTBOUND_SETS) return r
+        val variants = listOf(
+            r.replace('0', 'o'), r.replace('o', '0'), r.replace('1', 'i'), r.replace('5', 's'),
+            r.replace('8', 'b'), r.replace("sfo", "sfd"), r.replace('0', 'o').replace("sfo", "sfd"),
+        )
+        return variants.firstOrNull { it in RIFTBOUND_SETS }
+    }
+
+    private fun riftboundDigits(raw: String): String? =
+        raw.replace('O', '0').replace('o', '0').replace('I', '1').replace('l', '1').replace('|', '1')
+            .takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
+
+    /** `0O7a` → `007a`, `299S` → `299s`. Three digits like CardTrader. */
+    private fun riftboundNumber(raw: String): String? {
+        val suffix = raw.last().lowercaseChar().takeIf { it == 'a' || it == 's' }
+        val digits = riftboundDigits(if (suffix != null) raw.dropLast(1) else raw) ?: return null
+        val n = digits.toIntOrNull() ?: return null
+        if (n == 0) return null
+        return n.toString().padStart(3, '0') + (suffix?.toString() ?: "")
     }
 
     /** `1993-2008` / `1993-20O8`, including when OCR glues a digit in front (`01993-20O8`). */
