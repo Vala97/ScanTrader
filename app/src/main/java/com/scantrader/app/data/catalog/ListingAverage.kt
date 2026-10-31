@@ -10,6 +10,11 @@ data class MarketListing(
     val language: String? = null,
     val condition: String? = null,
     val foil: Boolean? = null,
+    val graded: Boolean = false,
+    val signed: Boolean = false,
+    val altered: Boolean = false,
+    val onVacation: Boolean = false,
+    val quantity: Int = 1,
 )
 
 data class PriceQuote(
@@ -19,31 +24,43 @@ data class PriceQuote(
 )
 
 /**
- * Average of marketplace listings. Prefer rows that match language, condition
- * and foil together. If that filter is empty, average every positive listing.
+ * Cheapest marketplace listing for one language, condition, and finish.
+ * A missing foil flag is a normal copy. Another language is never mixed in:
+ * a €10,000 listing must not move the price of a card that sells at €0.11.
  */
 object ListingAverage {
-    fun average(
+    fun best(
         listings: List<MarketListing>,
         language: String?,
         condition: String?,
         foil: Boolean?,
     ): PriceQuote? {
-        val positive = listings.filter { it.cents > 0 && it.currency.isNotBlank() }
-        if (positive.isEmpty()) return null
-        val matched = positive.filter { listing ->
-            matches(listing.language, language) &&
+        val matched = listings.filter { listing ->
+            listing.cents > 0 &&
+                listing.currency.isNotBlank() &&
+                listing.quantity > 0 &&
+                matches(listing.language, language) &&
                 matches(listing.condition, condition) &&
-                (foil == null || listing.foil == foil)
+                foilMatches(listing.foil, foil)
         }
-        val used = matched.ifEmpty { positive }
+        if (matched.isEmpty()) return null
+        val clean = matched.filter { !it.graded && !it.signed && !it.altered && !it.onVacation }
+        val used = clean.ifEmpty { matched }
         val currency = used.groupingBy { it.currency.uppercase() }.eachCount().maxBy { it.value }.key
-        val same = used.filter { it.currency.equals(currency, ignoreCase = true) }
-        val amount = BigDecimal(same.sumOf { it.cents })
-            .divide(BigDecimal(same.size * 100L), 2, RoundingMode.HALF_UP)
+        val cheapest = used.filter { it.currency.equals(currency, ignoreCase = true) }.minBy { it.cents }
+        val amount = BigDecimal(cheapest.cents)
+            .divide(BigDecimal(100), 2, RoundingMode.HALF_UP)
             .toPlainString()
         return PriceQuote(amount = amount, currency = currency, source = "CardTrader")
     }
+
+    /** Drop a price that belonged to another language or condition. */
+    fun unavailable(card: IdentifiedCard): IdentifiedCard = card.copy(
+        priceEur = null,
+        priceEurFoil = null,
+        priceCurrency = null,
+        priceSource = null,
+    )
 
     /**
      * Euro amount already stored on the card. USD is never shown.
@@ -74,6 +91,13 @@ object ListingAverage {
     private fun matches(actual: String?, wanted: String?): Boolean {
         if (wanted.isNullOrBlank()) return true
         return actual.equals(wanted, ignoreCase = true)
+    }
+
+    /** One Piece listings have no foil field. That is a non-foil copy. */
+    private fun foilMatches(actual: Boolean?, wanted: Boolean?): Boolean {
+        if (wanted == null) return true
+        if (actual == null) return !wanted
+        return actual == wanted
     }
 
     private fun positive(raw: String?): String? {

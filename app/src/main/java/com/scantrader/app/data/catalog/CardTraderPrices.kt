@@ -11,7 +11,7 @@ import com.scantrader.app.network.cardtrader.CtExpansion
 import com.scantrader.app.network.cardtrader.CtProduct
 
 /**
- * Marketplace average for one print. No token means no call: the caller keeps Scryfall.
+ * Cheapest CardTrader listing for one language and condition. No token means no call.
  * Expansions and blueprints stay in memory; listings are read each time.
  */
 class CardTraderPrices(
@@ -29,36 +29,57 @@ class CardTraderPrices(
         extraScryfallIds: List<String> = emptyList(),
     ): PriceQuote? {
         if (token()?.isBlank() != false) return null
-        if (card.game == Game.RIFTBOUND || (card.game != Game.MTG && card.ctBlueprintId != null)) return riftboundQuote(card, language, condition, foil)
+        if (card.game == Game.RIFTBOUND || (card.game != Game.MTG && card.ctBlueprintId != null)) {
+            val id = card.ctBlueprintId ?: return null
+            return quoteListings(id, card.game, language, condition, foil, "CardTrader price failed")
+        }
         if (card.game != Game.MTG) return null
         return runCatching {
             val expansionId = CardTraderCatalog.expansionId(loadExpansions(), card.setCode) ?: return null
             val prints = blueprints.getOrPut(expansionId) { api.blueprints(expansionId) }
             val ids = (listOfNotNull(card.scryfallId) + extraScryfallIds).distinct()
             val blueprintId = CardTraderCatalog.blueprintId(prints, ids) ?: return null
-            val products = api.products(blueprintId).values.flatten()
-            ListingAverage.average(
-                listings = products.map { it.toListing() },
-                language = language.cardTraderLang(),
-                condition = if (condition == CardCondition.DAMAGED) "Poor" else condition.csvValue,
-                foil = foil,
-            )
+            quoteListings(blueprintId, card.game, language, condition, foil, "CardTrader price failed")
         }.onFailure {
             com.scantrader.app.scan.ScanDebug.w("CardTrader price failed", it)
         }.getOrNull()
     }
 
-    /** Riftbound: the blueprint id comes with the catalog hit, so the listings are one call. */
-    private suspend fun riftboundQuote(card: IdentifiedCard, language: CardLanguage, condition: CardCondition, foil: Boolean): PriceQuote? {
-        val id = card.ctBlueprintId ?: return null
-        return runCatching {
-            ListingAverage.average(
-                listings = api.products(id).values.flatten().map { it.toListing() },
-                language = language.cardTraderLang(),
-                condition = if (condition == CardCondition.DAMAGED) "Poor" else condition.csvValue,
-                foil = foil,
-            )
-        }.onFailure { com.scantrader.app.scan.ScanDebug.w("CardTrader Riftbound price failed", it) }.getOrNull()
+    /**
+     * Asks CardTrader for that language. Foil is sent only when the game has a foil
+     * property; otherwise `foil=false` comes back empty and the price disappears.
+     */
+    private suspend fun quoteListings(
+        blueprintId: Int,
+        game: Game,
+        language: CardLanguage,
+        condition: CardCondition,
+        foil: Boolean,
+        failure: String,
+    ): PriceQuote? = runCatching {
+        val lang = language.cardTraderLang()
+        val conditionName = if (condition == CardCondition.DAMAGED) "Poor" else condition.csvValue
+        val forLanguage = ListingAverage.best(
+            listings = loadRows(blueprintId, game, lang, foil).map { it.toListing() },
+            language = lang,
+            condition = conditionName,
+            foil = foil,
+        )
+        if (forLanguage != null) return@runCatching forLanguage
+        // No copy in that language: the base price is the cheapest listing of the card.
+        ListingAverage.best(
+            listings = loadRows(blueprintId, game, null, foil).map { it.toListing() },
+            language = null,
+            condition = conditionName,
+            foil = foil,
+        )
+    }.onFailure { com.scantrader.app.scan.ScanDebug.w(failure, it) }.getOrNull()
+
+    private suspend fun loadRows(blueprintId: Int, game: Game, language: String?, foil: Boolean): List<CtProduct> {
+        if (!game.foilChoice) return api.products(blueprintId, language).values.flatten()
+        val filtered = api.products(blueprintId, language, foil).values.flatten()
+        if (filtered.isNotEmpty()) return filtered
+        return api.products(blueprintId, language).values.flatten()
     }
 
     private suspend fun loadExpansions(): List<CtExpansion> {
@@ -74,5 +95,10 @@ class CardTraderPrices(
         language = properties?.mtgLanguage ?: properties?.pokemonLanguage ?: properties?.riftboundLanguage ?: properties?.otherLanguage(),
         condition = properties?.condition,
         foil = properties?.mtgFoil ?: properties?.riftboundFoil,
+        graded = graded,
+        signed = properties?.signed == true,
+        altered = properties?.altered == true,
+        onVacation = onVacation,
+        quantity = quantity,
     )
 }

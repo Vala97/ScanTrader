@@ -38,7 +38,7 @@ class RiftboundCatalog(
     private data class Stored(val at: Long = 0, val entries: List<Entry> = emptyList())
 
     class NoTokenException : IllegalStateException(
-        "Per Riftbound serve il token API di CardTrader: inseriscilo in Impostazioni.",
+        "Serve il token API di CardTrader in Impostazioni. Senza, One Piece e Riftbound non trovano le carte.",
     )
 
     private val gson = Gson()

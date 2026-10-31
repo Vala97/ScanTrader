@@ -376,9 +376,9 @@ private fun CardTraderTokenField(
     Text("Token API CardTrader")
     Text(
         if (saved) {
-            "Token salvato sul telefono, cifrato. Il prezzo Magic è la media CardTrader. Senza token resta Scryfall in euro."
+            "Token salvato sul telefono, cifrato. One Piece e Riftbound trovano le carte solo con questo token. Il prezzo Magic è la media CardTrader."
         } else {
-            "Senza token il prezzo Magic è solo Scryfall in euro: nessuna chiamata a CardTrader. Con un token si usa la media delle inserzioni. Il token non esce dal telefono."
+            "One Piece e Riftbound non trovano le carte senza questo token. Il prezzo Magic, senza token, resta Scryfall in euro. Il token non esce dal telefono."
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,

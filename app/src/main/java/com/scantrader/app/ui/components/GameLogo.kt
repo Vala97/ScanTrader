@@ -25,7 +25,12 @@ fun GameLogo(
     val res = when (game) {
         Game.MTG -> R.drawable.logo_magic
         Game.POKEMON -> R.drawable.logo_pokemon
-        Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> null // nessun logo ufficiale nel progetto: solo il nome
+        Game.RIFTBOUND -> R.drawable.logo_riftbound
+        Game.ONE_PIECE -> R.drawable.logo_onepiece
+        Game.DRAGON_BALL -> R.drawable.logo_fusionworld
+        Game.YUGIOH -> R.drawable.logo_yugioh
+        Game.UNION_ARENA -> R.drawable.logo_unionarena
+        Game.OTHER -> null
     }
     if (res == null) {
         Box(modifier.semantics { contentDescription?.let { this.contentDescription = it } }, contentAlignment = Alignment.Center) {

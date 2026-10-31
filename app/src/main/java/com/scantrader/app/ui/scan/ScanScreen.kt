@@ -152,6 +152,14 @@ fun ScanScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val processing by viewModel.processing.collectAsStateWithLifecycle()
     val game by viewModel.game.collectAsStateWithLifecycle()
+    val hasCardTraderToken by viewModel.hasCardTraderToken.collectAsStateWithLifecycle()
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshCardTraderToken()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val autoScan by viewModel.autoScan.collectAsStateWithLifecycle()
     val autoStatus by viewModel.autoStatus.collectAsStateWithLifecycle()
@@ -557,6 +565,10 @@ fun ScanScreen(
                         when (game) {
                             Game.POKEMON ->
                                 "Inquadra tutta la carta · n° in basso a SX (moderni) o a DX (Base/Rocket/EX–XY)"
+                            Game.ONE_PIECE ->
+                                "Inquadra tutta la carta · codice in basso a destra (OP02-013)"
+                            Game.RIFTBOUND ->
+                                "Inquadra tutta la carta · codice in basso a sinistra (OGN • 001/298)"
                             else ->
                                 "Inquadra tutta la carta · numero in basso"
                         },
@@ -587,6 +599,14 @@ fun ScanScreen(
                 Text(
                     "Pack Magic non installato · riconoscimento solo con OCR",
                     color = FrameAccent.copy(alpha = 0.75f),
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+            if ((game == Game.ONE_PIECE || game == Game.RIFTBOUND) && !hasCardTraderToken) {
+                Text(
+                    "Serve il token CardTrader in Impostazioni: senza, questo gioco non trova le carte.",
+                    color = FrameAccent,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )

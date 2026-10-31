@@ -298,7 +298,7 @@ object OcrParser {
         .replace('S', '5').replace('B', '8').takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
     private fun letters(raw: String) = raw.uppercase().replace('0', 'O').replace('1', 'I').replace('5', 'S').replace('8', 'B')
 
-    private val opCode = Regex("""(?<![A-Za-z0-9])(OP|0P|ST|5T|EB|E8|PRB|PR8)\s?([0-9OoIl]{2})\s?[-–—~]\s?([0-9OoIl]{3})(?![0-9])""", RegexOption.IGNORE_CASE)
+    private val opCode = Regex("""(?<![A-Za-z0-9])(OP|0P|ST|5T|EB|E8|PRB|PR8)\s?([0-9OoIl]{2})\s?[-–—~]?\s?([0-9OoIl]{3})(?![0-9])""", RegexOption.IGNORE_CASE)
     private val opPromo = Regex("""(?<![A-Za-z0-9])P\s?[-–—]\s?([0-9OoIl]{3})(?![0-9])""")
     private val dbsCode = Regex("""(?<![A-Za-z0-9])(FB|F8|FS|F5|EB|E8|SB|58)\s?([0-9OoIl]{2})\s?[-–—~]\s?([0-9OoIl]{2,3})(?![0-9])""", RegexOption.IGNORE_CASE)
     private val ygoCode = Regex("""(?<![A-Za-z0-9])([A-Z0-9]{2,4})\s?[-–—]\s?(EN|IT|DE|FR|SP|ES|PT|JP|KR|E|I|G|F|S|P)?\s?([A-Z]?[0-9OoIl]{2,3})(?![0-9])""")

@@ -56,6 +56,18 @@ fun releaseKeystore(): Map<String, String>? {
 }
 
 val releaseSigning = releaseKeystore()
+
+/** Token CardTrader di questa build. Sta in `local.properties` (ignorato da git), non nel sorgente. */
+val cardTraderToken = run {
+    val local = Properties()
+    val localFile = rootProject.file("local.properties")
+    if (localFile.isFile) localFile.inputStream().use { local.load(it) }
+    (local.getProperty("cardtrader.token") ?: findProperty("scantrader.cardTraderToken") as? String)
+        ?.trim()
+        .orEmpty()
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+}
 val githubSelfUpdate = (findProperty("scantrader.githubSelfUpdate") as? String)
     ?.equals("false", ignoreCase = true)
     ?.not()
@@ -75,6 +87,7 @@ android {
         buildConfigField("boolean", "GITHUB_SELF_UPDATE", githubSelfUpdate.toString())
         // Gallerie visive dei giochi CardTrader (`<indirizzo><gioco>.stcat`). Vuoto: nessuna galleria scaricata.
         buildConfigField("String", "CT_GALLERY_URL", "\"" + (project.findProperty("scantrader.ctGalleryUrl") ?: "") + "\"")
+        buildConfigField("String", "CARDTRADER_TOKEN", "\"$cardTraderToken\"")
     }
 
     signingConfigs {

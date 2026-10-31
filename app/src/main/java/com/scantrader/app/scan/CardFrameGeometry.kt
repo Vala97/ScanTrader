@@ -204,7 +204,7 @@ object CardFrameGeometry {
      * Yu-Gi-Oh! `YGLD-ENG01` sotto il disegno a destra (~73%), Union Arena `UE20BT/TSK-1-090` in basso a sinistra (~97%).
      */
     fun ctCodeRegion(game: com.scantrader.app.data.model.Game): FloatArray? = when (game) {
-        com.scantrader.app.data.model.Game.ONE_PIECE -> floatArrayOf(0.50f, 0.89f, 1f, 1f)
+        com.scantrader.app.data.model.Game.ONE_PIECE -> floatArrayOf(0.50f, 0.80f, 1f, 1f)
         com.scantrader.app.data.model.Game.DRAGON_BALL -> floatArrayOf(0.55f, 0.83f, 1f, 1f)
         com.scantrader.app.data.model.Game.YUGIOH -> floatArrayOf(0.40f, 0.68f, 1f, 0.81f)
         com.scantrader.app.data.model.Game.UNION_ARENA -> floatArrayOf(0f, 0.89f, 0.55f, 1f)

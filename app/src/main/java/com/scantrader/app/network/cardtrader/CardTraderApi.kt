@@ -11,9 +11,17 @@ interface CardTraderApi {
     @GET("blueprints/export")
     suspend fun blueprints(@Query("expansion_id") expansionId: Int): List<CtBlueprint>
 
-    /** Keys are blueprint ids. Each value is the cheapest listings (up to 25). */
+    /**
+     * Keys are blueprint ids. [language] is a CardTrader code (`en`, `fr`, `jp`).
+     * [foil] is only for games that have a foil property: on One Piece `foil=false`
+     * returns nothing, because those listings have no foil field.
+     */
     @GET("marketplace/products")
-    suspend fun products(@Query("blueprint_id") blueprintId: Int): Map<String, List<CtProduct>>
+    suspend fun products(
+        @Query("blueprint_id") blueprintId: Int,
+        @Query("language") language: String? = null,
+        @Query("foil") foil: Boolean? = null,
+    ): Map<String, List<CtProduct>>
 }
 
 data class CtExpansion(
@@ -38,6 +46,9 @@ data class CtProduct(
     val id: Long = 0,
     @SerializedName("blueprint_id") val blueprintId: Long = 0,
     val price: CtMoney? = null,
+    val quantity: Int = 1,
+    val graded: Boolean = false,
+    @SerializedName("on_vacation") val onVacation: Boolean = false,
     @SerializedName("properties_hash") val properties: CtProperties? = null,
 )
 
@@ -48,6 +59,8 @@ data class CtMoney(
 
 data class CtProperties(
     val condition: String? = null,
+    val signed: Boolean? = null,
+    val altered: Boolean? = null,
     @SerializedName("mtg_language") val mtgLanguage: String? = null,
     @SerializedName("mtg_foil") val mtgFoil: Boolean? = null,
     @SerializedName("pokemon_language") val pokemonLanguage: String? = null,

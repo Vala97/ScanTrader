@@ -12,7 +12,9 @@ import com.scantrader.app.network.cardtrader.CardTraderApi
 import com.scantrader.app.network.cardtrader.CardTraderCatalog
 import com.scantrader.app.network.cardtrader.CtBlueprint
 import com.scantrader.app.network.cardtrader.CtExpansion
+import com.scantrader.app.network.cardtrader.CtMoney
 import com.scantrader.app.network.cardtrader.CtProduct
+import com.scantrader.app.network.cardtrader.CtProperties
 import com.google.gson.Gson
 import com.scantrader.app.network.scryfall.ScryfallCard
 import kotlinx.coroutines.runBlocking
@@ -22,32 +24,64 @@ import org.junit.Test
 
 class ListingAverageTest {
     @Test
-    fun averagesMatchingLanguageConditionAndFoil() {
+    fun cheapestMatchingLanguageConditionAndFoil() {
         val listings = listOf(
             MarketListing(100, "EUR", "it", "Near Mint", false),
             MarketListing(300, "EUR", "it", "Near Mint", false),
             MarketListing(900, "EUR", "en", "Near Mint", false),
             MarketListing(50, "EUR", "it", "Near Mint", true),
         )
-        val quote = ListingAverage.average(listings, language = "it", condition = "Near Mint", foil = false)
-        assertEquals("2.00", quote?.amount)
+        val quote = ListingAverage.best(listings, language = "it", condition = "Near Mint", foil = false)
+        assertEquals("1.00", quote?.amount)
         assertEquals("EUR", quote?.currency)
         assertEquals("CardTrader", quote?.source)
     }
 
     @Test
-    fun usesEveryListingWhenTheFilterMatchesNothing() {
+    fun anotherLanguageDoesNotFillThePrice() {
         val listings = listOf(
-            MarketListing(100, "EUR", "en", "Near Mint", false),
-            MarketListing(300, "EUR", "fr", "Played", false),
+            MarketListing(11, "EUR", "en", "Near Mint", foil = null),
+            MarketListing(13, "EUR", "fr", "Near Mint", foil = null),
+            MarketListing(1_000_064, "EUR", "en", "Near Mint", foil = null),
         )
-        val quote = ListingAverage.average(listings, language = "it", condition = "Near Mint", foil = false)
-        assertEquals("2.00", quote?.amount)
+        assertEquals("0.13", ListingAverage.best(listings, "fr", "Near Mint", false)?.amount)
+        assertEquals("0.11", ListingAverage.best(listings, "en", "Near Mint", false)?.amount)
+        assertNull(ListingAverage.best(listings, "it", "Near Mint", false))
     }
 
     @Test
-    fun emptyListHasNoAverage() {
-        assertNull(ListingAverage.average(emptyList(), "it", "Near Mint", false))
+    fun basePriceIsTheCheapestWhenThatLanguageHasNoCopy() = runBlocking {
+        val api = object : CardTraderApi {
+            override suspend fun expansions(): List<CtExpansion> = emptyList()
+            override suspend fun blueprints(expansionId: Int): List<CtBlueprint> = emptyList()
+            override suspend fun products(blueprintId: Int, language: String?, foil: Boolean?): Map<String, List<CtProduct>> {
+                if (language == "it") return emptyMap()
+                return mapOf(
+                    "1" to listOf(
+                        listing(11, "en"),
+                        listing(13, "fr"),
+                        listing(1_000_064, "en"),
+                    ),
+                )
+            }
+        }
+        val card = IdentifiedCard(
+            game = Game.ONE_PIECE,
+            name = "Don Marlon",
+            setCode = "op17",
+            setName = "OP-17",
+            collectorNumber = "OP17-052",
+            ctBlueprintId = 1,
+        )
+        val prices = CardTraderPrices(api) { "token" }
+        assertEquals("0.11", prices.quote(card, CardLanguage.ITALIAN, CardCondition.NEAR_MINT, false)?.amount)
+        assertEquals("0.13", prices.quote(card, CardLanguage.FRENCH, CardCondition.NEAR_MINT, false)?.amount)
+        assertEquals("0.11", prices.quote(card, CardLanguage.ENGLISH, CardCondition.NEAR_MINT, false)?.amount)
+    }
+
+    @Test
+    fun emptyListHasNoPrice() {
+        assertNull(ListingAverage.best(emptyList(), "it", "Near Mint", false))
     }
 
     @Test
@@ -96,7 +130,7 @@ class ListingAverageTest {
                 error("no token")
             }
 
-            override suspend fun products(blueprintId: Int): Map<String, List<CtProduct>> {
+            override suspend fun products(blueprintId: Int, language: String?, foil: Boolean?): Map<String, List<CtProduct>> {
                 calls++
                 error("no token")
             }
@@ -117,6 +151,11 @@ class ListingAverageTest {
         )
         assertEquals(0, calls)
     }
+
+    private fun listing(cents: Int, language: String) = CtProduct(
+        price = CtMoney(cents = cents, currency = "EUR"),
+        properties = CtProperties(condition = "Near Mint", onepieceLanguage = language),
+    )
 
     @Test
     fun blueprintMatchesScryfallIdInsideTheExpansion() {

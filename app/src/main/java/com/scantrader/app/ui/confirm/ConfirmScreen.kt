@@ -406,7 +406,7 @@ fun ConfirmScreen(
                             }
                         }
                         Text(
-                            text = priceLine?.let { "Prezzo medio: $it" } ?: "Prezzo medio: n/d",
+                            text = priceLine?.let { "Miglior prezzo: $it" } ?: "Miglior prezzo: n/d",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium,

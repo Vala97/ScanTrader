@@ -522,6 +522,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         guideViewHeight.value = height
     }
 
+    val hasCardTraderToken = MutableStateFlow(app.secrets.hasCardTraderToken())
+
+    fun refreshCardTraderToken() {
+        hasCardTraderToken.value = app.secrets.hasCardTraderToken()
+    }
+
     fun setGame(value: Game) {
         game.value = value
         app.scanSession.game = value
@@ -774,6 +780,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     autoHitPending.set(true)
                     autoStatus.value = "Carta trovata"
                     onHit()
+                } else if (app.scanSession.errorMessage?.contains("token API") == true) {
+                    autoStatus.value = app.scanSession.errorMessage
                 } else when (autoHold) {
                     AutoHold.BUSY -> autoStatus.value = "Scryfall occupato, riprovo…"
                     AutoHold.SPECULATIVE -> autoStatus.value = "Analisi in corso…"
@@ -887,7 +895,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     // Vintage Pokémon prints the collector on the bottom-right. Read it with the title.
                     val brJob = async {
                         if (ctCorner != null) {
-                            runCatching { app.ocr.recognize(ctCorner, enhance = true) }.getOrDefault("")
+                            runCatching { app.ocr.recognize(ctCorner, enhance = true, enhanceScale = 4f) }.getOrDefault("")
                         } else if (!readRight || (!autoMode && isPokemon)) {
                             ""
                         } else {
@@ -1236,8 +1244,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 if (acceptedLock.key != null) return@withContext false
                 app.scanSession.resetResults()
                 app.scanSession.game = game.value
-                app.scanSession.errorMessage =
-                    "Nessun testo letto. Inquadra tutta la carta, soprattutto il basso a sinistra (numero + set)."
+                app.scanSession.errorMessage = missedCodeMessage()
                 return@withContext false
             }
 
@@ -1258,6 +1265,25 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 )
             }
             if (autoMode) duplicateGuard.observe(parsed)
+            // One Piece e Riftbound: il codice è piccolo. Un frame stabile che non lo rilegge
+            // tiene l'ultimo codice, così il catalogo parte lo stesso. Un movimento azzera il codice.
+            if (autoMode && codeIdentityGame() && parsed.collectorNumber.isNullOrBlank()) {
+                val prev = catalogDebounce.votedFrame()
+                val cn = prev?.collectorNumber?.takeIf { it.isNotBlank() }
+                val set = prev?.setCode?.takeIf { it.isNotBlank() }
+                val sameSet = parsed.setCode.isNullOrBlank() || set == null ||
+                    parsed.setCode.equals(set, ignoreCase = true)
+                if (cn != null && sameSet) {
+                    parsed = parsed.copy(
+                        collectorNumber = cn,
+                        setCode = parsed.setCode ?: set,
+                        setCardCount = parsed.setCardCount ?: prev?.setCardCount,
+                    )
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "code held cn=${parsed.collectorNumber} set=${parsed.setCode}",
+                    )
+                }
+            }
             val debounceFrame = com.scantrader.app.data.catalog.CatalogQueryDebounce.Frame(
                 name = parsed.nameGuess,
                 collectorNumber = parsed.collectorNumber,
@@ -1650,15 +1676,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             app.scanSession.autoMatch = gate
             app.scanSession.autoMatchCardKey = topKey
             if (candidates.isEmpty() && text.isBlank() && bottomText.isBlank()) {
-                app.scanSession.errorMessage =
-                    "Nessun testo letto. Inquadra tutta la carta, soprattutto il basso a sinistra (numero + set)."
+                app.scanSession.errorMessage = missedCodeMessage()
             } else if (candidates.isEmpty() && game.value == Game.RIFTBOUND && app.riftbound.lastError != null) {
                 app.scanSession.errorMessage = app.riftbound.lastError
             } else if (candidates.isEmpty() && app.ctGames[game.value]?.lastError != null) {
                 app.scanSession.errorMessage = app.ctGames[game.value]?.lastError
             } else if (candidates.isEmpty()) {
-                app.scanSession.errorMessage =
-                    "Carta non trovata. Verifica numero e set in basso a sinistra, oppure cerca manualmente."
+                app.scanSession.errorMessage = notFoundMessage()
             } else {
                 app.scanSession.errorMessage = null
             }
@@ -1667,6 +1691,27 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             if (requireMatch) acceptAuto || chooseVersion else true
         }
+    }
+
+    private fun codeIdentityGame(): Boolean =
+        game.value == Game.ONE_PIECE || game.value == Game.RIFTBOUND
+
+    private fun missedCodeMessage(): String = when (game.value) {
+        Game.ONE_PIECE ->
+            "Nessun codice letto. Inquadra tutta la carta, soprattutto il basso a destra (OP02-013)."
+        Game.RIFTBOUND ->
+            "Nessun codice letto. Inquadra tutta la carta, soprattutto il basso a sinistra (OGN • 001/298)."
+        else ->
+            "Nessun testo letto. Inquadra tutta la carta, soprattutto il basso a sinistra (numero + set)."
+    }
+
+    private fun notFoundMessage(): String = when (game.value) {
+        Game.ONE_PIECE ->
+            "Carta non trovata. Controlla il codice in basso a destra e il token CardTrader in Impostazioni."
+        Game.RIFTBOUND ->
+            "Carta non trovata. Controlla il codice in basso a sinistra e il token CardTrader in Impostazioni."
+        else ->
+            "Carta non trovata. Verifica numero e set in basso a sinistra, oppure cerca manualmente."
     }
 
     private fun catalogIdentity(parsed: ParsedCardText): String =
@@ -1699,7 +1744,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         lastLuma = luma
         lastLumaAtMs = now
         val reason = FrameGate.skipReason(blur, motion, since) ?: return false
-        if (reason == "motion") duplicateGuard.noteSceneChanged()
+        if (reason == "motion") {
+            duplicateGuard.noteSceneChanged()
+            if (codeIdentityGame()) catalogDebounce.reset()
+        }
         autoHold = AutoHold.UNSTABLE
         logTiming("skip-$reason", 0, 0, now - startedAt)
         return true
@@ -1891,8 +1939,8 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     /**
-     * Pokémon keeps its Cardmarket EUR. Magic uses a CardTrader average only when
-     * a token is saved; otherwise, and when that average is missing, Scryfall EUR
+     * Pokémon keeps its Cardmarket EUR. Magic uses the cheapest CardTrader listing
+     * for the chosen language when a token is saved; otherwise Scryfall EUR
      * (exact printing, then English same set/number, then cheapest recent print).
      */
     suspend fun proposePrice(
@@ -1903,7 +1951,11 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     ): IdentifiedCard {
         if (card.game == Game.RIFTBOUND || card.ctBlueprintId != null) {
             val market = runCatching { app.cardTraderPrices.quote(card, language, condition, foil) }.getOrNull()
-            return if (market != null) com.scantrader.app.data.catalog.ListingAverage.apply(card, market, foil) else card
+            return if (market != null) {
+                com.scantrader.app.data.catalog.ListingAverage.apply(card, market, foil)
+            } else {
+                com.scantrader.app.data.catalog.ListingAverage.unavailable(card)
+            }
         }
         if (card.game != Game.MTG) return card
         if (app.secrets.hasCardTraderToken()) {

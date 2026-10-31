@@ -26,6 +26,8 @@ class CtGamesTest {
         assertEquals(CtCode("eb01", "EB01-001"), OcrParser.ctCode(Game.ONE_PIECE, "EB01 - 001"))
         assertEquals(CtCode("op02", "OP02-013"), OcrParser.ctCode(Game.ONE_PIECE, "0P02-O13"))
         assertEquals(CtCode("promo", "P-041"), OcrParser.ctCode(Game.ONE_PIECE, "P-041"))
+        assertEquals(CtCode("op02", "OP02-013"), OcrParser.ctCode(Game.ONE_PIECE, "OP02013"))
+        assertEquals(CtCode("st10", "ST10-014"), OcrParser.ctCode(Game.ONE_PIECE, "ST10 014"))
         assertNull(OcrParser.ctCode(Game.ONE_PIECE, "7000 SPECIAL"))
     }
 
@@ -129,7 +131,7 @@ class CtGamesTest {
                 else -> emptyList()
             }
         }
-        override suspend fun products(blueprintId: Int): Map<String, List<CtProduct>> = emptyMap()
+        override suspend fun products(blueprintId: Int, language: String?, foil: Boolean?): Map<String, List<CtProduct>> = emptyMap()
     }
     private fun dir() = File.createTempFile("catalogo", "").also { it.delete(); it.mkdirs(); it.deleteOnExit() }
     private fun cat(game: Game, api: FakeApi, d: File = dir()) = CtGameCatalog(game, CtGameCatalog.GAME_IDS.getValue(game), api, { "tok" }, d)

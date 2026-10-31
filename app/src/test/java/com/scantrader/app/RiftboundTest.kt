@@ -92,7 +92,7 @@ class RiftboundTest {
             else -> emptyList()
         }
 
-        override suspend fun products(blueprintId: Int): Map<String, List<CtProduct>> = emptyMap()
+        override suspend fun products(blueprintId: Int, language: String?, foil: Boolean?): Map<String, List<CtProduct>> = emptyMap()
     }
 
     private fun tmpFile() = File.createTempFile("riftbound", ".json").also { it.delete(); it.deleteOnExit() }
