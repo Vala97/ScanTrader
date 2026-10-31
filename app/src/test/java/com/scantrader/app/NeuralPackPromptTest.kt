@@ -1,6 +1,8 @@
 package com.scantrader.app
 
+import com.scantrader.app.ui.NeuralPackCatalogLine
 import com.scantrader.app.ui.NeuralPackPrompt
+import com.scantrader.app.vision.NeuralPackManager
 import com.scantrader.app.vision.NeuralPackState
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -75,14 +77,47 @@ class NeuralPackPromptTest {
     }
 
     @Test
-    fun promptListsPokemonCatalogsWhenTheIndexIsKnown() {
-        val listed = NeuralPackPrompt.body(listOf("Pokémon (inglese)" to 13_000_000L))
+    fun promptSplitsMagicAndPokemonAndMarksEachRow() {
+        val listed = NeuralPackPrompt.body(
+            magicInstalled = false,
+            catalogs = listOf(
+                NeuralPackCatalogLine("Pokémon (inglese)", 13_000_000L, installed = false),
+                NeuralPackCatalogLine("Pokémon (italiano)", 8_000_000L, installed = true),
+            ),
+        )
         assertTrue(listed.contains("pack neurale Magic"))
         assertTrue(listed.contains("cataloghi Pokémon"))
         assertTrue(listed.contains("Pokémon (inglese)"))
         assertTrue(listed.contains("12,4"))
-        val generic = NeuralPackPrompt.body(emptyList())
-        assertTrue(generic.contains("cataloghi Pokémon"))
-        assertFalse(generic.contains("•"))
+        assertTrue(listed.contains("(${NeuralPackManager.APPROX_SIZE_LABEL})"))
+        assertTrue(listed.contains("Pack neurale Magic (${NeuralPackManager.APPROX_SIZE_LABEL}), da scaricare"))
+        assertTrue(listed.contains("Pokémon (inglese) (12,4 MB), da scaricare"))
+        assertTrue(listed.contains("Pokémon (italiano)"))
+        assertTrue(listed.contains("già installato"))
+        val magicGroup = listed.indexOf("\nMagic\n")
+        val pokemonGroup = listed.indexOf("\nPokémon\n")
+        assertTrue(magicGroup >= 0 && pokemonGroup > magicGroup)
+        assertTrue(listed.indexOf("Pack neurale Magic") < listed.indexOf("Pokémon (inglese)"))
+        assertFalse(listed.contains("—"))
+        assertFalse(listed.contains("–"))
+
+        val installedMagic = NeuralPackPrompt.body(
+            magicInstalled = true,
+            catalogs = listOf(NeuralPackCatalogLine("Pokémon (inglese)", installed = null)),
+        )
+        assertTrue(installedMagic.contains("Pack neurale Magic (${NeuralPackManager.APPROX_SIZE_LABEL}), già installato"))
+        assertTrue(installedMagic.contains("• Pokémon (inglese)"))
+        assertFalse(installedMagic.contains("Pokémon (inglese),"))
+        assertFalse(installedMagic.contains("Pokémon (inglese) ("))
+
+        val noSize = NeuralPackPrompt.body(
+            magicInstalled = false,
+            catalogs = emptyList(),
+            magicSizeLabel = "  ",
+        )
+        assertTrue(noSize.contains("• Pack neurale Magic, da scaricare"))
+        assertFalse(noSize.contains("• Pack neurale Magic ("))
+        assertTrue(noSize.contains("\nMagic\n"))
+        assertFalse(noSize.contains("\nPokémon\n"))
     }
 }

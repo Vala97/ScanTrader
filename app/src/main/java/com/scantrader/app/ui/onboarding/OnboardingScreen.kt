@@ -57,7 +57,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.scantrader.app.ui.NeuralPackCatalogLine
 import com.scantrader.app.vision.NeuralPackState
+import com.scantrader.app.vision.PokemonCatalogRow
 import kotlinx.coroutines.launch
 
 @Composable
@@ -70,11 +72,11 @@ fun OnboardingScreen(
     val catalogs by viewModel.catalogs.collectAsStateWithLifecycle()
     val magic by viewModel.magic.collectAsStateWithLifecycle()
     val downloadStarted by viewModel.downloadStarted.collectAsStateWithLifecycle()
-    val pages = Onboarding.pages(catalogs.promptCatalogs)
+    val magicInstalled = magic is NeuralPackState.Ready || magic is NeuralPackState.InstalledNotLoaded
+    val downloadLabel = Onboarding.downloadLabel(magicInstalled, catalogs.anyInstalled)
+    val pages = Onboarding.pages(magicInstalled, catalogs.rows.map { it.toPromptLine() })
     val page = pagerState.currentPage
     val last = page >= Onboarding.LAST_PAGE
-    val magicInstalled = magic is NeuralPackState.Ready || magic is NeuralPackState.InstalledNotLoaded
-    val offerDownload = Onboarding.offerDownload(magicInstalled, catalogs.anyInstalled)
     val context = LocalContext.current
     val activity = context as? Activity
     var cameraGranted by remember {
@@ -123,7 +125,7 @@ fun OnboardingScreen(
                     onAllowCamera = { permission.launch(Manifest.permission.CAMERA) },
                     onRetryCamera = { permission.launch(Manifest.permission.CAMERA) },
                     magic = if (pages[index].requestsCamera) magic else null,
-                    packsReady = pages[index].requestsCamera && !offerDownload,
+                    packsReady = pages[index].requestsCamera && downloadLabel == null,
                 )
             }
             Column(
@@ -131,11 +133,11 @@ fun OnboardingScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 PageDots(page = page, count = Onboarding.PAGE_COUNT)
-                if (last && offerDownload && !downloadStarted) {
+                if (last && downloadLabel != null && !downloadStarted) {
                     OutlinedButton(
                         onClick = viewModel::downloadPacks,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text(Onboarding.DOWNLOAD) }
+                    ) { Text(downloadLabel) }
                 }
                 if (last && downloadStarted) {
                     Text(
@@ -287,6 +289,12 @@ private fun PageDots(page: Int, count: Int) {
         }
     }
 }
+
+private fun PokemonCatalogRow.toPromptLine() = NeuralPackCatalogLine(
+    name = name,
+    sizeBytes = remoteSize?.takeIf { it > 0L } ?: installedSize?.takeIf { it > 0L } ?: 0L,
+    installed = installed,
+)
 
 private fun pageIcon(index: Int): ImageVector = when (index) {
     0 -> Icons.Filled.AutoAwesome
