@@ -5,6 +5,8 @@ import android.net.Uri
 import com.scantrader.app.data.model.Game
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -200,7 +202,7 @@ class NeuralPackManager(
             try {
                 if (!modelFile.exists() && pokemonCatalogFiles().isNotEmpty()) {
                     _pokemonState.value = NeuralPackState.Downloading(0f, "Download modello…")
-                    downloadTo(MODEL_URL, modelFile) { }
+                    downloadTo(MODEL_URL, modelFile, MODEL_SHA256) { }
                 }
                 pokemonCatalog = null
                 loadPokemonLocked()
@@ -228,14 +230,14 @@ class NeuralPackManager(
             try {
                 _mtgState.value = NeuralPackState.Downloading(0f, "Download modello…")
                 onProgress("Download modello Milo…")
-                downloadTo(MODEL_URL, modelFile) { p ->
+                downloadTo(MODEL_URL, modelFile, MODEL_SHA256) { p ->
                     _mtgState.value = NeuralPackState.Downloading(p * 0.15f, "Download modello…")
                 }
 
                 val npz = File(root, "mtg-download.npz")
                 _mtgState.value = NeuralPackState.Downloading(0.15f, "Download catalogo MTG…")
                 onProgress("Download catalogo MTG (~55 MB)…")
-                downloadTo(CATALOG_NPZ_URL, npz) { p ->
+                downloadTo(CATALOG_NPZ_URL, npz, CATALOG_NPZ_SHA256) { p ->
                     _mtgState.value = NeuralPackState.Downloading(0.15f + p * 0.70f, "Download catalogo…")
                 }
 
@@ -293,7 +295,7 @@ class NeuralPackManager(
                     if (!modelFile.exists()) {
                         _pokemonState.value = NeuralPackState.Downloading(0.3f, "Download modello…")
                         onProgress("Download modello Milo…")
-                        downloadTo(MODEL_URL, modelFile) { p ->
+                        downloadTo(MODEL_URL, modelFile, MODEL_SHA256) { p ->
                             _pokemonState.value =
                                 NeuralPackState.Downloading(0.3f + p * 0.6f, "Download modello…")
                         }
@@ -326,7 +328,7 @@ class NeuralPackManager(
                 loaded.save(pokemonCatalogFile)
                 rememberManualCount(loaded.size)
                 if (!modelFile.exists()) {
-                    downloadTo(MODEL_URL, modelFile) {}
+                    downloadTo(MODEL_URL, modelFile, MODEL_SHA256) {}
                 }
                 pokemonCatalog = null
                 loadPokemonLocked()
@@ -451,7 +453,7 @@ class NeuralPackManager(
             ctChecked += game
             if (stale) {
                 runCatching {
-                    if (!modelFile.exists()) downloadTo(MODEL_URL, modelFile) {}
+                    if (!modelFile.exists()) downloadTo(MODEL_URL, modelFile, MODEL_SHA256) {}
                     val tmp = File(root, file.name + ".download")
                     downloadTo(url, tmp) {}
                     EmbeddingCatalog.load(tmp) // valida prima di sostituire
@@ -464,32 +466,62 @@ class NeuralPackManager(
         }
     }
 
-    private fun downloadTo(url: String, dest: File, onFraction: (Float) -> Unit) {
+    private fun downloadTo(
+        url: String,
+        dest: File,
+        expectedSha256: String? = null,
+        onFraction: (Float) -> Unit,
+    ) {
         val request = Request.Builder().url(url).get().build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code} for $url")
             val body = response.body ?: error("Empty body")
             val total = body.contentLength().takeIf { it > 0 } ?: -1L
             val tmp = File(dest.absolutePath + ".part")
-            body.byteStream().use { input ->
-                FileOutputStream(tmp).use { output ->
-                    val buf = ByteArray(64 * 1024)
-                    var readTotal = 0L
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        output.write(buf, 0, n)
-                        readTotal += n
-                        if (total > 0) onFraction((readTotal.toFloat() / total).coerceIn(0f, 1f))
+            try {
+                body.byteStream().use { input ->
+                    FileOutputStream(tmp).use { output ->
+                        val buf = ByteArray(64 * 1024)
+                        var readTotal = 0L
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            output.write(buf, 0, n)
+                            readTotal += n
+                            if (total > 0) onFraction((readTotal.toFloat() / total).coerceIn(0f, 1f))
+                        }
                     }
                 }
+                if (expectedSha256 != null && !sha256(tmp).equals(expectedSha256, ignoreCase = true)) {
+                    tmp.delete()
+                    error(CHECKSUM_ERROR)
+                }
+            } catch (t: Throwable) {
+                tmp.delete()
+                throw t
             }
-            if (dest.exists()) dest.delete()
+            if (dest.exists() && !dest.delete()) {
+                tmp.delete()
+                error(CHECKSUM_ERROR)
+            }
             if (!tmp.renameTo(dest)) {
                 tmp.copyTo(dest, overwrite = true)
                 tmp.delete()
             }
         }
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(Locale.US, it) }
     }
 
     companion object {
@@ -498,6 +530,13 @@ class NeuralPackManager(
         const val CATALOG_NPZ_URL =
             "$HF/catalogs/milo1-scryfall-mtg-2026-07-09.npz"
         const val APPROX_SIZE_LABEL = "~60 MB"
+        const val CHECKSUM_ERROR = "File danneggiato (checksum). Il pack non è stato installato."
+
+        /** Hugging Face LFS oid for `model.onnx` on HanClinto/milo. */
+        const val MODEL_SHA256 = "bd13d8d60383c69da04dce261f32e93fdaeaa8fd618fbc991e7385f71b3d45df"
+
+        /** Hugging Face LFS oid for `catalogs/milo1-scryfall-mtg-2026-07-09.npz`. */
+        const val CATALOG_NPZ_SHA256 = "c5cb0dc150eb9f5b183396dd25aecaa9efc5ce3d001dd8bef282fcc73ee778be"
         val CT_GAMES = setOf(Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA)
     }
 }
