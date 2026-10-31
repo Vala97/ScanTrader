@@ -672,9 +672,15 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setAutoSaveConfidencePercent(percent) }
     }
 
-    fun setAutoScan(value: Boolean) {
+    /**
+     * Same flag as Impostazioni scan ([ScanSession.autoScan]), kept for the next visit.
+     * With a confirmation open, only the flag changes: the current card keeps its mode
+     * and the analyzer picks the new value up after that sheet closes.
+     */
+    fun setAutoScan(value: Boolean, confirmOpen: Boolean = false) {
         autoScan.value = value
         app.scanSession.autoScan = value
+        if (confirmOpen) return
         autoHitPending.set(false)
         autoBusy.set(false)
         lastAutoAttemptMs = 0

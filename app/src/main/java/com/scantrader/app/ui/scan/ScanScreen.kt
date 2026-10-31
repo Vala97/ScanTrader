@@ -13,6 +13,7 @@ import android.hardware.camera2.CaptureRequest
 import android.os.Build
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.Camera2CameraControl
@@ -111,6 +112,7 @@ import androidx.lifecycle.Observer
 import androidx.compose.ui.res.stringResource
 import com.scantrader.app.R
 import com.scantrader.app.data.model.Game
+import com.scantrader.app.scan.AutoScanQuick
 import com.scantrader.app.scan.CameraDevices
 import com.scantrader.app.scan.CardFrameGeometry
 import com.scantrader.app.scan.LensCatalog
@@ -163,6 +165,7 @@ fun ScanScreen(
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
     val guideViewWidth by viewModel.guideViewWidth.collectAsStateWithLifecycle()
     val guideViewHeight by viewModel.guideViewHeight.collectAsStateWithLifecycle()
+    var autoScanToast by remember { mutableStateOf<Toast?>(null) }
 
     var granted by remember {
         mutableStateOf(
@@ -564,6 +567,30 @@ fun ScanScreen(
                         fontSize = 11.sp,
                     )
                 }
+                Surface(
+                    shape = CircleShape,
+                    color = if (autoScan) Gold.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f),
+                ) {
+                    IconButton(
+                        onClick = {
+                            val next = !autoScan
+                            viewModel.setAutoScan(next, confirmOpen = confirmVisible)
+                            autoScanToast?.cancel()
+                            autoScanToast = Toast.makeText(
+                                context,
+                                AutoScanQuick.message(next),
+                                Toast.LENGTH_SHORT,
+                            ).also { it.show() }
+                        },
+                    ) {
+                        Icon(
+                            Icons.Filled.CenterFocusStrong,
+                            contentDescription = AutoScanQuick.contentDescription(autoScan),
+                            tint = if (autoScan) Gold else FrameAccent.copy(alpha = 0.45f),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(4.dp))
                 Surface(
                     shape = CircleShape,
                     color = if (torchOn) Gold.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.12f),
