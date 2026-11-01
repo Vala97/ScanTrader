@@ -226,6 +226,17 @@ fun ConfirmScreen(
         )
         languageReadyKey.value = card.identityKey()
     }
+    val liveLanguage by viewModel.liveLanguage.collectAsStateWithLifecycle()
+    LaunchedEffect(liveLanguage, shownKey) {
+        if (languageTouched || !defaults.detectCardLanguage) return@LaunchedEffect
+        val late = liveLanguage ?: return@LaunchedEffect
+        if (language == late) return@LaunchedEffect
+        autoSaveCancelledState.value = AutoSaveControl.onProgrammaticUpdate(
+            autoSaveCancelledState.value,
+            AutoSaveControl.Program.DETECTED_LANGUAGE,
+        )
+        language = late
+    }
     LaunchedEffect(selected?.identityKey(), language, condition, foil) {
         val card = selected ?: return@LaunchedEffect
         val priced = viewModel.proposePrice(card, language, condition, foil)

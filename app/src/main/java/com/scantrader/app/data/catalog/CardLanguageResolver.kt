@@ -28,15 +28,31 @@ class CardLanguageResolver(
     suspend fun detect(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguage? =
         explain(card, ocrName, ocrText).language
 
-    suspend fun explain(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguageDetector.Detection {
+    /** OCR, script, and names already on the card. No network. */
+    fun explainLocal(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguageDetector.Detection {
         val pokemon = card.game == Game.POKEMON
         val local = localNames(card)
-        val fromLocal = CardLanguageDetector.explain(ocrName, local.first, local.second, ocrText, pokemon)
+        return CardLanguageDetector.explain(ocrName, local.first, local.second, ocrText, pokemon)
+    }
+
+    suspend fun explain(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguageDetector.Detection {
+        val fromLocal = explainLocal(card, ocrName, ocrText)
         if (fromLocal.language != null) return fromLocal
+        return explainPrinted(card, ocrName, ocrText)
+    }
+
+    /** Printed names from Scryfall or TCGdex. Runs even when local OCR already has a language. */
+    suspend fun explainPrinted(
+        card: IdentifiedCard,
+        ocrName: String?,
+        ocrText: String? = null,
+    ): CardLanguageDetector.Detection {
+        val pokemon = card.game == Game.POKEMON
         val (english, printed) = when (card.game) {
             Game.MTG -> mtgNames(card)
             Game.POKEMON -> pokemonNames(card)
-            Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> card.name to emptyMap<CardLanguage, String>() // catalogo solo inglese (CardTrader)
+            Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER ->
+                card.name to emptyMap()
         }
         return CardLanguageDetector.explain(ocrName, english, printed, ocrText, pokemon)
     }
