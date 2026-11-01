@@ -1468,13 +1468,20 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 return@withContext false
             }
             if (autoMode && !queryCatalog && prefetched == null) {
+                val heldReason = if (cooling) "cooldown" else "debounce"
                 com.scantrader.app.scan.ScanDebug.d(
-                    "catalog held id=$catalogIdentity neural=true",
+                    "catalog held reason=$heldReason id=$catalogIdentity neural=true",
                 )
             }
-            // Auto + cn+set: catalog only (skip gallery + fingerprint).
+            // Auto + cn+set skips the gallery only when the catalog query runs.
+            // A held catalog still embeds, so a flickering set cannot drop both paths.
             // giochi CardTrader: l'immagine serve anche con il codice letto (sceglie fra le versioni)
-            val skipHeavyVision = autoMode && idReady && !(game.value in app.ctGames && neuralOn)
+            val skipHeavyVision = com.scantrader.app.scan.HeavyVision.skip(
+                autoMode = autoMode,
+                idReady = idReady,
+                queryCatalog = queryCatalog,
+                neuralChoosesPrinting = game.value in app.ctGames && neuralOn,
+            )
             val fingerprint = if (skipHeavyVision || !queryCatalog) {
                 com.scantrader.app.scan.ScanDebug.d("fingerprint skipped (auto id-ready)")
                 null
@@ -2231,6 +2238,8 @@ private suspend fun ScanTraderApp.detectLanguagePrinted(
     card: IdentifiedCard,
 ): com.scantrader.app.data.catalog.CardLanguageDetector.Detection? {
     if (!prefs.currentDefaults().detectCardLanguage) return null
+    val local = explainLocalLanguage(card)
+    if (local.language != null) return local
     val ocrName = scanSession.parsed?.nameGuess
     val ocrText = scanSession.ocrText
     val detection = try {

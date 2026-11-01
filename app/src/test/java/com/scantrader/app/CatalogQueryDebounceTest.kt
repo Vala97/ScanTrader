@@ -3,6 +3,7 @@ package com.scantrader.app
 import com.scantrader.app.data.catalog.CatalogQueryDebounce
 import com.scantrader.app.data.catalog.CatalogQueryDebounce.Frame
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -13,8 +14,83 @@ class CatalogQueryDebounceTest {
         assertTrue(!debounce.shouldQuery("pioppo|83|"))
         assertTrue(debounce.shouldQuery("pioppo|83|"))
         assertTrue(!debounce.shouldQuery("pioppo|83|"))
+        // Same name + collector. A set that appears later is not a new card.
         assertTrue(!debounce.shouldQuery("pioppo|83|dft"))
-        assertTrue(debounce.shouldQuery("pioppo|83|dft"))
+        assertTrue(!debounce.shouldQuery("altro|83|dft"))
+        assertTrue(debounce.shouldQuery("altro|83|dft"))
+    }
+
+    @Test
+    fun flickeringSetStaysOneCardAndKeepsTheSet() {
+        var t = 0L
+        val debounce = CatalogQueryDebounce(
+            stableFramesNeeded = 2,
+            requeryAfterMs = 2_000L,
+            now = { t },
+        )
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", "fra")))
+        t = 400L
+        assertTrue(debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", null)))
+        assertEquals("fra", debounce.votedFrame()?.setCode)
+        assertEquals("178", debounce.votedFrame()?.collectorNumber)
+    }
+
+    @Test
+    fun missingSetIsCarriedAcrossACollectorGapWithinOneAndAHalfSeconds() {
+        var t = 0L
+        val debounce = CatalogQueryDebounce(
+            stableFramesNeeded = 2,
+            requeryAfterMs = 2_000L,
+            now = { t },
+        )
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", "fra")))
+        t = 50L
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "26", null)))
+        t = 1_500L
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", null)))
+        assertEquals("fra", debounce.votedFrame()?.setCode)
+    }
+
+    @Test
+    fun carriedSetExpiresAfterOneAndAHalfSeconds() {
+        var t = 0L
+        val debounce = CatalogQueryDebounce(
+            stableFramesNeeded = 2,
+            requeryAfterMs = 2_000L,
+            now = { t },
+        )
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", "fra")))
+        t = 50L
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "26", null)))
+        t = 1_601L
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", null)))
+        assertNull(debounce.votedFrame()?.setCode)
+    }
+
+    @Test
+    fun aDifferentSetReplacesTheCarriedOneImmediately() {
+        var t = 0L
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, now = { t })
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", "fra")))
+        t = 100L
+        assertTrue(debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", "mh3")))
+        assertEquals("mh3", debounce.votedFrame()?.setCode)
+        t = 150L
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "26", null)))
+        t = 200L
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", null)))
+        assertEquals("mh3", debounce.votedFrame()?.setCode)
+    }
+
+    @Test
+    fun setIsNotCarriedOntoADifferentCollector() {
+        var t = 0L
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, now = { t })
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", "fra")))
+        t = 200L
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "26", null)))
+        assertNull(debounce.votedFrame()?.setCode)
+        assertEquals("26", debounce.votedFrame()?.collectorNumber)
     }
 
     @Test
@@ -238,9 +314,10 @@ class CatalogQueryDebounceTest {
         assertEquals("Maxus del Team Rocket", debounce.votedFrame()?.name)
     }
 
-    private fun mtg(name: String, cn: String) = Frame(
+    private fun mtg(name: String, cn: String, set: String? = null) = Frame(
         name = name,
         collectorNumber = cn,
+        setCode = set,
         pokemon = false,
     )
 

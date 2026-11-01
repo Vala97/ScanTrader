@@ -8,12 +8,15 @@ import com.scantrader.app.scan.OcrParser
  * A lookup runs when either:
  * - the same primary key has been seen [stableFramesNeeded] times
  *   (Pokémon: collector + printed total, or a multi-word trainer title when the
- *   collector is missing; MTG: collector + set), or
+ *   collector is missing; MTG: name + collector), or
  * - the same card region has been analyzed for [requeryAfterMs]
  *   or [fallbackFrames] frames without a lookup.
  *
  * OCR name/set jitter must not reset that clock. The query uses the majority
- * name, collector, and set from the recent frames so one bad read cannot win.
+ * name and collector from the recent frames so one bad read cannot win.
+ * For Magic, a frame with no set keeps the last set read for that same name
+ * and collector when it was seen within 1.5 seconds. A newly read set
+ * replaces that memory immediately.
  * The same key is not queried again until [requeryAfterMs] has passed.
  *
  * Consecutive reads are compared with [agreementKey], which treats OCR look-alikes
@@ -43,6 +46,7 @@ class CatalogQueryDebounce(
     private var seenCount: Int = 0
     private var lastQueriedKey: String? = null
     private var lastQueryAtMs: Long = 0L
+    private var setMemory: SetMemory? = null
 
     fun normalize(identity: String): String =
         identity.trim().lowercase().replace(Regex("""\s+"""), " ")
@@ -76,7 +80,7 @@ class CatalogQueryDebounce(
             clearRegion()
             return false
         }
-        return observe(frame, agreed)
+        return observe(withCarriedSet(frame), agreed)
     }
 
     fun shouldQuery(frame: Frame): Boolean {
@@ -86,7 +90,7 @@ class CatalogQueryDebounce(
             clearRegion()
             return false
         }
-        return observe(frame, agreed)
+        return observe(withCarriedSet(frame), agreed)
     }
 
     /**
@@ -120,6 +124,7 @@ class CatalogQueryDebounce(
         seenCount = 0
         lastQueriedKey = null
         lastQueryAtMs = 0L
+        setMemory = null
     }
 
     /** Majority-vote read of the current card region, including the latest frame. */
@@ -251,6 +256,14 @@ class CatalogQueryDebounce(
             return CardIdentity.namesSimilar(previous.name, current.name)
         }
 
+        val namePrev = nameKey(previous.name)
+        val nameCur = nameKey(current.name)
+        // Magic stability is name + collector. A set that appears and disappears
+        // is the same card, otherwise the lookup never reaches two frames.
+        if (namePrev != null && nameCur != null && cnPrev != null && cnCur != null) {
+            return namePrev == nameCur && cnPrev == cnCur
+        }
+
         val setPrev = plainSet(previous.setCode)
         val setCur = plainSet(current.setCode)
         if (cnPrev != null && cnCur != null && setPrev != null && setCur != null) {
@@ -270,8 +283,38 @@ class CatalogQueryDebounce(
             return "t:$trainer"
         }
         if (cn == null) return null
+        val name = nameKey(frame.name)
+        if (name != null) return "m:$name/$cn"
         val set = plainSet(frame.setCode) ?: return null
         return "m:$cn/$set"
+    }
+
+    /**
+     * Fill a missing Magic set from the last read of this name + collector.
+     * A set that is actually on the frame replaces that memory immediately.
+     */
+    private fun withCarriedSet(frame: Frame): Frame {
+        if (frame.pokemon) return frame
+        val name = nameKey(frame.name)
+        val cn = CardIdentity.normCollector(frame.collectorNumber)
+        val set = plainSet(frame.setCode)
+        val t = now()
+        if (set != null) {
+            if (name != null && cn != null) {
+                setMemory = SetMemory(name, cn, set, t)
+            }
+            return frame
+        }
+        val memory = setMemory ?: return frame
+        if (name == null || cn == null) return frame
+        if (memory.nameKey != name || memory.collector != cn) return frame
+        if (t - memory.readAtMs > SET_CARRY_MS) return frame
+        return frame.copy(setCode = memory.setCode)
+    }
+
+    private fun nameKey(name: String?): String? {
+        val raw = name?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        return foldOcrGlyphs(normalize(raw)).takeIf { it.isNotBlank() }
     }
 
     private fun plainSet(raw: String?): String? =
@@ -282,7 +325,11 @@ class CatalogQueryDebounce(
         val pokemon = list.any { it.pokemon }
         val cn = mode(list.mapNotNull { CardIdentity.normCollector(it.collectorNumber) })
         val count = mode(list.mapNotNull { it.setCardCount })
-        val set = mode(list.mapNotNull { frameSet(it) })
+        val set = if (pokemon) {
+            mode(list.mapNotNull { frameSet(it) })
+        } else {
+            list.asReversed().firstNotNullOfOrNull { plainSet(it.setCode) }
+        }
         val name = voteName(list.mapNotNull { it.name?.trim()?.takeIf { n -> n.isNotBlank() } })
         return Frame(
             name = name,
@@ -350,7 +397,15 @@ class CatalogQueryDebounce(
         return values.groupingBy { it }.eachCount().maxBy { it.value }.key
     }
 
+    private data class SetMemory(
+        val nameKey: String,
+        val collector: String,
+        val setCode: String,
+        val readAtMs: Long,
+    )
+
     private companion object {
         const val RECENT_LIMIT = 8
+        const val SET_CARRY_MS = 1_500L
     }
 }
