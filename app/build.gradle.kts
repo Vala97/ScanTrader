@@ -111,6 +111,15 @@ android {
         }
     }
 
+    // Play builds (-Pscantrader.githubSelfUpdate=false) merge this over main and
+    // drop REQUEST_INSTALL_PACKAGES. GitHub builds do not add the file.
+    if (!githubSelfUpdate) {
+        val removeInstallPermission = file("src/noInstall/AndroidManifest.xml")
+        listOf("debug", "release").forEach { name ->
+            sourceSets.getByName(name).manifest.srcFile(removeInstallPermission)
+        }
+    }
+
     buildTypes {
         release {
             if (releaseSigning != null) {
@@ -160,6 +169,37 @@ android {
         }
         jniLibs {
             useLegacyPackaging = false
+        }
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val cap = variant.name.replaceFirstChar { it.uppercase() }
+        val verify = tasks.register("verify${cap}InstallPermission") {
+            group = "verification"
+            description = "REQUEST_INSTALL_PACKAGES must match -Pscantrader.githubSelfUpdate."
+            dependsOn("process${cap}Manifest")
+            doLast {
+                val xml = tasks.named("process${cap}Manifest").get().outputs.files.asFileTree
+                    .matching { include("**/AndroidManifest.xml") }
+                    .singleFile
+                    .readText()
+                val present = Regex(
+                    """<uses-permission\b[^>]*android:name="android\.permission\.REQUEST_INSTALL_PACKAGES"""",
+                ).containsMatchIn(xml)
+                if (present != githubSelfUpdate) {
+                    throw org.gradle.api.GradleException(
+                        "REQUEST_INSTALL_PACKAGES in the $cap merged manifest is $present, " +
+                            "expected $githubSelfUpdate (scantrader.githubSelfUpdate).",
+                    )
+                }
+            }
+        }
+        tasks.configureEach {
+            if (name == "assemble$cap" || name == "bundle$cap") {
+                dependsOn(verify)
+            }
         }
     }
 }
