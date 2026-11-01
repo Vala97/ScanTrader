@@ -78,14 +78,35 @@ def quote(path: Path) -> str:
     return shlex.quote(str(path))
 
 
+def merge_base(document: dict, base: Path) -> dict:
+    """Keep rows in ``base`` whose id is not among the files just hashed."""
+    raw = json.loads(base.read_text(encoding="utf-8"))
+    catalogs = raw.get("catalogs") if isinstance(raw, dict) else None
+    if not isinstance(catalogs, list):
+        raise SystemExit(f"{base} non ha un array catalogs")
+    new_ids = {entry["id"] for entry in document["catalogs"]}
+    kept: list[dict] = []
+    for entry in catalogs:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            raise SystemExit(f"{base} ha una riga senza id")
+        if entry["id"] not in new_ids:
+            kept.append(entry)
+    document["catalogs"] = kept + document["catalogs"]
+    return document
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Scrive stcat-index.json e stampa i comandi gh. Non pubblica nulla.",
     )
-    parser.add_argument("--version", required=True, help="Versione scritta su ogni catalogo, es. 2026.10.26")
+    parser.add_argument("--version", required=True, help="Versione scritta sui file di questa esecuzione, es. 2026.10.26")
     parser.add_argument("--tag", default=DEFAULT_TAG, help=f"Tag del release (default {DEFAULT_TAG})")
     parser.add_argument("--repo", default=DEFAULT_REPO, help=f"owner/name (default {DEFAULT_REPO})")
     parser.add_argument("--out", default="stcat-index.json", help="Dove scrivere l'indice")
+    parser.add_argument(
+        "--base",
+        help="Indice già pubblicato: le righe con un altro id restano, con la loro versione",
+    )
     parser.add_argument(
         "--name",
         action="append",
@@ -95,10 +116,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "files",
         nargs="+",
-        help="File .stcat, oppure id=percorso (l'id di default è il nome del file senza estensione)",
+        help="File .stcat o .npz, oppure id=percorso (l'id di default è il nome del file senza estensione)",
     )
     args = parser.parse_args(argv)
     document, paths = build_index(args)
+    if args.base:
+        document = merge_base(document, Path(args.base))
     out = Path(args.out)
     out.write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     asset_args = " ".join(quote(path) for path in paths)
@@ -107,15 +130,20 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("# Il release con questo tag deve restare l'ultimo non-prerelease,")
     print("# altrimenti releases/latest/download/stcat-index.json non lo vede.")
-    print("# Crea il release una volta (non aggiungere --prerelease):")
-    print(
-        f"gh release create {shlex.quote(args.tag)} --repo {shlex.quote(args.repo)} "
-        f"--title {shlex.quote('Cataloghi Pokémon ' + args.version)} "
-        f"--notes {shlex.quote('Cataloghi .stcat per ScanTrader')} "
-        f"{asset_args} {index_arg}"
-    )
-    print()
-    print("# Se il release esiste già, sostituisci gli asset:")
+    print("# Non toccare il tag prerelease app-update.")
+    if args.base:
+        print("# --base ha tenuto le righe già pubblicate. Non ricreare il release:")
+        print("# un gh release create sostituirebbe l'elenco degli asset.")
+    else:
+        print("# Crea il release una volta (non aggiungere --prerelease):")
+        print(
+            f"gh release create {shlex.quote(args.tag)} --repo {shlex.quote(args.repo)} "
+            f"--title {shlex.quote('Cataloghi Pokémon ' + args.version)} "
+            f"--notes {shlex.quote('Cataloghi .stcat per ScanTrader')} "
+            f"{asset_args} {index_arg}"
+        )
+        print()
+        print("# Se il release esiste già, sostituisci gli asset:")
     print(
         f"gh release upload {shlex.quote(args.tag)} --repo {shlex.quote(args.repo)} "
         f"--clobber {asset_args} {index_arg}"

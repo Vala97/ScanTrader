@@ -34,8 +34,8 @@ Nessun account, nessun backend a pagamento. Unico costo eventuale: account svilu
 
 ### Pack neurali
 
-- **MTG**: **Impostazioni** → download del modello da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0) e del catalogo Magic pubblicato nell’indice `stcat-index.json` (id `mtg`, con sha256). Non è più un file fisso del 2026-07-09: la data letta dall’indice compare in Impostazioni e, se è più nuova, il pulsante diventa «Aggiorna». Senza pack il riconoscimento resta sull’OCR e lo scan lo segnala.
-- **Pokémon**: **Impostazioni → Riconoscimento Pokémon** scarica i `.stcat` dal release GitHub (`stcat-index.json` su `releases/latest`). L’importazione manuale di un `.stcat` resta in quella sezione, visibile solo con le informazioni di debug. I file si generano con [`tools/build_pokemon_stcat`](tools/build_pokemon_stcat/README.md) e l’indice con [`tools/publish_stcat`](tools/publish_stcat/README.md).
+- **MTG**: **Impostazioni** scarica il modello da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0) e il catalogo Magic indicato nell’indice `stcat-index.json` (id `mtg`, con sha256). La data letta dall’indice compare in Impostazioni e, se è più nuova, il pulsante diventa «Aggiorna». Senza pack il riconoscimento resta sull’OCR e lo scan lo segnala.
+- **Pokémon**: **Impostazioni → Riconoscimento Pokémon** scarica i `.stcat` dallo stesso indice, su `releases/latest`. L’importazione manuale di un `.stcat` resta in quella sezione, visibile solo con le informazioni di debug. Come si pubblicano i due pack: [Aggiornare i pack neurali](#aggiornare-i-pack-neurali).
 
 ## Riftbound, One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena
 
@@ -159,6 +159,51 @@ git push origin v1.2
 4. Parte `.github/workflows/release-apk.yml` (sui tag `v*`). Se nel repository ci sono i quattro secret di firma, compila l’APK firmato e lo carica, insieme a `app-update.json`, sul release **prerelease** `app-update`. Senza quei secret il job di build non parte. `app-update` resta prerelease così `stcat` continua a essere `releases/latest` per i cataloghi.
 5. Controlla il run nella scheda **Actions** del repository, e che l’APK e `app-update.json` siano sul release `app-update`. Quel workflow carica solo l’APK: l’AAB non va sul release `app-update`.
 6. L’AAB per Play, a parte, si lancia a mano dallo stesso workflow (**Actions → Release APK → Run workflow**). Se i secret di firma ci sono, compila `bundleRelease` con `-Pscantrader.githubSelfUpdate=false` e lascia l’AAB come artifact dell’esecuzione, non come asset del release.
+
+## Aggiornare i pack neurali
+
+L’app legge un solo indice:
+
+`https://github.com/Vala97/ScanTrader/releases/latest/download/stcat-index.json`
+
+`releases/latest` è l’ultimo release **non** prerelease. I pack stanno sul tag `stcat`. Non creare un release nuovo per un catalogo e non caricare questi file sul tag `app-update`: quello è il prerelease dell’APK. Un `gh release create` sul tag già esistente sostituisce l’elenco degli asset. Si usa solo `gh release upload --clobber`.
+
+Lo script [`tools/publish_stcat`](tools/publish_stcat/README.md) calcola byte e sha256, scrive l’indice e stampa il comando. Non carica niente. `--version` vale solo per i file di quella esecuzione. `--base` tiene le righe già online il cui id non stai riscrivendo, versione compresa. Senza `--base`, l’indice nuovo contiene solo i file passati e la riga dell’altro gioco sparisce.
+
+### Magic
+
+Il file non si ricostruisce in questo repository. È il `.npz` già calcolato da Milo sulle carte Scryfall e pubblicato su Hugging Face `HanClinto/milo`, cartella `catalogs`. Quello online adesso è `milo1-scryfall-mtg-2026-07-09.npz`: id `mtg`, versione `2026.07.09`, 56252182 byte, sha256 `c5cb0dc150eb9f5b183396dd25aecaa9efc5ce3d001dd8bef282fcc73ee778be`. L’app accetta anche uno `.stcat` già convertito; con l’URL che finisce in `.npz` converte lei sul telefono. La versione è la data nel nome del file, con i punti (`2026.07.09`): è quella che compare in Impostazioni.
+
+Quando su Hugging Face c’è un `.npz` più nuovo, scaricalo, tieni l’indice già pubblicato e carica i due file sullo stesso tag:
+
+```bat
+curl -L -o milo1-scryfall-mtg-2026-07-09.npz https://huggingface.co/HanClinto/milo/resolve/main/catalogs/milo1-scryfall-mtg-2026-07-09.npz
+curl -L -o stcat-index.json https://github.com/Vala97/ScanTrader/releases/download/stcat/stcat-index.json
+python tools\publish_stcat\publish_stcat.py --version 2026.07.09 --name mtg=Magic --base stcat-index.json --out stcat-index.json mtg=milo1-scryfall-mtg-2026-07-09.npz
+gh release upload stcat --repo Vala97/ScanTrader --clobber milo1-scryfall-mtg-2026-07-09.npz stcat-index.json
+```
+
+Sostituisci nome file e `--version` con quelli del `.npz` nuovo. Poi controlla che l’ultimo release non prerelease sia ancora `stcat` e che lo sha256 dell’asset coincida con la riga `mtg` dell’indice.
+
+### Pokémon
+
+Il `.stcat` inglese si genera in locale con [`tools/build_pokemon_stcat`](tools/build_pokemon_stcat/README.md). Servono Python 3.10+, il modello Milo ONNX e la cache immagini TCGdex (circa 2 GB, da non ridistribuire). Il catalogo intero può richiedere 1–3 ore o più. La versione è la data del build, con i punti.
+
+```bat
+cd tools\build_pokemon_stcat
+pip install -r requirements.txt
+python build_pokemon_stcat.py --out pokemon.stcat
+copy pokemon.stcat pokemon-en.stcat
+curl -L -o stcat-index.json https://github.com/Vala97/ScanTrader/releases/download/stcat/stcat-index.json
+python ..\publish_stcat\publish_stcat.py --version 2026.10.26 --base stcat-index.json --out stcat-index.json pokemon-en.stcat
+gh release upload stcat --repo Vala97/ScanTrader --clobber pokemon-en.stcat stcat-index.json
+```
+
+`--base` lascia la riga `mtg`. Cambia `2026.10.26` con il giorno del build. L’id resta `pokemon-en`, che è il nome del file senza estensione.
+
+### Perché non c’è un workflow
+
+Non c’è un job Actions che ricostruisce i pack. `GITHUB_TOKEN` basta per caricare un file su `stcat`, ma il calcolo no. Il catalogo Pokémon scarica le immagini di tutto l’inglese TCGdex e fa l’inferenza ONNX carta per carta: è il lavoro da 1–3 ore descritto sopra, troppo pesante per un runner senza GPU e da non schedulare. Magic non ha uno script Scryfall in questo repository: gli embedding li pubblica già HanClinto/milo. Un job che riscarica lo stesso `.npz` da Hugging Face non aggiunge le carte uscite dopo quel file. Quando Milo pubblica un catalogo nuovo, i comandi di sopra lo mettono sull’indice.
 
 ## Import su CardTrader
 
