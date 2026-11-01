@@ -1,6 +1,7 @@
 package com.scantrader.app.scan
 
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -70,6 +71,55 @@ object CardFrameGeometry {
         val left = (viewWidth - mappedW) / 2f
         val top = base.top * scale + (viewHeight - lockedHeight * scale) / 2f
         return Rect(left, top, mappedW, mappedH)
+    }
+
+    data class PixelRect(val left: Int, val top: Int, val width: Int, val height: Int)
+
+    /**
+     * Inverse of [androidx.camera.view.PreviewView.ScaleType.FILL_CENTER].
+     * The guide is drawn on the view. The bitmap is the upright camera buffer,
+     * which may be a different aspect: the parts that fall outside the view
+     * are not what the user framed.
+     */
+    fun mapFillCenterViewRectToBitmap(
+        bitmapWidth: Int,
+        bitmapHeight: Int,
+        viewWidth: Float,
+        viewHeight: Float,
+        guide: Rect,
+    ): PixelRect {
+        if (bitmapWidth <= 1 || bitmapHeight <= 1 || viewWidth <= 1f || viewHeight <= 1f) {
+            return PixelRect(0, 0, bitmapWidth.coerceAtLeast(1), bitmapHeight.coerceAtLeast(1))
+        }
+        val scale = max(viewWidth / bitmapWidth, viewHeight / bitmapHeight)
+        val offsetX = (viewWidth - bitmapWidth * scale) / 2f
+        val offsetY = (viewHeight - bitmapHeight * scale) / 2f
+        val left = ((guide.left - offsetX) / scale).toInt().coerceIn(0, bitmapWidth - 1)
+        val top = ((guide.top - offsetY) / scale).toInt().coerceIn(0, bitmapHeight - 1)
+        val right = ((guide.right - offsetX) / scale).toInt().coerceIn(left + 1, bitmapWidth)
+        val bottom = ((guide.bottom - offsetY) / scale).toInt().coerceIn(top + 1, bitmapHeight)
+        return PixelRect(left, top, right - left, bottom - top)
+    }
+
+    /**
+     * Crops [source] to the on-screen guide. [viewWidth] and [viewHeight] are the
+     * locked preview size the overlay uses. Unknown size falls back to [cropBitmap].
+     */
+    fun cropToGuide(
+        source: android.graphics.Bitmap,
+        viewWidth: Float,
+        viewHeight: Float,
+    ): android.graphics.Bitmap {
+        if (viewWidth <= 1f || viewHeight <= 1f) return cropBitmap(source)
+        val guide = frameStable(viewWidth, viewHeight, viewWidth, viewHeight)
+        val crop = mapFillCenterViewRectToBitmap(
+            bitmapWidth = source.width,
+            bitmapHeight = source.height,
+            viewWidth = viewWidth,
+            viewHeight = viewHeight,
+            guide = guide,
+        )
+        return android.graphics.Bitmap.createBitmap(source, crop.left, crop.top, crop.width, crop.height)
     }
 
     fun cropBitmap(source: android.graphics.Bitmap): android.graphics.Bitmap {

@@ -528,6 +528,14 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         programmaticZoom = null
     }
 
+    /** Shown once per scan visit when the camera buffer was not cropped to the preview. */
+    val cropGuideWarning = MutableStateFlow(false)
+
+    fun noteAnalysisCrop(cropApplied: Boolean) {
+        if (cropApplied || cropGuideWarning.value) return
+        cropGuideWarning.value = true
+    }
+
     /** First real scanner layout. Later sizes must not move the guide. */
     fun lockGuideViewport(width: Float, height: Float) {
         if (width <= 1f || height <= 1f) return
@@ -922,7 +930,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "portrait ${bitmap.width}x${bitmap.height} -> ${oriented.width}x${oriented.height}",
                 )
             }
-            var croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropBitmap(oriented)
+            var croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropToGuide(
+                oriented,
+                viewWidth = app.scanSession.guideViewWidth,
+                viewHeight = app.scanSession.guideViewHeight,
+            )
             if (autoMode && skipUnstableFrame(croppedFull, t0)) {
                 return@withContext false
             }

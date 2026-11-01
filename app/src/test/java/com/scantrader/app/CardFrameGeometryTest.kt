@@ -24,6 +24,46 @@ class CardFrameGeometryTest {
     }
 
     @Test
+    fun fillCenterMatchesTheGuideWhenTheBufferHasTheViewAspect() {
+        val viewW = 200f
+        val viewH = 400f
+        val guide = CardFrameGeometry.frameIn(viewW, viewH)
+        val mapped = CardFrameGeometry.mapFillCenterViewRectToBitmap(
+            bitmapWidth = 200,
+            bitmapHeight = 400,
+            viewWidth = viewW,
+            viewHeight = viewH,
+            guide = guide,
+        )
+        assertEquals(guide.left.toInt(), mapped.left)
+        assertEquals(guide.top.toInt(), mapped.top)
+        assertEquals(guide.width.toInt(), mapped.width)
+        assertEquals(guide.height.toInt(), mapped.height)
+    }
+
+    @Test
+    fun fillCenterDropsTheBufferEdgesThatAreOutsideTheView() {
+        val viewW = 100f
+        val viewH = 200f
+        val guide = CardFrameGeometry.frameIn(viewW, viewH)
+        val mapped = CardFrameGeometry.mapFillCenterViewRectToBitmap(
+            bitmapWidth = 200,
+            bitmapHeight = 200,
+            viewWidth = viewW,
+            viewHeight = viewH,
+            guide = guide,
+        )
+        val naive = CardFrameGeometry.frameIn(200f, 200f)
+        assertTrue(mapped.left > naive.left.toInt())
+        assertTrue(mapped.left >= 0)
+        assertTrue(mapped.top >= 0)
+        assertTrue(mapped.left + mapped.width <= 200)
+        assertTrue(mapped.top + mapped.height <= 200)
+        assertTrue(mapped.width > 1)
+        assertTrue(mapped.height > 1)
+    }
+
+    @Test
     fun frameCapsHeightOnAShortPreview() {
         val rect = CardFrameGeometry.frameIn(1000f, 500f)
         assertEquals(500f * CardFrameGeometry.MAX_HEIGHT_FRACTION, rect.height, 0.01f)

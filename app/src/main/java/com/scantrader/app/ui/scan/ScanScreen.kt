@@ -180,6 +180,7 @@ fun ScanScreen(
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
     val guideViewWidth by viewModel.guideViewWidth.collectAsStateWithLifecycle()
     val guideViewHeight by viewModel.guideViewHeight.collectAsStateWithLifecycle()
+    val cropGuideWarning by viewModel.cropGuideWarning.collectAsStateWithLifecycle()
     val manualShotBusy by viewModel.manualShotBusy.collectAsStateWithLifecycle()
     var autoScanToast by remember { mutableStateOf<Toast?>(null) }
 
@@ -545,6 +546,8 @@ fun ScanScreen(
                     update = { view ->
                         view.scaleType = PreviewView.ScaleType.FILL_CENTER
                         view.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        // One controller on this PreviewView: CameraX uses view.viewPort
+                        // for preview, analysis, and capture together.
                         if (view.controller !== controller) view.controller = controller
                     },
                 )
@@ -595,6 +598,13 @@ fun ScanScreen(
                         color = FrameAccent.copy(alpha = 0.7f),
                         fontSize = 11.sp,
                     )
+                    if (cropGuideWarning) {
+                        Text(
+                            "La cornice potrebbe non coincidere con il ritaglio su questo telefono.",
+                            color = Gold,
+                            fontSize = 11.sp,
+                        )
+                    }
                 }
                 Surface(
                     shape = CircleShape,
@@ -1308,7 +1318,10 @@ private fun attachAutoAnalyzer(
                     "cropApplied=${upright.cropApplied}",
             )
             val bitmap = upright.bitmap
-            mainExecutor.execute { onFrame(bitmap) }
+            mainExecutor.execute {
+                viewModel.noteAnalysisCrop(upright.cropApplied)
+                onFrame(bitmap)
+            }
         } catch (_: Throwable) {
         } finally {
             proxy.close()
