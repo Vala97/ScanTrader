@@ -1,5 +1,6 @@
 package com.scantrader.app.network
 
+import com.scantrader.app.BuildConfig
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -17,12 +18,10 @@ object NetworkModule {
                     .build(),
             )
         }
-        val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
-        }
         return OkHttpClient.Builder()
             .addInterceptor(userAgent)
-            .addInterceptor(logging)
+            .addInterceptor(StatusRetryInterceptor())
+            .addInterceptor(logging())
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .build()
@@ -47,8 +46,21 @@ object NetworkModule {
         }
         return OkHttpClient.Builder()
             .addInterceptor(auth)
+            .addInterceptor(StatusRetryInterceptor())
+            .addInterceptor(logging())
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .build()
     }
+
+    /** BASIC in debug so URLs are visible. Release stays silent, and the bearer token is never written. */
+    private fun logging(): HttpLoggingInterceptor =
+        HttpLoggingInterceptor().apply {
+            redactHeader("Authorization")
+            level = if (BuildConfig.DEBUG) {
+                HttpLoggingInterceptor.Level.BASIC
+            } else {
+                HttpLoggingInterceptor.Level.NONE
+            }
+        }
 }

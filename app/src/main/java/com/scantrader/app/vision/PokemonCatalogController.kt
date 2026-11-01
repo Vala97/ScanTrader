@@ -155,10 +155,11 @@ class PokemonCatalogController(
     private suspend fun fetchIntoMemory(): Boolean {
         return try {
             val list = fetchIndex()
+            val pokemon = list.filter { !PokemonCatalogIndex.isMtgCatalogId(it.id) }
             synchronized(gate) {
-                remote = list
+                remote = pokemon
                 checking = false
-                message = if (list.isEmpty()) "Nessun catalogo pubblicato." else null
+                message = if (pokemon.isEmpty()) "Nessun catalogo pubblicato." else null
             }
             publish()
             true

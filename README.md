@@ -4,12 +4,16 @@ App Android non ufficiale: scansiona carte **Magic: The Gathering**, **Pokémon*
 
 Non è affiliata a Wizards of the Coast, The Pokémon Company, Nintendo, Riot Games, Bandai, Konami o CardTrader.
 
+Licenza [GNU AGPL-3.0](LICENSE) (copyright 2026 Daniele Valacchi / WillyCo). Informativa: [docs/privacy.md](docs/privacy.md).
+
 La versione è solo in `app/version.properties` (`VERSION_NAME` e `VERSION_CODE`; oggi 1.1, build 2). **Informazioni** la legge da lì (`Versione V1.1 (build 2)`; le build debug aggiungono `· debug`).
 
 ## Cosa fa
 
 - **Scelta del gioco** prima dello scan (sette giochi, la lista scorre) e nel selettore sulla schermata di scan, che scorre in orizzontale.
-- Scan di una carta o di una sessione. **Auto-scan** riconosce la carta e, se il match supera la soglia forte (74%), la **salva da solo** dopo un’attesa configurabile, poi **torna allo scan dello stesso gioco** con fotocamera pronta e auto-scan riarmato. I match deboli restano da confermare a mano.
+- In alto nello scan, accanto all’icona della **torcia**, un pulsante accende o spegne l’**auto-scan** (la stessa scelta di Impostazioni scan; un avviso dice «Auto-scan attivo» o «Auto-scan disattivato»). La torcia rapida è solo quell’icona: nella barra chiusa di «Impostazioni scan» non c’è il chip della torcia (l’interruttore resta nel pannello aperto). Con l’auto-scan acceso il cerchio centrale non si preme: è un anello di attesa fisso. A destra, «Scatto manuale» è sempre usabile, anche mentre un frame è in analisi: mette in pausa l’auto-scan, apre sempre la conferma e l’auto-scan riprende solo quando la conferma si chiude.
+- **Auto-scan** riconosce la carta e, se il match supera la soglia scelta, la **salva da solo** dopo un’attesa configurabile, poi **torna allo scan dello stesso gioco** con fotocamera pronta e auto-scan riarmato. Sotto la soglia la carta resta da confermare a mano. La soglia è lo slider «Soglia auto-salvataggio» in Impostazioni scan, dal 50% al 99% (predefinito **74%**). L’attesa si sceglie in Impostazioni generali («Auto-Scan · attesa salvataggio»); a 0 secondi il salvataggio automatico non parte.
+- Il nome della carta viene solo dalla fascia del titolo. Set e numero di collezione, senza un nome letto lì, non si salvano da soli. In auto-scan la stessa stampa non passa due volte di fila: un’altra lingua o un’altra versione della stessa carta sì. Un codice set che non esiste nel catalogo si scarta prima della ricerca.
 - Durante lo scan lo **schermo resta acceso**.
 - **Lente e zoom**: Automatica, Principale, Ultra-grandangolo, Teleobiettivo. Se una lente fisica non si apre, i preset 0,5× / 1× / 2× / 5× restano dentro l’intervallo dello zoom. Lente e zoom (anche il pinch) restano dopo il salvataggio.
 - Riconoscimento **ibrido**: OCR, fingerprint dell’arte e **pack neurali** Milo on-device (opzionali, AGPL). Magic usa una gallery Scryfall; Pokémon una gallery TCGdex in inglese.
@@ -17,20 +21,21 @@ La versione è solo in `app/version.properties` (`VERSION_NAME` e `VERSION_CODE`
 - **Codice set.** In basso l’OCR legge il codice stampato: `0181 • DFT • IT`, `0181 DFT IT`, oppure il set attaccato alla lingua e all’artista (`ELDITTAYLOR` → `ELD`). Sulle carte vecchie vale `74/165` (numero / carte nel set): un copyright o il costo di mana non diventano set o numero. Su Pokémon il codice sta accanto alla frazione (`ASC 072/217`, `D30C006/128`).
 - **«Rileva lingua dalla carta»** in Impostazioni generali (attivo di default). In conferma la lingua proposta è quella del titolo letto; se il confronto non è chiaro, resta l’ultima lingua scelta. Con l’interruttore spento si usa solo l’ultima lingua.
 - **Prezzi in euro.** Magic usa Scryfall (`prices.eur` / `prices.eur_foil`), senza token: stampa esatta, poi la stampa inglese dello stesso set e numero, poi la ristampa di carta più economica (a parità, la più recente). I fallback sono segnati come approssimati (`Scryfall (circa)`). Pokémon usa Cardmarket e **non ha un prezzo foil**: in conferma non c’è l’interruttore foil e non si mostra un importo holo. Il prezzo in dollari non viene mostrato.
-- **Token API CardTrader** opzionale, in Impostazioni, cifrato nel Keystore del telefono. Solo con un token il prezzo Magic è la media delle inserzioni (lingua, condizione e foil se ci sono). Senza token non parte nessuna chiamata a CardTrader.
+- **Token API CardTrader** opzionale, scritto in Impostazioni e cifrato nel Keystore del telefono. Non viene compilato nell’APK. Solo con un token il prezzo Magic è la media delle inserzioni (lingua, condizione e foil se ci sono). Senza token non parte nessuna chiamata a CardTrader.
 - Chiamate Scryfall in coda (~10 al secondo), con cache e pausa dopo un HTTP 429.
 - Conferma di lingua, condizione, foil (solo Magic), quantità e collezione, con la percentuale di match e la fonte del prezzo (`Scryfall`, `Scryfall (circa)`, `CardTrader`, `Cardmarket`).
 - **Export CSV CardTrader**, un file per gioco, nel formato `POST /product_imports`.
-- **Collezione divisa per gioco e per espansione**, con le sezioni che si chiudono.
+- **Collezione divisa per gioco e per espansione**, con le sezioni che si chiudono. Si cerca per nome (stampato o di catalogo) e per espansione (nome del set, codice, e i nomi già presenti nella cache locale). I filtri stanno in un pannello chiuso di default, accanto alla ricerca. Una collezione si rinomina dalla home (pressione lunga o matita) e dalla sua schermata. Nella scheda carta si può scrivere un prezzo: sostituisce quello automatico finché non si tocca «Ripristina prezzo automatico». Le copie identiche stanno su una riga e la quantità si somma. Foil e variante restano righe diverse (il foil Pokémon resta spento); contano anche lingua e condizione.
 - **Collegamento al DLS Tracker** (facoltativo): le carte salvate vanno nel registro del proprio utente e da lì su CardTrader. Vedi [DLS Tracker](#dls-tracker).
+- Al primo avvio un’introduzione a pagine. L’ultima, «Fotocamera e pacchetti», chiede la fotocamera e propone il pack neurale Magic e i cataloghi Pokémon. In Impostazioni generali, «Rivedi introduzione» la riapre. «Mostra informazioni aggiuntive (debug)» è spento: acceso, in conferma compaiono il banner «Conferma a mano» e la percentuale di riconoscimento.
 - Interfaccia **Material 3 blu** (chiaro e scuro). L’icona è il medaglione blu e oro (cristallo, teschio, due uccelli e i simboli elementali) su fondo blu navy; la stessa compare in **Informazioni**.
 
 Nessun account, nessun backend a pagamento. Unico costo eventuale: account sviluppatore Google Play (~25 USD) se pubblichi.
 
 ### Pack neurali
 
-- **MTG**: **Impostazioni** → download da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0). Senza pack il riconoscimento resta sull’OCR e lo scan lo segnala.
-- **Pokémon**: **Impostazioni → Riconoscimento Pokémon** scarica i `.stcat` dal release GitHub (`stcat-index.json` su `releases/latest`). L’importazione manuale di un `.stcat` resta in quella sezione, visibile solo con le informazioni di debug. I file si generano con [`tools/build_pokemon_stcat`](tools/build_pokemon_stcat/README.md) e l’indice con [`tools/publish_stcat`](tools/publish_stcat/README.md).
+- **MTG**: **Impostazioni** scarica il modello da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0) e il catalogo Magic indicato nell’indice `stcat-index.json` (id `mtg`, con sha256). La data letta dall’indice compare in Impostazioni e, se è più nuova, il pulsante diventa «Aggiorna». Senza pack il riconoscimento resta sull’OCR e lo scan lo segnala.
+- **Pokémon**: **Impostazioni → Riconoscimento Pokémon** scarica i `.stcat` dallo stesso indice, su `releases/latest`. L’importazione manuale di un `.stcat` resta in quella sezione, visibile solo con le informazioni di debug. Come si pubblicano i due pack: [Aggiornare i pack neurali](#aggiornare-i-pack-neurali).
 
 ## Riftbound, One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena
 
@@ -89,18 +94,23 @@ Il tracker deve essere raggiungibile dal telefono (per esempio su Tailscale, con
 2. File → Open → cartella `ScanTrader`.
 3. Lascia che Gradle sincronizzi, poi Run su un telefono USB o un emulatore.
 
-`minSdk` 26, `compileSdk` 35. La build vuole **JDK 17** (sorgenti e bytecode), Android Gradle Plugin **8.13.2** e Gradle **8.13** (lo wrapper è già nel repo).
+`minSdk` 26, `compileSdk` 35. La build vuole **JDK 17** (sorgenti e bytecode), Android Gradle Plugin **8.13.2** e Gradle **8.13** (lo wrapper è già nel repo). `gradle.properties` non ha un percorso JDK della macchina: da terminale imposta `JAVA_HOME` su un JDK 17 prima di lanciare Gradle.
 
 Da terminale, con SDK Android installato e `local.properties` (`sdk.dir=...`):
 
 ```bat
 gradlew.bat :app:assembleDebug
 gradlew.bat :app:assembleRelease
+gradlew.bat :app:bundleRelease -Pscantrader.githubSelfUpdate=false
 ```
 
-`assembleRelease` attiva minify e `shrinkResources` (regole in `app/proguard-rules.pro`: ONNX Runtime, ML Kit, Room, Retrofit e i model Gson). Moshi e kotlinx.serialization non sono dipendenze. La release include solo l’ABI `arm64-v8a`. La debug tiene tutte le ABI, così un emulatore x86_64 parte ancora.
+`assembleRelease` e `bundleRelease` usano la stessa firma (se c’è `keystore.properties` o le variabili `SCANTRADER_KEYSTORE_*`) e lo stesso minify (`shrinkResources`, regole in `app/proguard-rules.pro`: ONNX Runtime, ML Kit, Room, Retrofit e i model Gson). Moshi e kotlinx.serialization non sono dipendenze. Senza keystore l’APK e l’AAB si compilano lo stesso e restano non firmati (`app-release-unsigned.apk`, `app-release-unsigned.aab`): in log compare un avviso.
 
-Senza keystore l’APK di release si compila lo stesso e resta non firmato (`app-release-unsigned.apk`): in log compare un avviso. Una build Play Store, senza l’aggiornamento da GitHub, si ottiene con `-Pscantrader.githubSelfUpdate=false` (il task resta `assembleRelease` / `assembleDebug`).
+L’APK di release, quello dell’aggiornamento da GitHub, include solo `arm64-v8a`. L’AAB per il Play Store si ottiene con `-Pscantrader.githubSelfUpdate=false`: spegne l’aggiornamento da GitHub e mette anche `armeabi-v7a`. Play spezza il bundle per ABI, quindi il telefono scarica solo la sua. `x86` e `x86_64` non entrano nel bundle (servono all’emulatore). La debug tiene tutte le ABI.
+
+Se `local.properties` contiene `cardtrader.token`, o se si passa `-Pscantrader.cardTraderToken`, la configurazione di Gradle si ferma di proposito. Il token non entra nell’APK: si scrive solo nell’app, in Impostazioni.
+
+Se `local.properties` contiene `cardtrader.token`, o se si passa `-Pscantrader.cardTraderToken`, la configurazione di Gradle si ferma di proposito. Il token non entra nell’APK: si scrive solo nell’app, in Impostazioni.
 
 ## Firma della release
 
@@ -134,6 +144,66 @@ Non usa `releases/latest`: quell’URL deve restare il release dei cataloghi (`s
 Per una build destinata al Play Store il controllo GitHub si spegne con `-Pscantrader.githubSelfUpdate=false`. L’interfaccia `UpdateSource` è il punto in cui infilare gli aggiornamenti in-app di Play.
 
 L’indice si prepara con [`tools/publish_app_update`](tools/publish_app_update/README.md): lo script non carica nulla. Il workflow sul tag `v*` carica l’APK firmato e `app-update.json` sul release `app-update`, e lo lascia prerelease.
+
+## Pubblicare una versione
+
+1. In `app/version.properties` alza `VERSION_CODE` (un intero maggiore di quello già in giro) e, se serve, `VERSION_NAME`. È l’unico posto: l’APK e **Informazioni** li leggono da lì.
+2. Fai il merge su `main`.
+3. Dal commit su `main`, crea e pusha il tag `v` più la versione, per esempio `v1.2`:
+
+```bat
+git tag v1.2
+git push origin v1.2
+```
+
+4. Parte `.github/workflows/release-apk.yml` (sui tag `v*`). Se nel repository ci sono i quattro secret di firma, compila l’APK firmato e lo carica, insieme a `app-update.json`, sul release **prerelease** `app-update`. Senza quei secret il job di build non parte. `app-update` resta prerelease così `stcat` continua a essere `releases/latest` per i cataloghi.
+5. Controlla il run nella scheda **Actions** del repository, e che l’APK e `app-update.json` siano sul release `app-update`. Quel workflow carica solo l’APK: l’AAB non va sul release `app-update`.
+6. L’AAB per Play, a parte, si lancia a mano dallo stesso workflow (**Actions → Release APK → Run workflow**). Se i secret di firma ci sono, compila `bundleRelease` con `-Pscantrader.githubSelfUpdate=false` e lascia l’AAB come artifact dell’esecuzione, non come asset del release.
+
+## Aggiornare i pack neurali
+
+L’app legge un solo indice:
+
+`https://github.com/Vala97/ScanTrader/releases/latest/download/stcat-index.json`
+
+`releases/latest` è l’ultimo release **non** prerelease. I pack stanno sul tag `stcat`. Non creare un release nuovo per un catalogo e non caricare questi file sul tag `app-update`: quello è il prerelease dell’APK. Un `gh release create` sul tag già esistente sostituisce l’elenco degli asset. Si usa solo `gh release upload --clobber`.
+
+Lo script [`tools/publish_stcat`](tools/publish_stcat/README.md) calcola byte e sha256, scrive l’indice e stampa il comando. Non carica niente. `--version` vale solo per i file di quella esecuzione. `--base` tiene le righe già online il cui id non stai riscrivendo, versione compresa. Senza `--base`, l’indice nuovo contiene solo i file passati e la riga dell’altro gioco sparisce.
+
+### Magic
+
+Il file non si ricostruisce in questo repository. È il `.npz` già calcolato da Milo sulle carte Scryfall e pubblicato su Hugging Face `HanClinto/milo`, cartella `catalogs`. Quello online adesso è `milo1-scryfall-mtg-2026-07-09.npz`: id `mtg`, versione `2026.07.09`, 56252182 byte, sha256 `c5cb0dc150eb9f5b183396dd25aecaa9efc5ce3d001dd8bef282fcc73ee778be`. L’app accetta anche uno `.stcat` già convertito; con l’URL che finisce in `.npz` converte lei sul telefono. La versione è la data nel nome del file, con i punti (`2026.07.09`): è quella che compare in Impostazioni.
+
+Quando su Hugging Face c’è un `.npz` più nuovo, scaricalo, tieni l’indice già pubblicato e carica i due file sullo stesso tag:
+
+```bat
+curl -L -o milo1-scryfall-mtg-2026-07-09.npz https://huggingface.co/HanClinto/milo/resolve/main/catalogs/milo1-scryfall-mtg-2026-07-09.npz
+curl -L -o stcat-index.json https://github.com/Vala97/ScanTrader/releases/download/stcat/stcat-index.json
+python tools\publish_stcat\publish_stcat.py --version 2026.07.09 --name mtg=Magic --base stcat-index.json --out stcat-index.json mtg=milo1-scryfall-mtg-2026-07-09.npz
+gh release upload stcat --repo Vala97/ScanTrader --clobber milo1-scryfall-mtg-2026-07-09.npz stcat-index.json
+```
+
+Sostituisci nome file e `--version` con quelli del `.npz` nuovo. Poi controlla che l’ultimo release non prerelease sia ancora `stcat` e che lo sha256 dell’asset coincida con la riga `mtg` dell’indice.
+
+### Pokémon
+
+Il `.stcat` inglese si genera in locale con [`tools/build_pokemon_stcat`](tools/build_pokemon_stcat/README.md). Servono Python 3.10+, il modello Milo ONNX e la cache immagini TCGdex (circa 2 GB, da non ridistribuire). Il catalogo intero può richiedere 1–3 ore o più. La versione è la data del build, con i punti.
+
+```bat
+cd tools\build_pokemon_stcat
+pip install -r requirements.txt
+python build_pokemon_stcat.py --out pokemon.stcat
+copy pokemon.stcat pokemon-en.stcat
+curl -L -o stcat-index.json https://github.com/Vala97/ScanTrader/releases/download/stcat/stcat-index.json
+python ..\publish_stcat\publish_stcat.py --version 2026.10.26 --base stcat-index.json --out stcat-index.json pokemon-en.stcat
+gh release upload stcat --repo Vala97/ScanTrader --clobber pokemon-en.stcat stcat-index.json
+```
+
+`--base` lascia la riga `mtg`. Cambia `2026.10.26` con il giorno del build. L’id resta `pokemon-en`, che è il nome del file senza estensione.
+
+### Perché non c’è un workflow
+
+Non c’è un job Actions che ricostruisce i pack. `GITHUB_TOKEN` basta per caricare un file su `stcat`, ma il calcolo no. Il catalogo Pokémon scarica le immagini di tutto l’inglese TCGdex e fa l’inferenza ONNX carta per carta: è il lavoro da 1–3 ore descritto sopra, troppo pesante per un runner senza GPU e da non schedulare. Magic non ha uno script Scryfall in questo repository: gli embedding li pubblica già HanClinto/milo. Un job che riscarica lo stesso `.npz` da Hugging Face non aggiunge le carte uscite dopo quel file. Quando Milo pubblica un catalogo nuovo, i comandi di sopra lo mettono sull’indice.
 
 ## Import su CardTrader
 

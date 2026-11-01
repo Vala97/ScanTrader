@@ -252,6 +252,7 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
             ScanDefaults(CardLanguage.ENGLISH, CardCondition.NEAR_MINT),
         )
     val neuralPackState = app.neuralPack.mtgState
+    val mtgCatalog = app.neuralPack.mtgCatalogStatus
     val pokemonPackState = app.neuralPack.pokemonState
     val pokemonCatalogs = app.pokemonCatalogs.ui
     val lensOptions = MutableStateFlow(CameraDevices.lensOptions(app))
@@ -347,7 +348,10 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     fun loadNeuralPack() {
-        viewModelScope.launch { app.neuralPack.ensureLoaded() }
+        viewModelScope.launch {
+            app.neuralPack.ensureLoaded()
+            app.neuralPack.refreshMtgIndex()
+        }
     }
 
     fun refreshPokemonCatalogs() {

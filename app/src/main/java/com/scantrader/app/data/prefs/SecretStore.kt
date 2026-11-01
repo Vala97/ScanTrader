@@ -1,7 +1,6 @@
 package com.scantrader.app.data.prefs
 
 import android.content.Context
-import com.scantrader.app.BuildConfig
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -21,10 +20,8 @@ class SecretStore(context: Context) {
     fun hasCardTraderToken(): Boolean = !getCardTraderToken().isNullOrBlank()
 
     fun getCardTraderToken(): String? {
-        val payload = prefs.getString(TOKEN, null)
-        val stored = payload?.let { runCatching { decrypt(it) }.getOrNull() }?.trim()?.takeIf { it.isNotEmpty() }
-        if (!stored.isNullOrEmpty()) return stored
-        return BuildConfig.CARDTRADER_TOKEN.trim().takeIf { it.isNotEmpty() }
+        val payload = prefs.getString(TOKEN, null) ?: return null
+        return runCatching { decrypt(payload) }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     fun setCardTraderToken(token: String?) {

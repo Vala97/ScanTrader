@@ -123,6 +123,20 @@ object PokemonCatalogIndex {
         }
     }
 
+    /** Magic catalog published in the same index as the Pokémon `.stcat` files. */
+    const val MTG_CATALOG_ID = "mtg"
+
+    fun isMtgCatalogId(id: String): Boolean {
+        val key = id.trim().lowercase(Locale.US)
+        return key == MTG_CATALOG_ID || key == "magic" ||
+            key.startsWith("$MTG_CATALOG_ID-") || key.startsWith("magic-")
+    }
+
+    /** Newest Magic row. Pokémon rows stay out of the Magic download. */
+    fun mtgEntry(entries: List<StcatCatalogEntry>): StcatCatalogEntry? =
+        entries.filter { isMtgCatalogId(it.id) }
+            .maxWithOrNull { left, right -> compareVersions(left.version, right.version) }
+
     fun fileIdOrNull(id: String): String? {
         val cleaned = id.trim().replace(Regex("[^A-Za-z0-9._-]"), "_")
         if (cleaned.isEmpty() || cleaned == "." || cleaned == ".." || cleaned.contains("..")) {

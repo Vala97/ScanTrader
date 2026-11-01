@@ -35,7 +35,7 @@ fun releaseKeystore(): Map<String, String>? {
     val keyPassword = value("keyPassword", "SCANTRADER_KEYSTORE_KEY_PASSWORD")
     if (storePath == null || storePassword == null || keyAlias == null || keyPassword == null) {
         logger.warn(
-            "ScanTrader: release APK will be unsigned. Add keystore.properties " +
+            "ScanTrader: release APK and AAB will be unsigned. Add keystore.properties " +
                 "(storeFile, storePassword, keyAlias, keyPassword) or set " +
                 "SCANTRADER_KEYSTORE_FILE, SCANTRADER_KEYSTORE_PASSWORD, " +
                 "SCANTRADER_KEYSTORE_KEY_ALIAS and SCANTRADER_KEYSTORE_KEY_PASSWORD.",
@@ -44,7 +44,7 @@ fun releaseKeystore(): Map<String, String>? {
     }
     val candidate = file(storePath).let { if (it.isAbsolute) it else rootProject.file(storePath) }
     if (!candidate.isFile) {
-        logger.warn("ScanTrader: keystore not found at ${candidate.absolutePath}. Release APK will be unsigned.")
+            logger.warn("ScanTrader: keystore not found at ${candidate.absolutePath}. Release APK and AAB will be unsigned.")
         return null
     }
     return mapOf(
@@ -57,17 +57,28 @@ fun releaseKeystore(): Map<String, String>? {
 
 val releaseSigning = releaseKeystore()
 
-/** Token CardTrader di questa build. Sta in `local.properties` (ignorato da git), non nel sorgente. */
-val cardTraderToken = run {
+/**
+ * The CardTrader token is entered in the app and stored encrypted on the device.
+ * A value in local.properties or -Pscantrader.cardTraderToken would be compiled
+ * into the APK, so the build stops instead.
+ */
+fun rejectBundledCardTraderToken() {
     val local = Properties()
     val localFile = rootProject.file("local.properties")
     if (localFile.isFile) localFile.inputStream().use { local.load(it) }
-    (local.getProperty("cardtrader.token") ?: findProperty("scantrader.cardTraderToken") as? String)
-        ?.trim()
-        .orEmpty()
-        .replace("\\", "\\\\")
-        .replace("\"", "\\\"")
+    val fromFile = local.getProperty("cardtrader.token")?.trim().orEmpty()
+    val fromProperty = (findProperty("scantrader.cardTraderToken") as? String)?.trim().orEmpty()
+    if (fromFile.isNotEmpty() || fromProperty.isNotEmpty()) {
+        throw org.gradle.api.GradleException(
+            "ScanTrader: do not put the CardTrader token in the build. " +
+                "Remove cardtrader.token from local.properties and do not pass " +
+                "-Pscantrader.cardTraderToken. Enter the token in the app, under Impostazioni.",
+        )
+    }
 }
+
+rejectBundledCardTraderToken()
+
 val githubSelfUpdate = (findProperty("scantrader.githubSelfUpdate") as? String)
     ?.equals("false", ignoreCase = true)
     ?.not()
@@ -87,7 +98,6 @@ android {
         buildConfigField("boolean", "GITHUB_SELF_UPDATE", githubSelfUpdate.toString())
         // Gallerie visive dei giochi CardTrader (`<indirizzo><gioco>.stcat`). Vuoto: nessuna galleria scaricata.
         buildConfigField("String", "CT_GALLERY_URL", "\"" + (project.findProperty("scantrader.ctGalleryUrl") ?: "") + "\"")
-        buildConfigField("String", "CARDTRADER_TOKEN", "\"$cardTraderToken\"")
     }
 
     signingConfigs {
@@ -112,9 +122,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Phones. Debug keeps every ABI so an x86_64 emulator still runs.
+            // GitHub self-update APK: arm64 only, so the sideload file stays smaller.
+            // Play (`-Pscantrader.githubSelfUpdate=false`) also ships armeabi-v7a.
+            // Play splits the AAB per ABI. x86 stays out of the store bundle; debug
+            // still keeps every ABI so an x86_64 emulator runs.
             ndk {
                 abiFilters += "arm64-v8a"
+                if (!githubSelfUpdate) {
+                    abiFilters += "armeabi-v7a"
+                }
             }
         }
     }
@@ -184,4 +200,5 @@ dependencies {
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.robolectric)
+    testImplementation(libs.okhttp.mockwebserver)
 }
