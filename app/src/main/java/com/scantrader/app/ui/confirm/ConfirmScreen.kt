@@ -204,6 +204,11 @@ fun ConfirmScreen(
             language = viewModel.sessionLanguage ?: defaults.language
         }
     }
+    val languageReadyKey = remember { mutableStateOf<String?>(null) }
+    val shownKey = selected?.identityKey()
+    val languageReady = languageTouched ||
+        !defaults.detectCardLanguage ||
+        (shownKey != null && languageReadyKey.value == shownKey)
     LaunchedEffect(selected?.identityKey(), defaults.detectCardLanguage) {
         if (languageTouched || !defaults.detectCardLanguage) return@LaunchedEffect
         val card = selected ?: return@LaunchedEffect
@@ -219,6 +224,7 @@ fun ConfirmScreen(
             detected = detected,
             lastChosen = viewModel.sessionLanguage ?: defaults.language,
         )
+        languageReadyKey.value = card.identityKey()
     }
     LaunchedEffect(selected?.identityKey(), language, condition, foil) {
         val card = selected ?: return@LaunchedEffect
@@ -260,9 +266,19 @@ fun ConfirmScreen(
     val autoSaveJob = remember { mutableStateOf<Job?>(null) }
     val scheduledMatch = remember { mutableStateOf<String?>(null) }
     val matchKey = selected?.identityKey()
+    val languageWaitStart = remember { mutableStateOf(0L) }
+    val languageWaitKey = remember { mutableStateOf<String?>(null) }
     SideEffect {
         val wait = defaults.autoSaveWaitSeconds
         val key = matchKey
+        if (key != languageWaitKey.value) {
+            languageWaitKey.value = key
+            languageWaitStart.value = System.currentTimeMillis()
+        }
+        val waited = System.currentTimeMillis() - languageWaitStart.value
+        if (!AutoSaveSchedule.readyToCount(defaults.detectCardLanguage, languageReady, waited)) {
+            return@SideEffect
+        }
         if (!autoSaveArmed || key == null || collectionId == null || wait <= 0) return@SideEffect
         val claim = AutoSaveSchedule.claim(scheduledMatch.value, key)
         if (!claim.start) return@SideEffect

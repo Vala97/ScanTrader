@@ -30,6 +30,39 @@ object CardLanguageDetector {
         lastChosen: CardLanguage,
     ): CardLanguage = if (detectEnabled && detected != null) detected else lastChosen
 
+    /** Cap while the rules strip is still being read. Past this, detection uses the text it has. */
+    const val RULES_WAIT_CAP_MS = 2_500L
+
+    /**
+     * Pokémon rules text is what separates languages that share a title.
+     * A title that already proves the language (Hangul, for example) does not wait.
+     * Other games wait only while a rules pass is actually in flight.
+     */
+    fun shouldWaitForRules(
+        game: Game,
+        ocrName: String?,
+        ocrText: String?,
+        rulesPending: Boolean,
+        waitedMs: Long,
+        capMs: Long = RULES_WAIT_CAP_MS,
+    ): Boolean {
+        if (waitedMs >= capMs) return false
+        if (game == Game.POKEMON && provesLanguage(ocrName, ocrText)) return false
+        return rulesPending
+    }
+
+    /** True when the title or the text already on hand is enough, without the rules strip. */
+    fun provesLanguage(ocrName: String?, ocrText: String?): Boolean {
+        val text = listOfNotNull(ocrName, ocrText).filter { it.isNotBlank() }.joinToString("\n")
+        return detect(
+            ocrName = ocrName,
+            englishName = null,
+            printed = emptyMap(),
+            ocrText = text,
+            pokemonSignals = true,
+        ) != null
+    }
+
     /**
      * A failed, cancelled, or uncertain lookup must not replace a language already accepted.
      * A new confident detection still wins.

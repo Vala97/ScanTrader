@@ -3,6 +3,7 @@ package com.scantrader.app
 import com.scantrader.app.data.catalog.CardLanguageDetector
 import com.scantrader.app.data.model.CardLanguage
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -181,6 +182,7 @@ class CardLanguageDetectorTest {
         assertEquals(CardLanguage.PORTUGUESE, pokemon("Evolui de\nFraqueza\nRecuo"))
         assertEquals(CardLanguage.JAPANESE, pokemon("ワザ\nにげる\n弱点"))
         assertEquals(CardLanguage.KOREAN, pokemon("약점\n후퇴"))
+        assertEquals(CardLanguage.KOREAN, pokemon("피카츄"))
         assertEquals(CardLanguage.CHINESE_T, pokemon("弱點\n抵抗\n撤退"))
         assertEquals(CardLanguage.CHINESE_S, pokemon("弱点\n抵抗\n撤退"))
     }
@@ -217,6 +219,39 @@ class CardLanguageDetectorTest {
     }
 
     @Test
+    fun hangulTitleProvesKoreanWithoutWaitingForRules() {
+        assertEquals(CardLanguage.KOREAN, pokemon("피카츄"))
+        assertTrue(CardLanguageDetector.provesLanguage("피카츄", null))
+        assertFalse(
+            CardLanguageDetector.shouldWaitForRules(
+                game = com.scantrader.app.data.model.Game.POKEMON,
+                ocrName = "피카츄",
+                ocrText = null,
+                rulesPending = true,
+                waitedMs = 0,
+            ),
+        )
+        assertTrue(
+            CardLanguageDetector.shouldWaitForRules(
+                game = com.scantrader.app.data.model.Game.POKEMON,
+                ocrName = "Pikachu",
+                ocrText = "Pikachu",
+                rulesPending = true,
+                waitedMs = 0,
+            ),
+        )
+        assertFalse(
+            CardLanguageDetector.shouldWaitForRules(
+                game = com.scantrader.app.data.model.Game.POKEMON,
+                ocrName = "Pikachu",
+                ocrText = "Pikachu",
+                rulesPending = true,
+                waitedMs = CardLanguageDetector.RULES_WAIT_CAP_MS,
+            ),
+        )
+    }
+
+    @Test
     fun uncertainPokemonTextFallsBack() {
         assertNull(
             CardLanguageDetector.detect(
@@ -240,7 +275,7 @@ class CardLanguageDetectorTest {
         assertEquals(CardLanguage.CHINESE_S, CardLanguage.fromCatalogCode("zh-cn"))
         assertEquals(CardLanguage.CHINESE_T, CardLanguage.fromCatalogCode("zh-tw"))
         assertEquals(
-            listOf("en", "it", "fr", "de", "es", "pt", "ja", "ko", "zh-cn", "zh-tw"),
+            listOf("en", "it", "fr", "de", "es", "pt", "ja", "zh-cn", "zh-tw"),
             com.scantrader.app.data.catalog.pokemonTcgdexLanguages(),
         )
     }

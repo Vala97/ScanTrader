@@ -114,7 +114,8 @@ private fun CardLanguage.tcgdexLang(): String? = when (this) {
     CardLanguage.SPANISH -> "es"
     CardLanguage.PORTUGUESE -> "pt"
     CardLanguage.JAPANESE -> "ja"
-    CardLanguage.KOREAN -> "ko"
+    // TCGdex has no Korean catalog. Hangul and the rules words decide the language.
+    CardLanguage.KOREAN -> null
     CardLanguage.CHINESE_S -> "zh-cn"
     CardLanguage.CHINESE_T -> "zh-tw"
 }
