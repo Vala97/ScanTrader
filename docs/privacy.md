@@ -18,7 +18,7 @@ L’app parla con questi servizi, solo per le funzioni indicate.
 - **TCGdex** (`api.tcgdex.net`): catalogo Pokémon (inglese, italiano, giapponese, cinese). Non serve un token.
 - **CardTrader** (`api.cardtrader.com`): solo se in Impostazioni hai salvato il tuo token. L’app lo manda come `Authorization: Bearer`. Serve per i prezzi Magic dalle inserzioni e per i cataloghi di Riftbound, One Piece, Dragon Ball Super Fusion World, Yu-Gi-Oh! e Union Arena, comprese le immagini di quelle carte. Senza token queste chiamate non partono: Magic resta su Scryfall, gli altri giochi avvisano che manca il token.
 - **Hugging Face** (`huggingface.co/HanClinto/milo`): download opzionale del modello Milo e del catalogo di embedding per Magic. Dopo il download il riconoscimento resta sul telefono.
-- **GitHub** (`github.com` e `githubusercontent.com`), repository Vala97/ScanTrader: indice e file `.stcat` dei cataloghi Pokémon (`releases/latest`), e il controllo aggiornamenti dell’app sul tag fisso `app-update` (file `app-update.json` e APK). L’aggiornamento in-app è spento nelle build Play (`-Pscantrader.githubSelfUpdate=false`).
+- **GitHub** (`github.com` e `githubusercontent.com`), repository Vala97/ScanTrader: indice e file `.stcat` dei cataloghi Pokémon (tag fisso `stcat`), e il controllo aggiornamenti dell’app sul tag fisso `app-update` (file `app-update.json` e APK). L’aggiornamento in-app è spento nelle build Play (`-Pscantrader.githubSelfUpdate=false`).
 - **DLS Tracker**, solo se lo colleghi tu: l’indirizzo è quello che scrivi (HTTPS). L’app manda le carte salvate (non la foto) e legge l’inventario. È il tracker, non l’app, a scrivere poi su CardTrader.
 
 Le richieste portano lo User-Agent `ScanTrader/1.0`, con il link al repository GitHub.
@@ -57,7 +57,7 @@ The app contacts these services only for the features named here.
 - **TCGdex** (`api.tcgdex.net`): Pokémon catalog (English, Italian, Japanese, Chinese). No token.
 - **CardTrader** (`api.cardtrader.com`): only after you save your own token in Settings. The app sends it as `Authorization: Bearer`. It is used for Magic prices from listings and for the Riftbound, One Piece, Dragon Ball Super Fusion World, Yu-Gi-Oh!, and Union Arena catalogs, including those card images. Without a token those calls are not made: Magic stays on Scryfall, and the other games say the token is missing.
 - **Hugging Face** (`huggingface.co/HanClinto/milo`): optional download of the Milo model and the Magic embedding catalog. Recognition stays on the phone after that.
-- **GitHub** (`github.com` and `githubusercontent.com`), repository Vala97/ScanTrader: Pokémon `.stcat` catalog index and files (`releases/latest`), and the in-app update check on the fixed `app-update` tag (`app-update.json` and the APK). In-app update is off in Play builds (`-Pscantrader.githubSelfUpdate=false`).
+- **GitHub** (`github.com` and `githubusercontent.com`), repository Vala97/ScanTrader: Pokémon `.stcat` catalog index and files (fixed `stcat` tag), and the in-app update check on the fixed `app-update` tag (`app-update.json` and the APK). In-app update is off in Play builds (`-Pscantrader.githubSelfUpdate=false`).
 - **DLS Tracker**, only if you connect it: the address is the HTTPS URL you enter. The app sends saved cards (not the photo) and reads inventory. The tracker, not the app, is what later writes to CardTrader.
 
 Requests use the User-Agent `ScanTrader/1.0` and include the link to the GitHub repository.

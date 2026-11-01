@@ -20,12 +20,50 @@ data class StcatCatalogEntry(
 )
 
 /**
+ * Turns an index failure into a log line and a settings string.
+ * The log is the exception class or `HTTP nnn` only: no body, headers, or token.
+ */
+object StcatIndexFailure {
+    private val HTTP = Regex("""\bHTTP (\d{3})\b""")
+
+    fun httpCode(error: Throwable): Int? {
+        var current: Throwable? = error
+        while (current != null) {
+            val code = HTTP.find(current.message.orEmpty())?.groupValues?.get(1)?.toIntOrNull()
+            if (code != null) return code
+            current = current.cause
+        }
+        return null
+    }
+
+    fun warnLine(error: Throwable): String {
+        val code = httpCode(error)
+        return if (code != null) {
+            "stcat: index failed HTTP $code"
+        } else {
+            "stcat: index failed ${error.javaClass.simpleName}"
+        }
+    }
+
+    /** Keeps [base] for a network failure. An HTTP status is appended. */
+    fun userMessage(base: String, error: Throwable): String {
+        val code = httpCode(error) ?: return base
+        val stem = base.trimEnd().removeSuffix(".")
+        return "$stem (HTTP $code)."
+    }
+}
+
+/**
  * Parses `stcat-index.json`, checks sha256, and compares dotted versions.
  * No Android types: unit tests run this on the JVM.
  */
 object PokemonCatalogIndex {
+    /**
+     * Fixed tag, not `releases/latest`. A normal app release (for example `v1.2`)
+     * would otherwise become latest and this file would 404.
+     */
     const val INDEX_URL =
-        "https://github.com/Vala97/ScanTrader/releases/latest/download/stcat-index.json"
+        "https://github.com/Vala97/ScanTrader/releases/download/stcat/stcat-index.json"
 
     private val SHA256 = Regex("^[0-9a-fA-F]{64}$")
 

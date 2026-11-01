@@ -227,7 +227,16 @@ class NeuralPackManager(
 
     /** Reads the Magic row from the published catalog index, without downloading it. */
     suspend fun refreshMtgIndex() {
-        val remote = withContext(Dispatchers.IO) { runCatching { fetchMtgEntry() }.getOrNull() }
+        val remote = withContext(Dispatchers.IO) {
+            try {
+                fetchMtgEntry()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                com.scantrader.app.scan.ScanDebug.w(StcatIndexFailure.warnLine(t))
+                null
+            }
+        }
         _mtgCatalogStatus.value = readMtgCatalogStatus(remoteVersion = remote?.version)
     }
 
@@ -241,7 +250,13 @@ class NeuralPackManager(
                     fetchMtgEntry()
                 } catch (t: Throwable) {
                     if (t is kotlinx.coroutines.CancellationException) throw t
-                    _mtgState.value = NeuralPackState.Error("Elenco catalogo Magic non raggiungibile.")
+                    com.scantrader.app.scan.ScanDebug.w(StcatIndexFailure.warnLine(t))
+                    _mtgState.value = NeuralPackState.Error(
+                        StcatIndexFailure.userMessage(
+                            "Elenco catalogo Magic non raggiungibile.",
+                            t,
+                        ),
+                    )
                     return@withLock false
                 }
                 if (entry == null) {

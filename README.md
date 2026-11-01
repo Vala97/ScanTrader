@@ -35,7 +35,7 @@ Nessun account, nessun backend a pagamento. Unico costo eventuale: account svilu
 ### Pack neurali
 
 - **MTG**: **Impostazioni** scarica il modello da Hugging Face `HanClinto/milo` (~60 MB, AGPL-3.0) e il catalogo Magic indicato nell’indice `stcat-index.json` (id `mtg`, con sha256). La data letta dall’indice compare in Impostazioni e, se è più nuova, il pulsante diventa «Aggiorna». Senza pack il riconoscimento resta sull’OCR e lo scan lo segnala.
-- **Pokémon**: **Impostazioni → Riconoscimento Pokémon** scarica i `.stcat` dallo stesso indice, su `releases/latest`. L’importazione manuale di un `.stcat` resta in quella sezione, visibile solo con le informazioni di debug. Come si pubblicano i due pack: [Aggiornare i pack neurali](#aggiornare-i-pack-neurali).
+- **Pokémon**: **Impostazioni → Riconoscimento Pokémon** scarica i `.stcat` dallo stesso indice, sul tag fisso `stcat`. L’importazione manuale di un `.stcat` resta in quella sezione, visibile solo con le informazioni di debug. Come si pubblicano i due pack: [Aggiornare i pack neurali](#aggiornare-i-pack-neurali).
 
 ## Riftbound, One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena
 
@@ -156,17 +156,17 @@ git tag v1.2
 git push origin v1.2
 ```
 
-4. Parte `.github/workflows/release-apk.yml` (sui tag `v*`). Se nel repository ci sono i quattro secret di firma, compila l’APK firmato e lo carica, insieme a `app-update.json`, sul release **prerelease** `app-update`. Senza quei secret il job di build non parte. `app-update` resta prerelease così `stcat` continua a essere `releases/latest` per i cataloghi.
+4. Parte `.github/workflows/release-apk.yml` (sui tag `v*`). Se nel repository ci sono i quattro secret di firma, compila l’APK firmato e lo carica, insieme a `app-update.json`, sul release **prerelease** `app-update`. Senza quei secret il job di build non parte. Il job non crea il release del tag `v*`. Se quel release esiste già, lo segna prerelease e `--latest=false`, così non sostituisce `stcat` come Latest.
 5. Controlla il run nella scheda **Actions** del repository, e che l’APK e `app-update.json` siano sul release `app-update`. Quel workflow carica solo l’APK: l’AAB non va sul release `app-update`.
 6. L’AAB per Play, a parte, si lancia a mano dallo stesso workflow (**Actions → Release APK → Run workflow**). Se i secret di firma ci sono, compila `bundleRelease` con `-Pscantrader.githubSelfUpdate=false` e lascia l’AAB come artifact dell’esecuzione, non come asset del release.
 
 ## Aggiornare i pack neurali
 
-L’app legge un solo indice:
+L’app legge un solo indice, sull’URL fisso del tag `stcat` (non `releases/latest`):
 
-`https://github.com/Vala97/ScanTrader/releases/latest/download/stcat-index.json`
+`https://github.com/Vala97/ScanTrader/releases/download/stcat/stcat-index.json`
 
-`releases/latest` è l’ultimo release **non** prerelease. I pack stanno sul tag `stcat`. Non creare un release nuovo per un catalogo e non caricare questi file sul tag `app-update`: quello è il prerelease dell’APK. Un `gh release create` sul tag già esistente sostituisce l’elenco degli asset. Si usa solo `gh release upload --clobber`.
+I pack stanno su quel tag. Non creare un release nuovo per un catalogo e non caricare questi file sul tag `app-update`: quello è il prerelease dell’APK. Un `gh release create` sul tag già esistente sostituisce l’elenco degli asset. Si usa solo `gh release upload --clobber`. Un release normale su un tag `v*` (per esempio `v1.2`) diventa `releases/latest` e nasconde `stcat` agli APK già installati che leggono ancora `latest`: il workflow lo segna prerelease e `--latest=false` se quel release esiste.
 
 Lo script [`tools/publish_stcat`](tools/publish_stcat/README.md) calcola byte e sha256, scrive l’indice e stampa il comando. Non carica niente. `--version` vale solo per i file di quella esecuzione. `--base` tiene le righe già online il cui id non stai riscrivendo, versione compresa. Senza `--base`, l’indice nuovo contiene solo i file passati e la riga dell’altro gioco sparisce.
 

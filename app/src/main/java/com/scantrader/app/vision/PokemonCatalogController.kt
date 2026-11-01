@@ -167,10 +167,11 @@ class PokemonCatalogController(
             synchronized(gate) { checking = false }
             publish()
             throw cancelled
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            com.scantrader.app.scan.ScanDebug.w(StcatIndexFailure.warnLine(t))
             synchronized(gate) {
                 checking = false
-                message = OFFLINE
+                message = StcatIndexFailure.userMessage(OFFLINE, t)
             }
             publish()
             false

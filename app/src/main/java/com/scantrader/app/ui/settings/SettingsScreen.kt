@@ -320,7 +320,7 @@ fun SettingsScreen(
                     Text(
                         banner,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (banner == PokemonCatalogController.OFFLINE) {
+                        color = if (banner.startsWith(PokemonCatalogController.OFFLINE)) {
                             MaterialTheme.colorScheme.error
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
