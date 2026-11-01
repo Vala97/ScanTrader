@@ -128,8 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     index_arg = quote(out)
     print(f"Scritto {out} ({len(document['catalogs'])} cataloghi). Nessun upload eseguito.")
     print()
-    print("# Il release con questo tag deve restare l'ultimo non-prerelease,")
-    print("# altrimenti releases/latest/download/stcat-index.json non lo vede.")
+    print("# L'app legge l'URL fisso del tag, non releases/latest.")
+    print("# Un release normale su un tag v* va tenuto fuori da Latest.")
     print("# Non toccare il tag prerelease app-update.")
     if args.base:
         print("# --base ha tenuto le righe già pubblicate. Non ricreare il release:")
@@ -151,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(
         "Indice letto dall'app: "
-        f"https://github.com/{args.repo}/releases/latest/download/stcat-index.json"
+        f"https://github.com/{args.repo}/releases/download/{args.tag}/stcat-index.json"
     )
     return 0
 

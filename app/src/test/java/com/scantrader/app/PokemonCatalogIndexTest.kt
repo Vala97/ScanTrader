@@ -5,7 +5,9 @@ import com.scantrader.app.vision.PokemonCatalogIndex
 import com.scantrader.app.vision.PokemonCatalogLibrary
 import com.scantrader.app.vision.PokemonCatalogRow
 import com.scantrader.app.vision.StcatCatalogEntry
+import com.scantrader.app.vision.StcatIndexFailure
 import java.io.File
+import java.io.IOException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -14,6 +16,43 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PokemonCatalogIndexTest {
+    @Test
+    fun indexUrlIsTheStcatTagNotLatest() {
+        assertEquals(
+            "https://github.com/Vala97/ScanTrader/releases/download/stcat/stcat-index.json",
+            PokemonCatalogIndex.INDEX_URL,
+        )
+        assertFalse(PokemonCatalogIndex.INDEX_URL.contains("releases/latest"))
+    }
+
+    @Test
+    fun httpFailureShowsTheCodeAndANetworkFailureDoesNot() {
+        val http = IllegalStateException("HTTP 404")
+        assertEquals(404, StcatIndexFailure.httpCode(http))
+        assertEquals(
+            "Elenco catalogo Magic non raggiungibile (HTTP 404).",
+            StcatIndexFailure.userMessage("Elenco catalogo Magic non raggiungibile.", http),
+        )
+        assertEquals(
+            "Connessione assente o elenco non raggiungibile (HTTP 404).",
+            StcatIndexFailure.userMessage(
+                "Connessione assente o elenco non raggiungibile.",
+                IllegalStateException("wrap", http),
+            ),
+        )
+        val offline = IOException("Unable to resolve host")
+        assertNull(StcatIndexFailure.httpCode(offline))
+        assertEquals(
+            "Connessione assente o elenco non raggiungibile.",
+            StcatIndexFailure.userMessage("Connessione assente o elenco non raggiungibile.", offline),
+        )
+        val line = StcatIndexFailure.warnLine(http)
+        assertEquals("stcat: index failed HTTP 404", line)
+        assertFalse(line.contains("http://"))
+        assertFalse(line.contains("Bearer"))
+        assertEquals("stcat: index failed IOException", StcatIndexFailure.warnLine(offline))
+    }
+
     @Test
     fun parsesTheIndexAndSkipsIncompleteEntries() {
         val sha = "ab".repeat(32)

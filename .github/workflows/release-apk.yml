@@ -93,6 +93,22 @@ jobs:
             "$RUNNER_TEMP/ScanTrader.apk" \
             "$RUNNER_TEMP/app-update.json"
 
+      - name: Keep a version tag off Latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # This job uploads only the prerelease app-update. A release created
+          # on the v* tag (GitHub's "Publish release") would still become
+          # releases/latest and hide stcat. Demote it when it exists.
+          TAG="${GITHUB_REF_NAME}"
+          if [ "$TAG" = "app-update" ] || [ "$TAG" = "stcat" ]; then
+            exit 0
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --prerelease --latest=false
+          fi
+
   play-bundle:
     needs: gate
     if: github.event_name == 'workflow_dispatch' && needs.gate.outputs.ready == 'true'
