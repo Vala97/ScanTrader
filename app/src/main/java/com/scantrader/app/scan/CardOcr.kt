@@ -18,6 +18,36 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/**
+ * Latin OCR already shows a title line plus a set code and a collector fraction.
+ * The Japanese and Chinese recognizers are extra inferences; a number with no title
+ * does not count. The title has to be one of the first lines, not a rules sentence.
+ */
+object CjkSkip {
+    private val COLLECTOR = Regex("""\b\d{1,3}\s*/\s*\d{1,3}\b""")
+    private val SET_CODE = Regex("""(?i)\b[a-z]{1,5}\d{1,3}[a-z]{0,3}\b""")
+    private val RULES_WORD = Regex(
+        """(?i)\b(?:draw|damage|search|attach|discard|energy|switch|knock|heal|your|opponent|if|when)\b""",
+    )
+
+    fun latinCoversTitleSetAndNumber(text: String): Boolean {
+        if (!COLLECTOR.containsMatchIn(text) || !SET_CODE.containsMatchIn(text)) return false
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        return lines.take(2).any { looksLikeTitle(it) }
+    }
+
+    private fun looksLikeTitle(line: String): Boolean {
+        if (line.length !in 4..40) return false
+        if (line.any { it.isDigit() }) return false
+        if (RULES_WORD.containsMatchIn(line)) return false
+        val words = line.split(Regex("""\s+""")).filter { word -> word.any { it.isLetter() } }
+        if (words.isEmpty() || words.size > 6) return false
+        if (words.all { it.length < 4 }) return false
+        if (words.size == 1 && words[0].length < 5) return false
+        return true
+    }
+}
+
 class CardOcr {
     private val latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private val japanese by lazy {
@@ -43,10 +73,17 @@ class CardOcr {
             if (!cjk) {
                 recognizeOne(latin, input)
             } else {
-                coroutineScope {
-                    listOf(latin, japanese, chinese).map { client ->
-                        async { runCatching { recognizeOne(client, input) }.getOrDefault("") }
-                    }.awaitAll()
+                val latinText = recognizeOne(latin, input)
+                if (CjkSkip.latinCoversTitleSetAndNumber(latinText)) {
+                    ScanDebug.d("ocr: cjk skipped (latin title+set+number)")
+                    latinText
+                } else {
+                    val extras = coroutineScope {
+                        listOf(japanese, chinese).map { client ->
+                            async { runCatching { recognizeOne(client, input) }.getOrDefault("") }
+                        }.awaitAll()
+                    }
+                    (listOf(latinText) + extras)
                         .filter { it.isNotBlank() }
                         .distinct()
                         .joinToString("\n")
