@@ -37,6 +37,14 @@ class CtExpansionResolver(
         snapshot = dao.getAll()
     }
 
+    /** Pokémon expansion codes from the last snapshot, lowercased. Empty before the first sync. */
+    fun pokemonCodes(): Set<String> =
+        snapshot.asSequence()
+            .filter { it.gameId == POKEMON_GAME_ID }
+            .map { it.code.trim().lowercase(Locale.ROOT) }
+            .filter { it.isNotEmpty() }
+            .toSet()
+
     suspend fun resolveEntry(entry: CardEntryEntity, allowNetwork: Boolean = true): String =
         resolve(
             game = entry.game,

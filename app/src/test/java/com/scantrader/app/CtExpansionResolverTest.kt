@@ -113,6 +113,43 @@ class CtExpansionResolverTest {
     }
 
     @Test
+    fun pokemonSnapshotCodeIsTheCsvExpansion() = runBlocking {
+        val dao = FakeExpansionDao(
+            listOf(CtExpansionEntity(20, CtExpansionResolver.POKEMON_GAME_ID, "ssh", "Sword & Shield")),
+        )
+        val resolver = CtExpansionResolver(dao)
+        resolver.refreshSnapshot()
+        assertEquals(setOf("ssh"), resolver.pokemonCodes())
+        val code = resolver.resolve(Game.POKEMON, "ssh", allowNetwork = false)
+        assertEquals("ssh", code)
+        val entry = CardEntryEntity(
+            id = 7,
+            collectionId = 1,
+            game = Game.POKEMON,
+            name = "Pikachu",
+            setCode = "swsh1",
+            setName = "Sword & Shield",
+            collectorNumber = "25",
+            scryfallId = null,
+            tcgplayerId = null,
+            imageUrl = null,
+            quantity = 1,
+            language = "English",
+            condition = "Near Mint",
+            foil = false,
+            catalogName = "Pikachu",
+        )
+        val fromSnapshot = CardTraderCsv.build(
+            entries = listOf(entry.copy(setCode = "ssh")),
+            game = Game.POKEMON,
+            expansionCodes = mapOf(7L to code),
+        )
+        assertTrue(fromSnapshot.contains(",ssh,25,"))
+        val offline = CardTraderCsv.build(entries = listOf(entry), game = Game.POKEMON)
+        assertTrue(offline.contains(",ssh,25,"))
+    }
+
+    @Test
     fun csvUsesPreResolvedExpansionCodes() {
         val entry = CardEntryEntity(
             id = 42,

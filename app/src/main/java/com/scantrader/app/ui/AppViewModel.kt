@@ -1285,7 +1285,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "parsed name=${parsed.nameGuess} cn=${parsed.collectorNumber} " +
                     "set=${parsed.setCode} count=${parsed.setCardCount} ocrMs=$ocrMs",
             )
-            val knownSet = KnownSetCodes.scrub(game.value, parsed)
+            val knownSet = KnownSetCodes.scrub(
+                game.value,
+                parsed,
+                if (game.value == Game.POKEMON) app.expansionResolver.pokemonCodes() else emptySet(),
+            )
             if (knownSet.setCode != parsed.setCode) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "set discarded (unknown set code) set=${parsed.setCode}",

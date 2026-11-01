@@ -10,17 +10,22 @@ import com.scantrader.app.scan.OcrParser
  * as `set:div` makes the name search walk a string of empty queries.
  */
 object KnownSetCodes {
-    fun scrub(game: Game, parsed: ParsedCardText): ParsedCardText {
+    fun scrub(
+        game: Game,
+        parsed: ParsedCardText,
+        extraKnown: Set<String> = emptySet(),
+    ): ParsedCardText {
         val raw = parsed.setCode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return parsed
-        if (isKnown(game, raw)) return parsed
+        if (isKnown(game, raw, extraKnown)) return parsed
         val promoted = OcrParser.setCodeCandidates(raw).firstOrNull { candidate ->
-            candidate != raw && isKnown(game, candidate)
+            candidate != raw && isKnown(game, candidate, extraKnown)
         }
         return parsed.copy(setCode = promoted)
     }
 
-    fun isKnown(game: Game, code: String?): Boolean {
+    fun isKnown(game: Game, code: String?, extraKnown: Set<String> = emptySet()): Boolean {
         val key = code?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: return false
+        if (game == Game.POKEMON && key in extraKnown) return true
         return when (game) {
             Game.MTG -> MtgSets.isKnown(key)
             Game.POKEMON -> pokemonKnown(key)

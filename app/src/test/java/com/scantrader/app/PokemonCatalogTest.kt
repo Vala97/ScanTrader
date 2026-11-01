@@ -28,6 +28,17 @@ class PokemonCatalogTest {
 
     @Test
     fun internationalPrintedCodesUseTcgdexIds() {
+        assertEquals(listOf("swsh1"), PokemonSets.recognizedIds("SSH"))
+        assertEquals(listOf("swsh12"), PokemonSets.recognizedIds("SIT"))
+        assertEquals(listOf("swsh12"), PokemonSets.directIds("swsh12", null))
+        assertEquals(listOf("sm1"), PokemonSets.recognizedIds("SUM"))
+        assertEquals(listOf("sm115"), PokemonSets.recognizedIds("HIF"))
+        assertEquals(listOf("xy1"), PokemonSets.recognizedIds("XY"))
+        assertEquals(listOf("xy12"), PokemonSets.recognizedIds("EVO"))
+        assertEquals(listOf("SV2a"), PokemonSets.idsFor("SV2a", "ja"))
+        assertEquals("ssh", ExpansionCodes.pokemon("swsh1"))
+        assertEquals("cec", ExpansionCodes.pokemon("sm12"))
+        assertEquals("evo", ExpansionCodes.pokemon("xy12"))
         assertEquals(listOf("sv03"), PokemonSets.recognizedIds("OBF"))
         assertEquals(listOf("sv10"), PokemonSets.recognizedIds("dri"))
         assertEquals(listOf("sv01"), PokemonSets.recognizedIds("svi"))
