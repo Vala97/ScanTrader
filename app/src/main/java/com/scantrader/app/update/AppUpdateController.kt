@@ -71,6 +71,7 @@ class AppUpdateController(
     }
 
     fun openPermissionSettings() {
+        if (!source.githubSelfUpdate) return
         installer.openPermissionSettings()
     }
 

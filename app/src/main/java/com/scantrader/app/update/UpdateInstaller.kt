@@ -17,6 +17,13 @@ interface UpdateInstaller {
     fun openPermissionSettings()
 }
 
+/** Play builds. Does not open PackageInstaller or the unknown-sources screen. */
+object DisabledUpdateInstaller : UpdateInstaller {
+    override fun canInstall(): Boolean = false
+    override fun install(apk: File) = Unit
+    override fun openPermissionSettings() = Unit
+}
+
 class PackageUpdateInstaller(context: Context) : UpdateInstaller {
     private val appContext = context.applicationContext
 

@@ -31,6 +31,7 @@ import java.io.File
 import com.scantrader.app.scan.CardOcr
 import com.scantrader.app.scan.ScanSession
 import com.scantrader.app.update.AppUpdateController
+import com.scantrader.app.update.DisabledUpdateInstaller
 import com.scantrader.app.update.DisabledUpdateSource
 import com.scantrader.app.update.GithubReleaseUpdateSource
 import com.scantrader.app.update.PackageUpdateInstaller
@@ -187,7 +188,11 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
             source = updateSource,
             prefs = prefs,
             client = updateClient,
-            installer = PackageUpdateInstaller(this),
+            installer = if (BuildConfig.GITHUB_SELF_UPDATE) {
+                PackageUpdateInstaller(this)
+            } else {
+                DisabledUpdateInstaller
+            },
             versionCode = BuildConfig.VERSION_CODE,
             sdkInt = android.os.Build.VERSION.SDK_INT,
             scope = appScope,
