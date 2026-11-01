@@ -45,9 +45,10 @@ class AppDatabaseBuilderTest {
         assertFalse(versions.contains(4))
         assertFalse(versions.contains(5))
         assertFalse(versions.contains(6))
+        assertFalse(versions.contains(7))
         val db = AppDatabase.create(context)
         try {
-            assertEquals(6, db.openHelper.writableDatabase.version)
+            assertEquals(7, db.openHelper.writableDatabase.version)
         } finally {
             db.close()
         }
@@ -59,7 +60,11 @@ class AppDatabaseBuilderTest {
         val db = AppDatabase.create(context)
         try {
             val sqlite = db.openHelper.writableDatabase
-            assertEquals(6, sqlite.version)
+            assertEquals(7, sqlite.version)
+            sqlite.query("SELECT COUNT(*) FROM ct_expansions").use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(0, cursor.getInt(0))
+            }
             sqlite.query("SELECT COUNT(*) FROM collections").use { cursor ->
                 cursor.moveToFirst()
                 assertEquals(1, cursor.getInt(0))
@@ -98,7 +103,11 @@ class AppDatabaseBuilderTest {
         val db = AppDatabase.create(context)
         try {
             val sqlite = db.openHelper.writableDatabase
-            assertEquals(6, sqlite.version)
+            assertEquals(7, sqlite.version)
+            sqlite.query("SELECT COUNT(*) FROM ct_expansions").use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(0, cursor.getInt(0))
+            }
             sqlite.query("SELECT name FROM collections").use { cursor ->
                 cursor.moveToFirst()
                 assertEquals("Inventario", cursor.getString(0))
