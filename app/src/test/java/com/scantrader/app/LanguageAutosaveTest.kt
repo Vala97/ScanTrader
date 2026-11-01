@@ -11,6 +11,7 @@ import com.scantrader.app.ui.confirm.LanguageAutosave
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -43,6 +44,26 @@ class LanguageAutosaveTest {
                 waitedMs = result.waitedMs,
             ),
         )
+            scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        }
+    }
+
+    @Test
+    fun localLanguageDoesNotStartPrintedLookup() {
+        runBlocking {
+            var calls = 0
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val result = LanguageAutosave.resolve(
+                local = CardLanguageDetector.Detection(CardLanguage.ITALIAN, "name=it"),
+                scope = scope,
+                remote = {
+                    calls++
+                    CardLanguageDetector.Detection(CardLanguage.FRENCH, "name=fr")
+                },
+            )
+            delay(150)
+            assertEquals(0, calls)
+            assertEquals(CardLanguage.ITALIAN, result.language)
             scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         }
     }

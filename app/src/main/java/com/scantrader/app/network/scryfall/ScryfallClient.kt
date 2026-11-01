@@ -14,9 +14,13 @@ class ScryfallClient(
 
     fun coolingDown(): Boolean = gate.coolingDown()
 
-    suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard {
+    suspend fun cardBySetAndNumber(
+        set: String,
+        number: String,
+        armScanCooldown: Boolean = true,
+    ): ScryfallCard {
         val key = "set:${gate.normalize(set)}:${gate.normalize(number)}"
-        return read(key) { api.cardBySetAndNumber(set, number) }
+        return read(key, armScanCooldown) { api.cardBySetAndNumber(set, number) }
     }
 
     suspend fun cardById(id: String): ScryfallCard {
@@ -28,13 +32,18 @@ class ScryfallClient(
      * Localized print for [set]/[number], or null when that language has no card.
      * Cached, including the 404, so autoscan does not repeat it every frame.
      */
-    suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard? {
+    suspend fun cardBySetNumberLang(
+        set: String,
+        number: String,
+        lang: String,
+        armScanCooldown: Boolean = true,
+    ): ScryfallCard? {
         val key = "setlang:${gate.normalize(set)}:${gate.normalize(number)}:${gate.normalize(lang)}"
         return when (val hit = gate.cached(key)) {
             is ScryfallGate.Cached.Value -> hit.payload as ScryfallCard
             ScryfallGate.Cached.Empty -> null
             null -> try {
-                val card = guarded { api.cardBySetNumberLang(set, number, lang) }
+                val card = guarded(armScanCooldown) { api.cardBySetNumberLang(set, number, lang) }
                 gate.store(key, ScryfallGate.Cached.Value(card))
                 card
             } catch (e: HttpException) {
@@ -84,14 +93,18 @@ class ScryfallClient(
         }
     }
 
-    private suspend fun <T : Any> read(key: String, block: suspend () -> T): T {
+    private suspend fun <T : Any> read(
+        key: String,
+        armScanCooldown: Boolean = true,
+        block: suspend () -> T,
+    ): T {
         when (val hit = gate.cached(key)) {
             is ScryfallGate.Cached.Value -> @Suppress("UNCHECKED_CAST") return hit.payload as T
             ScryfallGate.Cached.Empty -> throw ScryfallMissException()
             null -> Unit
         }
         return try {
-            val value = guarded(block)
+            val value = guarded(armScanCooldown, block)
             gate.store(key, ScryfallGate.Cached.Value(value))
             value
         } catch (e: HttpException) {
@@ -102,7 +115,10 @@ class ScryfallClient(
         }
     }
 
-    private suspend fun <T> guarded(block: suspend () -> T): T {
+    private suspend fun <T> guarded(
+        armScanCooldown: Boolean = true,
+        block: suspend () -> T,
+    ): T {
         if (gate.coolingDown()) throw ScryfallBusyException()
         return mutex.withLock {
             if (gate.coolingDown()) throw ScryfallBusyException()
@@ -114,6 +130,9 @@ class ScryfallClient(
                 try {
                     return@withLock block()
                 } catch (e: HttpException) {
+                    if (e.code() == 429 && !armScanCooldown) {
+                        throw ScryfallBusyException()
+                    }
                     if (e.code() != 429 || attempt >= 2) {
                         if (e.code() == 429) {
                             gate.onRateLimited(e.response()?.headers()?.get("Retry-After"), attempt)

@@ -41,7 +41,11 @@ class CardLanguageResolver(
         return explainPrinted(card, ocrName, ocrText)
     }
 
-    /** Printed names from Scryfall or TCGdex. Runs even when local OCR already has a language. */
+    /**
+     * Printed names from Scryfall or TCGdex.
+     * Callers skip this when [explainLocal] already has a language.
+     * Magic language fetches do not arm the scan cooldown.
+     */
     suspend fun explainPrinted(
         card: IdentifiedCard,
         ocrName: String?,
@@ -72,14 +76,21 @@ class CardLanguageResolver(
         if (card.setCode.isBlank() || card.collectorNumber.isBlank()) {
             return card.name to emptyMap()
         }
-        val english = runCatching { scryfall.cardBySetAndNumber(card.setCode, card.collectorNumber) }
+        val english = runCatching {
+            scryfall.cardBySetAndNumber(card.setCode, card.collectorNumber, armScanCooldown = false)
+        }
             .getOrNull()
             ?.name
         val printed = linkedMapOf<CardLanguage, String>()
         for (language in CardLanguage.entries) {
             if (language == CardLanguage.ENGLISH) continue
             val local = try {
-                scryfall.cardBySetNumberLang(card.setCode, card.collectorNumber, language.scryfallLang())
+                scryfall.cardBySetNumberLang(
+                    card.setCode,
+                    card.collectorNumber,
+                    language.scryfallLang(),
+                    armScanCooldown = false,
+                )
             } catch (_: ScryfallBusyException) {
                 break
             }

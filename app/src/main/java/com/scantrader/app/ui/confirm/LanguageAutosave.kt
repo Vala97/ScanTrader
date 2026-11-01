@@ -10,9 +10,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Autosave must not sit behind a Scryfall download of every printed language.
- * Local OCR evidence starts the countdown immediately. Otherwise the wait is a
- * real cap: the network call runs in [scope], not inside the timeout, so a
- * blocking read cannot hold the countdown.
+ * Local OCR evidence starts the countdown immediately and does not launch the
+ * printed-name lookup. Otherwise the wait is a real cap: the network call runs
+ * in [scope], not inside the timeout, so a blocking read cannot hold the countdown.
  */
 object LanguageAutosave {
     data class Result(
@@ -31,10 +31,6 @@ object LanguageAutosave {
     ): Result {
         val started = now()
         if (local?.language != null) {
-            scope.launch(Dispatchers.IO) {
-                val later = runCatching { remote() }.getOrNull()
-                if (later?.language != null) onRemote(later)
-            }
             return Result(
                 language = local.language,
                 source = local.evidence.ifBlank { "ocr" },

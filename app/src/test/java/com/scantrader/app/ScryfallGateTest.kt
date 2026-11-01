@@ -104,8 +104,48 @@ class ScryfallGateTest {
         assertEquals(0, calls)
     }
 
+    @Test
+    fun languageLookupDoesNotArmScanCooldown() = runBlocking {
+        var calls = 0
+        val gate = ScryfallGate(minSpacingMs = 0L, now = { 0L })
+        val api = object : ScryfallApi {
+            override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard =
+                error("unused")
+
+            override suspend fun cardBySetNumberLang(
+                set: String,
+                number: String,
+                lang: String,
+            ): ScryfallCard {
+                calls++
+                throw tooMany()
+            }
+
+            override suspend fun cardById(id: String): ScryfallCard = error("unused")
+
+            override suspend fun search(query: String, unique: String): ScryfallSearchResponse =
+                error("unused")
+
+            override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = error("unused")
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = error("unused")
+        }
+        val client = ScryfallClient(api, gate)
+        val result = runCatching {
+            client.cardBySetNumberLang("fra", "178", "it", armScanCooldown = false)
+        }
+        assertTrue(result.exceptionOrNull() is ScryfallBusyException)
+        assertTrue(!gate.coolingDown())
+        assertEquals(1, calls)
+    }
+
     private fun notFound(): HttpException {
         val body = "no".toResponseBody("text/plain".toMediaType())
         return HttpException(Response.error<String>(404, body))
+    }
+
+    private fun tooMany(): HttpException {
+        val body = "slow".toResponseBody("text/plain".toMediaType())
+        return HttpException(Response.error<String>(429, body))
     }
 }
