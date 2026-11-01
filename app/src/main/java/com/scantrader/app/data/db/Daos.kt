@@ -3,6 +3,7 @@ package com.scantrader.app.data.db
 import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
@@ -69,4 +70,37 @@ interface CardEntryDao {
 
     @Delete
     suspend fun delete(entity: CardEntryEntity)
+}
+
+@Dao
+interface CtExpansionDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(items: List<CtExpansionEntity>)
+
+    @Query("SELECT * FROM ct_expansions")
+    suspend fun getAll(): List<CtExpansionEntity>
+
+    @Query("SELECT * FROM ct_expansions WHERE gameId = :gameId")
+    suspend fun byGame(gameId: Int): List<CtExpansionEntity>
+
+    @Query(
+        """
+        SELECT * FROM ct_expansions
+        WHERE gameId = :gameId AND LOWER(code) = LOWER(:code)
+        LIMIT 1
+        """,
+    )
+    suspend fun findByCode(gameId: Int, code: String): CtExpansionEntity?
+
+    @Query(
+        """
+        SELECT * FROM ct_expansions
+        WHERE LOWER(code) = LOWER(:code)
+        LIMIT 1
+        """,
+    )
+    suspend fun findByCodeAny(code: String): CtExpansionEntity?
+
+    @Query("SELECT COUNT(*) FROM ct_expansions")
+    suspend fun count(): Int
 }

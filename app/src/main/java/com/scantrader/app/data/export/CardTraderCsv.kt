@@ -53,9 +53,13 @@ object CardTraderCsv {
         "price_cents",
     )
 
-    fun build(entries: List<CardEntryEntity>, game: Game): String {
+    fun build(
+        entries: List<CardEntryEntity>,
+        game: Game,
+        expansionCodes: Map<Long, String> = emptyMap(),
+    ): String {
         val header = if (game == Game.MTG) mtgHeader() else pokemonHeader()
-        val rows = entries.filter { it.game == game }.map { row(it, game) }
+        val rows = entries.filter { it.game == game }.map { row(it, game, expansionCodes) }
         return (listOf(header) + rows).joinToString("\n") { csvLine(it) } + "\n"
     }
 
@@ -65,16 +69,22 @@ object CardTraderCsv {
         else -> "Esporta CSV CardTrader · un file per gioco"
     }
 
-    private fun row(entry: CardEntryEntity, game: Game): List<String> {
+    private fun row(
+        entry: CardEntryEntity,
+        game: Game,
+        expansionCodes: Map<Long, String>,
+    ): List<String> {
         val foil = if (game == Game.POKEMON || !entry.foil) "false" else "true"
         val price = exportPriceCents(entry).orEmpty()
         val language = exportLanguage(entry.language)
         val condition = exportCondition(entry.condition)
+        val expansion = expansionCodes[entry.id]
+            ?: if (game == Game.MTG) ExpansionCodes.mtg(entry.setCode) else ExpansionCodes.pokemon(entry.setCode)
         return if (game == Game.MTG) {
             listOf(
                 entry.catalogScryfallId?.takeIf { it.isNotBlank() } ?: entry.scryfallId.orEmpty(),
                 entry.catalogName?.takeIf { it.isNotBlank() } ?: entry.name,
-                ExpansionCodes.mtg(entry.setCode),
+                expansion,
                 entry.collectorNumber,
                 entry.quantity.toString(),
                 language,
@@ -85,7 +95,7 @@ object CardTraderCsv {
         } else {
             listOf(
                 entry.catalogName?.takeIf { it.isNotBlank() } ?: entry.name,
-                ExpansionCodes.pokemon(entry.setCode),
+                expansion,
                 entry.collectorNumber,
                 entry.quantity.toString(),
                 language,

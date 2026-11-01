@@ -7,13 +7,18 @@ import com.scantrader.app.data.db.CardEntryEntity
 import java.io.File
 
 object CsvShare {
-    fun share(context: Context, collectionName: String, entries: List<CardEntryEntity>) {
+    fun share(
+        context: Context,
+        collectionName: String,
+        entries: List<CardEntryEntity>,
+        expansionCodes: Map<Long, String> = emptyMap(),
+    ) {
         val games = entries.map { it.game }.distinct()
         if (games.isEmpty()) return
         val dir = File(context.cacheDir, "exports").apply { mkdirs() }
         val uris = games.map { game ->
             val file = File(dir, CardTraderCsv.filename(collectionName, game))
-            file.writeText(CardTraderCsv.build(entries, game), Charsets.UTF_8)
+            file.writeText(CardTraderCsv.build(entries, game, expansionCodes), Charsets.UTF_8)
             FileProvider.getUriForFile(context, "${context.packageName}.files", file)
         }
         val intent = if (uris.size == 1) {

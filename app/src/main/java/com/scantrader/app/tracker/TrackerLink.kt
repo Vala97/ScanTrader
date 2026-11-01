@@ -1,6 +1,7 @@
 package com.scantrader.app.tracker
 
 import android.content.Context
+import com.scantrader.app.data.catalog.CtExpansionResolver
 import com.scantrader.app.data.catalog.ExpansionCodes
 import com.scantrader.app.data.db.stamped
 import com.scantrader.app.data.model.CardCondition
@@ -8,6 +9,7 @@ import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.prefs.SecretStore
+import com.scantrader.app.scan.CardFinish
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -47,6 +49,7 @@ class TrackerLink(
     private val scope: CoroutineScope,
     /** Database delle collezioni: "Manda al tracker" e le carte vendute da scalare. */
     private val database: com.scantrader.app.data.db.AppDatabase? = null,
+    private val expansionResolver: CtExpansionResolver? = null,
 ) {
     private suspend fun cardsOf(collectionId: Long) =
         database?.cards()?.observeByCollection(collectionId)?.first().orEmpty()
@@ -159,13 +162,55 @@ class TrackerLink(
     /** Chiamato quando una carta viene salvata in collezione (automatico o a mano). */
     fun cardSaved(card: IdentifiedCard, quantity: Int, language: CardLanguage, condition: CardCondition, foil: Boolean, rowId: Long? = null) {
         if (!linked || !sending) return
-        val item = itemFor(card, quantity, language, condition, foil)
+        val item = itemFor(card, quantity, language, condition, foil, CardFinish.variantOf(card.finish))
         if (rowId != null) { markSent(rowId, sentFor(rowId) + quantity); remember(item.getString("uid"), rowId, quantity) }
         scope.launch {
             outboxLock.withLock { val a = outbox(); a.put(item); writeOutbox(a) }
             refresh()
             runCatching { flush() }
         }
+    }
+
+    private fun itemForEntry(e: com.scantrader.app.data.db.CardEntryEntity, quantity: Int): JSONObject {
+        val lang = CardLanguage.entries.firstOrNull { it.csvValue == e.language } ?: CardLanguage.ENGLISH
+        val cond = CardCondition.entries.firstOrNull { it.csvValue == e.condition } ?: CardCondition.NEAR_MINT
+        val card = IdentifiedCard(
+            game = e.game,
+            name = e.name,
+            setCode = e.setCode,
+            setName = e.setName,
+            collectorNumber = e.collectorNumber,
+            catalogName = e.catalogName,
+        )
+        return itemFor(card, quantity, lang, cond, e.foil, e.variant)
+    }
+
+    private fun itemFor(
+        card: IdentifiedCard,
+        quantity: Int,
+        language: CardLanguage,
+        condition: CardCondition,
+        foil: Boolean,
+        variant: String? = null,
+    ): JSONObject {
+        val exp = expansionResolver?.resolveCached(card.game, card.setCode, variant)
+            ?: when (card.game) {
+                Game.MTG -> ExpansionCodes.mtg(card.setCode)
+                Game.POKEMON -> ExpansionCodes.pokemon(card.setCode)
+                Game.RIFTBOUND -> card.setCode.lowercase()
+                Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> card.setCode.lowercase()
+            }
+        return JSONObject()
+            .put("uid", "scan-" + UUID.randomUUID().toString())
+            .put("game", card.game.csvLabel)
+            .put("bp", card.ctBlueprintId ?: JSONObject.NULL)
+            .put("exp", exp)
+            .put("no", card.collectorNumber)
+            .put("name", card.catalogName?.takeIf { it.isNotBlank() } ?: card.name)
+            .put("qty", quantity.coerceIn(1, 99))
+            .put("cond", if (condition == CardCondition.DAMAGED) "Poor" else condition.csvValue)
+            .put("lang", language.cardTraderLang())
+            .put("foil", foil && card.game.foilChoice)
     }
 
     private fun flushSoon() { scope.launch { runCatching { flush() } } }
@@ -407,32 +452,5 @@ class TrackerLink(
     companion object {
         /** dls-tracker dentro Tailscale (http: il sito non esce dalla rete privata). */
         const val DEFAULT_URL = ""
-
-        fun itemForEntry(e: com.scantrader.app.data.db.CardEntryEntity, quantity: Int): JSONObject {
-            val lang = CardLanguage.entries.firstOrNull { it.csvValue == e.language } ?: CardLanguage.ENGLISH
-            val cond = CardCondition.entries.firstOrNull { it.csvValue == e.condition } ?: CardCondition.NEAR_MINT
-            val card = IdentifiedCard(game = e.game, name = e.name, setCode = e.setCode, setName = e.setName, collectorNumber = e.collectorNumber, catalogName = e.catalogName)
-            return itemFor(card, quantity, lang, cond, e.foil)
-        }
-
-        fun itemFor(card: IdentifiedCard, quantity: Int, language: CardLanguage, condition: CardCondition, foil: Boolean): JSONObject {
-            val exp = when (card.game) {
-                Game.MTG -> ExpansionCodes.mtg(card.setCode)
-                Game.POKEMON -> ExpansionCodes.pokemon(card.setCode)
-                Game.RIFTBOUND -> card.setCode.lowercase()
-                Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER -> card.setCode.lowercase()
-            }
-            return JSONObject()
-                .put("uid", "scan-" + UUID.randomUUID().toString())
-                .put("game", card.game.csvLabel)
-                .put("bp", card.ctBlueprintId ?: JSONObject.NULL)
-                .put("exp", exp)
-                .put("no", card.collectorNumber)
-                .put("name", card.catalogName?.takeIf { it.isNotBlank() } ?: card.name)
-                .put("qty", quantity.coerceIn(1, 99))
-                .put("cond", if (condition == CardCondition.DAMAGED) "Poor" else condition.csvValue)
-                .put("lang", language.cardTraderLang())
-                .put("foil", foil && card.game.foilChoice)
-        }
     }
 }

@@ -85,6 +85,7 @@ class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
         }
         app.pokemonCatalogs.refresh()
         app.appUpdates.checkOnLaunch()
+        app.expansionsSync.checkOnLaunch()
     }
 
     val appUpdate = app.appUpdates.state
@@ -203,8 +204,14 @@ class CollectionViewModel(
         viewModelScope.launch {
             exporting.value = true
             try {
-                val resolved = withContext(Dispatchers.IO) { app.blueprintNames.fill(snapshot) }
-                CsvShare.share(context, name, resolved)
+                val (resolved, expansionCodes) = withContext(Dispatchers.IO) {
+                    val filled = app.blueprintNames.fill(snapshot)
+                    val codes = filled.associate { entry ->
+                        entry.id to app.expansionResolver.resolveEntry(entry, allowNetwork = true)
+                    }
+                    filled to codes
+                }
+                CsvShare.share(context, name, resolved, expansionCodes)
             } finally {
                 exporting.value = false
             }

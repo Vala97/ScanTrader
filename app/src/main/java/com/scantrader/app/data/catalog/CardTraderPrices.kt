@@ -16,6 +16,7 @@ import com.scantrader.app.network.cardtrader.CtProduct
  */
 class CardTraderPrices(
     private val api: CardTraderApi,
+    private val expansionResolver: CtExpansionResolver? = null,
     private val token: () -> String?,
 ) {
     private var expansions: List<CtExpansion>? = null
@@ -35,14 +36,31 @@ class CardTraderPrices(
         }
         if (card.game != Game.MTG) return null
         return runCatching {
-            val expansionId = CardTraderCatalog.expansionId(loadExpansions(), card.setCode) ?: return null
-            val prints = blueprints.getOrPut(expansionId) { api.blueprints(expansionId) }
             val ids = (listOfNotNull(card.scryfallId) + extraScryfallIds).distinct()
-            val blueprintId = CardTraderCatalog.blueprintId(prints, ids) ?: return null
+            val blueprintId = findMtgBlueprintId(card.setCode, ids) ?: return null
             quoteListings(blueprintId, card.game, language, condition, foil, "CardTrader price failed")
         }.onFailure {
             com.scantrader.app.scan.ScanDebug.w("CardTrader price failed", it)
         }.getOrNull()
+    }
+
+    private suspend fun findMtgBlueprintId(setCode: String, scryfallIds: List<String>): Int? {
+        val candidates = expansionResolver?.mtgExpansionCandidates(setCode).orEmpty()
+        val expansionIds = if (candidates.isNotEmpty()) {
+            candidates.map { it.id }
+        } else {
+            val loaded = loadExpansions()
+            val baseId = CardTraderCatalog.expansionId(loaded, setCode) ?: return null
+            val collectorCode = CtExpansionResolver.collectorSiblingCode(setCode)
+            val collectorId = CardTraderCatalog.expansionId(loaded, collectorCode)
+            listOfNotNull(baseId, collectorId)
+        }
+        for (expansionId in expansionIds) {
+            val prints = blueprints.getOrPut(expansionId) { api.blueprints(expansionId) }
+            val hit = CardTraderCatalog.blueprintId(prints, scryfallIds)
+            if (hit != null) return hit
+        }
+        return null
     }
 
     /**

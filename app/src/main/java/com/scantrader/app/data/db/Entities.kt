@@ -80,3 +80,15 @@ data class CollectionWithCount(
     val createdAt: Long,
     val cardCount: Int,
 )
+
+/** CardTrader expansion from `GET /api/v2/expansions` (all games). */
+@Entity(
+    tableName = "ct_expansions",
+    indices = [Index(value = ["gameId", "code"], unique = true)],
+)
+data class CtExpansionEntity(
+    @PrimaryKey val id: Int,
+    val gameId: Int,
+    val code: String,
+    val name: String,
+)

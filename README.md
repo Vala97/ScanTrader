@@ -231,3 +231,5 @@ Dopo l’aggiornamento **riesporta** la collezione. Le righe già salvate prendo
 - MTG: https://api.scryfall.com
 - Pokémon: https://api.tcgdex.net in inglese, italiano, giapponese, cinese semplificato e cinese tradizionale (`en`, `it`, `ja`, `zh-cn`, `zh-tw`)
 - Riftbound, One Piece, Dragon Ball Super Fusion World, Yu-Gi-Oh!, Union Arena: https://api.cardtrader.com/api/v2 (`expansions`, `blueprints/export`), con il token
+
+Con il **token API CardTrader** in Impostazioni, all’avvio l’app scarica al massimo **una volta al giorno** l’elenco `GET /api/v2/expansions` e lo tiene in Room. Serve a scrivere nel CSV (e nel matching prezzi) i codici ufficiali CardTrader, comprese le Collector Edition (`cfra` e codici `c…` analoghi): Scryfall usa spesso lo stesso set della versione normale, CardTrader no. Se c’è rete, la scelta fra `fra` e `cfra` passa dal `scryfall_id` nei blueprints; senza rete vale un’euristica sul finish (showcase, extended art, …).
