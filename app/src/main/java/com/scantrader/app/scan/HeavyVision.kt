@@ -1,16 +1,25 @@
 package com.scantrader.app.scan
 
 /**
- * Auto-scan skips the gallery only when the catalog query will run.
- * A held catalog still embeds, otherwise a ready collector+set with an
- * unstable set code drops both paths.
- * CardTrader games keep the crop so the image can choose a printing.
+ * Auto-scan embeds only when the catalog cannot answer.
+ * A debounce hold returns without Milo so the next frame can query.
+ * Cooldown cannot call Scryfall, so the gallery runs instead.
+ * A query that comes back empty embeds afterwards; a hit does not.
+ * Manual scan still embeds beside the catalog.
  */
 object HeavyVision {
-    fun skip(
+    fun embedAlongsideCatalog(
         autoMode: Boolean,
-        idReady: Boolean,
+        cooling: Boolean,
         queryCatalog: Boolean,
-        neuralChoosesPrinting: Boolean,
-    ): Boolean = autoMode && idReady && queryCatalog && !neuralChoosesPrinting
+    ): Boolean {
+        if (!autoMode) return true
+        return cooling && !queryCatalog
+    }
+
+    fun embedAfterCatalog(
+        autoMode: Boolean,
+        queryCatalog: Boolean,
+        hitCount: Int,
+    ): Boolean = autoMode && queryCatalog && hitCount <= 0
 }

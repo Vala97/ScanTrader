@@ -8,15 +8,18 @@ import com.scantrader.app.scan.OcrParser
  * A lookup runs when either:
  * - the same primary key has been seen [stableFramesNeeded] times
  *   (Pokémon: collector + printed total, or a multi-word trainer title when the
- *   collector is missing; MTG: name + collector), or
+ *   collector is missing; MTG: collector + set when both are present, otherwise
+ *   the name), or
  * - the same card region has been analyzed for [requeryAfterMs]
  *   or [fallbackFrames] frames without a lookup.
  *
- * OCR name/set jitter must not reset that clock. The query uses the majority
- * name and collector from the recent frames so one bad read cannot win.
- * For Magic, a frame with no set keeps the last set read for that same name
- * and collector when it was seen within 1.5 seconds. A newly read set
- * replaces that memory immediately.
+ * OCR name jitter must not reset that clock. Magic names match when the
+ * normalized Levenshtein ratio is at least 0.85, or the owner tokens match.
+ * Collector + set, when both are read, is the card even if the title is not.
+ * A frame with no set keeps the last set read for that same name and collector
+ * when it was seen within 1.5 seconds. A newly read set replaces that memory
+ * immediately. The query uses the majority name and collector, and the latest
+ * Magic set, so one bad read cannot win.
  * The same key is not queried again until [requeryAfterMs] has passed.
  *
  * Consecutive reads are compared with [agreementKey], which treats OCR look-alikes
@@ -171,8 +174,18 @@ class CatalogQueryDebounce(
 
         val primary = primaryKey(frame)
         val primaryHits = if (primary == null) 0 else recent.count { primaryKey(it) == primary }
+        val nameHits = if (frame.pokemon || frame.name.isNullOrBlank()) {
+            0
+        } else {
+            val cn = CardIdentity.normCollector(frame.collectorNumber)
+            recent.count {
+                namesClose(it.name, frame.name) &&
+                    CardIdentity.normCollector(it.collectorNumber) == cn
+            }
+        }
         val ready = seenCount >= stableFramesNeeded ||
             primaryHits >= stableFramesNeeded ||
+            nameHits >= stableFramesNeeded ||
             regionFrames >= fallbackFrames ||
             t - regionStartedAtMs >= requeryAfterMs
         if (!ready) return false
@@ -256,23 +269,16 @@ class CatalogQueryDebounce(
             return CardIdentity.namesSimilar(previous.name, current.name)
         }
 
-        val namePrev = nameKey(previous.name)
-        val nameCur = nameKey(current.name)
-        // Magic stability is name + collector. A set that appears and disappears
-        // is the same card, otherwise the lookup never reaches two frames.
-        if (namePrev != null && nameCur != null && cnPrev != null && cnCur != null) {
-            return namePrev == nameCur && cnPrev == cnCur
-        }
-
         val setPrev = plainSet(previous.setCode)
         val setCur = plainSet(current.setCode)
-        if (cnPrev != null && cnCur != null && setPrev != null && setCur != null) {
-            return cnPrev == cnCur && setPrev == setCur
-        }
-        if (cnPrev != cnCur || setPrev != setCur) return false
-        return CardIdentity.namesSimilar(previous.name, current.name) ||
-            previous.name.isNullOrBlank() ||
-            current.name.isNullOrBlank()
+        // A different collector is a different card, including a number that
+        // disappears. Name noise does not override that.
+        if (cnPrev != cnCur) return false
+        // Collector + set, when both frames have them, is the card.
+        if (setPrev != null && setCur != null && setPrev != setCur) return false
+        if (cnPrev != null && setPrev != null && setPrev == setCur) return true
+        if (previous.name.isNullOrBlank() || current.name.isNullOrBlank()) return true
+        return namesClose(previous.name, current.name)
     }
 
     private fun primaryKey(frame: Frame): String? {
@@ -283,10 +289,10 @@ class CatalogQueryDebounce(
             return "t:$trainer"
         }
         if (cn == null) return null
-        val name = nameKey(frame.name)
-        if (name != null) return "m:$name/$cn"
-        val set = plainSet(frame.setCode) ?: return null
-        return "m:$cn/$set"
+        val set = plainSet(frame.setCode)
+        if (set != null) return "m:$cn/$set"
+        val name = nameKey(frame.name) ?: return null
+        return "m:$name/$cn"
     }
 
     /**
@@ -295,21 +301,31 @@ class CatalogQueryDebounce(
      */
     private fun withCarriedSet(frame: Frame): Frame {
         if (frame.pokemon) return frame
-        val name = nameKey(frame.name)
         val cn = CardIdentity.normCollector(frame.collectorNumber)
         val set = plainSet(frame.setCode)
         val t = now()
         if (set != null) {
-            if (name != null && cn != null) {
-                setMemory = SetMemory(name, cn, set, t)
+            val remembered = frame.name?.trim()?.takeIf { it.isNotBlank() }
+            if (remembered != null && cn != null) {
+                setMemory = SetMemory(remembered, cn, set, t)
             }
             return frame
         }
         val memory = setMemory ?: return frame
-        if (name == null || cn == null) return frame
-        if (memory.nameKey != name || memory.collector != cn) return frame
+        if (cn == null || frame.name.isNullOrBlank()) return frame
+        if (memory.collector != cn) return frame
+        if (!namesClose(memory.name, frame.name)) return frame
         if (t - memory.readAtMs > SET_CARRY_MS) return frame
         return frame.copy(setCode = memory.setCode)
+    }
+
+    /** Glyph folds, then Levenshtein ≥ 0.85, then owner-token overlap. */
+    private fun namesClose(left: String?, right: String?): Boolean {
+        val a = left?.trim()?.takeIf { it.isNotBlank() } ?: return false
+        val b = right?.trim()?.takeIf { it.isNotBlank() } ?: return false
+        if (nameKey(a) == nameKey(b)) return true
+        if (CardIdentity.namesSimilar(a, b, NAME_MATCH)) return true
+        return CardIdentity.ownerTokensMatch(a, b)
     }
 
     private fun nameKey(name: String?): String? {
@@ -398,7 +414,7 @@ class CatalogQueryDebounce(
     }
 
     private data class SetMemory(
-        val nameKey: String,
+        val name: String,
         val collector: String,
         val setCode: String,
         val readAtMs: Long,
@@ -407,5 +423,6 @@ class CatalogQueryDebounce(
     private companion object {
         const val RECENT_LIMIT = 8
         const val SET_CARRY_MS = 1_500L
+        const val NAME_MATCH = 0.85
     }
 }
