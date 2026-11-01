@@ -115,6 +115,13 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { it[UPDATE_CHECKED_AT] = epochMs }
     }
 
+    suspend fun expansionsSyncedAt(): Long =
+        context.dataStore.data.first()[EXPANSIONS_SYNCED_AT] ?: 0L
+
+    suspend fun setExpansionsSyncedAt(epochMs: Long) {
+        context.dataStore.edit { it[EXPANSIONS_SYNCED_AT] = epochMs }
+    }
+
     suspend fun pendingAppUpdate(): String? =
         context.dataStore.data.first()[PENDING_APP_UPDATE]?.takeIf { it.isNotBlank() }
 
@@ -152,6 +159,7 @@ class UserPreferences(private val context: Context) {
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
         val UPDATE_CHECKED_AT = longPreferencesKey("app_update_checked_at")
+        val EXPANSIONS_SYNCED_AT = longPreferencesKey("ct_expansions_synced_at")
         val PENDING_APP_UPDATE = stringPreferencesKey("app_update_pending")
     }
 }

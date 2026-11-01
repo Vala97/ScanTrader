@@ -7,6 +7,8 @@ import com.scantrader.app.data.catalog.CardLanguageResolver
 import com.scantrader.app.data.export.BlueprintNames
 import com.scantrader.app.data.catalog.CardTraderPrices
 import com.scantrader.app.data.catalog.CatalogLookup
+import com.scantrader.app.data.catalog.CtExpansionResolver
+import com.scantrader.app.data.catalog.ExpansionsSyncController
 import com.scantrader.app.data.catalog.LocalSetCatalog
 import com.scantrader.app.data.catalog.RiftboundCatalog
 import com.scantrader.app.data.catalog.ScryfallEurPrices
@@ -78,6 +80,10 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         private set
     lateinit var cardTraderPrices: CardTraderPrices
         private set
+    lateinit var expansionResolver: CtExpansionResolver
+        private set
+    lateinit var expansionsSync: ExpansionsSyncController
+        private set
     lateinit var languageResolver: CardLanguageResolver
         private set
     lateinit var blueprintNames: BlueprintNames
@@ -111,11 +117,30 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         )
         scryfallEur = ScryfallEurPrices(scryfall)
         secrets = SecretStore(this)
+        prefs = UserPreferences(this)
         val cardTraderApi = NetworkModule.retrofit(
             "https://api.cardtrader.com/api/v2/",
             NetworkModule.cardTraderClient { secrets.getCardTraderToken() },
         ).create(CardTraderApi::class.java)
-        cardTraderPrices = CardTraderPrices(cardTraderApi, token = { secrets.getCardTraderToken() })
+        expansionResolver = CtExpansionResolver(
+            dao = database.expansions(),
+            api = cardTraderApi,
+            token = { secrets.getCardTraderToken() },
+            blueprintCacheDir = File(cacheDir, "ct-blueprints"),
+        )
+        expansionsSync = ExpansionsSyncController(
+            api = cardTraderApi,
+            token = { secrets.getCardTraderToken() },
+            dao = database.expansions(),
+            prefs = prefs,
+            scope = appScope,
+            resolver = expansionResolver,
+        )
+        cardTraderPrices = CardTraderPrices(
+            api = cardTraderApi,
+            expansionResolver = expansionResolver,
+            token = { secrets.getCardTraderToken() },
+        )
         // Riftbound: catalogo da CardTrader (serve il token), salvato sul telefono
         riftbound = RiftboundCatalog(
             api = cardTraderApi,
@@ -127,10 +152,9 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         }
         catalog = CatalogLookup(scryfall, tcgdex, localSets, riftbound, ctGames)
         // collegamento con il DLS Tracker: le carte salvate vanno nel registro e da li' su Cardtrader
-        tracker = com.scantrader.app.tracker.TrackerLink(this, secrets, appScope, database)
+        tracker = com.scantrader.app.tracker.TrackerLink(this, secrets, appScope, database, expansionResolver)
         languageResolver = CardLanguageResolver(scryfall, tcgdex)
         blueprintNames = BlueprintNames(scryfall, tcgdex) { repository.updateCard(it) }
-        prefs = UserPreferences(this)
         ocr = CardOcr()
         visualRanker = VisualRanker(http)
         neuralPack = NeuralPackManager(this, http)
