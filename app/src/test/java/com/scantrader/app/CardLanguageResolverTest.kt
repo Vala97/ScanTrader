@@ -69,8 +69,10 @@ class CardLanguageResolverTest {
     fun aFailedLookupIsNotCachedAndDoesNotInventALanguage() = runBlocking {
         var calls = 0
         var fail = true
+        val langs = mutableListOf<String>()
         val resolver = resolver { lang, _ ->
             calls++
+            langs += lang
             if (fail) throw IOException("503")
             when (lang) {
                 "it" -> "Maxus del Team Rocket"
@@ -82,7 +84,8 @@ class CardLanguageResolverTest {
         val failed = resolver.explain(card, "Maxus del Team Rocket", "Maxus del Team Rocket")
         assertEquals(null, failed.language)
         val failedCalls = calls
-        assertTrue(failedCalls >= 10)
+        assertTrue(failedCalls >= 9)
+        assertTrue("ko" !in langs)
         val retried = resolver.explain(card, "Maxus del Team Rocket", "Maxus del Team Rocket")
         assertEquals(null, retried.language)
         assertTrue(calls > failedCalls)

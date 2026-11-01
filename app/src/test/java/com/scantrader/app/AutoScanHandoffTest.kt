@@ -110,6 +110,27 @@ class AutoScanHandoffTest {
         assertEquals("base1-52", machop.activeKey)
     }
 
+    @Test
+    fun autosaveWaitsUntilLanguageDetectionFinishes() {
+        assertFalse(AutoSaveSchedule.readyToCount(detectEnabled = true, languageReady = false, waitedMs = 0))
+        assertFalse(
+            AutoSaveSchedule.readyToCount(
+                detectEnabled = true,
+                languageReady = false,
+                waitedMs = AutoSaveSchedule.LANGUAGE_WAIT_CAP_MS - 1,
+            ),
+        )
+        assertTrue(
+            AutoSaveSchedule.readyToCount(
+                detectEnabled = true,
+                languageReady = false,
+                waitedMs = AutoSaveSchedule.LANGUAGE_WAIT_CAP_MS,
+            ),
+        )
+        assertTrue(AutoSaveSchedule.readyToCount(detectEnabled = true, languageReady = true, waitedMs = 0))
+        assertTrue(AutoSaveSchedule.readyToCount(detectEnabled = false, languageReady = false, waitedMs = 0))
+    }
+
     private fun pokemon(name: String, id: String, cn: String) = IdentifiedCard(
         game = Game.POKEMON,
         name = name,

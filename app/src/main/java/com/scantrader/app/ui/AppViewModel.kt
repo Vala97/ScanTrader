@@ -2052,7 +2052,15 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         // Yu-Gi-Oh!: la lingua e' nel codice stampato (POTD-IT003)
         if (card.game == Game.YUGIOH) app.scanSession.parsed?.printedLang?.let { CardLanguage.fromCatalogCode(it) }?.let { return it }
         val started = System.currentTimeMillis()
-        while (app.scanSession.rulesPending && System.currentTimeMillis() - started < RULES_WAIT_MS) {
+        while (
+            com.scantrader.app.data.catalog.CardLanguageDetector.shouldWaitForRules(
+                game = card.game,
+                ocrName = app.scanSession.parsed?.nameGuess,
+                ocrText = app.scanSession.ocrText,
+                rulesPending = app.scanSession.rulesPending,
+                waitedMs = System.currentTimeMillis() - started,
+            )
+        ) {
             delay(40)
         }
         return app.rememberDetectedLanguage(card)
@@ -2140,8 +2148,6 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     companion object {
-        private const val RULES_WAIT_MS = 800L
-
         fun factory(app: ScanTraderApp) = factoryOf { ConfirmViewModel(app) }
     }
 }
