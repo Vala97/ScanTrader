@@ -302,6 +302,10 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setShowDebugInfo(enabled) }
     }
 
+    fun setRecognitionSound(enabled: Boolean) {
+        viewModelScope.launch { app.prefs.setRecognitionSound(enabled) }
+    }
+
     val appUpdate = app.appUpdates.state
 
     fun setAutoUpdateCheck(enabled: Boolean) {
@@ -1772,6 +1776,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 catalogMs = catalogMs,
                 totalMs = System.currentTimeMillis() - t0,
             )
+            if (requireMatch && acceptAuto && defaults.value.recognitionSound) {
+                com.scantrader.app.scan.RecognitionSound.play(app, enabled = true)
+            }
             if (requireMatch && (duplicateBlocked || consecutiveBlocked || (candidates.isEmpty() && fused.isNotEmpty()))) {
                 autoHold = AutoHold.UNSTABLE
                 // Do not publish this hit. resetResults already dropped the previous
@@ -2064,22 +2071,60 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setLanguage(language) }
     }
 
+    /** Remote language, applied only while this confirm has not been saved. */
+    val liveLanguage = MutableStateFlow<CardLanguage?>(null)
+    private val languageFrozen = java.util.concurrent.atomic.AtomicBoolean(false)
+
     suspend fun detectCardLanguage(card: IdentifiedCard): CardLanguage? {
         // Yu-Gi-Oh!: la lingua e' nel codice stampato (POTD-IT003)
-        if (card.game == Game.YUGIOH) app.scanSession.parsed?.printedLang?.let { CardLanguage.fromCatalogCode(it) }?.let { return it }
+        if (card.game == Game.YUGIOH) {
+            val printed = app.scanSession.parsed?.printedLang?.let { CardLanguage.fromCatalogCode(it) }
+            if (printed != null) {
+                com.scantrader.app.scan.ScanDebug.d("autosave: wait lang 0ms source=printed")
+                return printed
+            }
+        }
         val started = System.currentTimeMillis()
+        fun elapsed() = System.currentTimeMillis() - started
+        fun left() = (com.scantrader.app.ui.confirm.AutoSaveSchedule.LANGUAGE_WAIT_CAP_MS - elapsed()).coerceAtLeast(0)
+        var local = app.explainLocalLanguage(card)
         while (
+            left() > 0 &&
+            local.language == null &&
             com.scantrader.app.data.catalog.CardLanguageDetector.shouldWaitForRules(
                 game = card.game,
                 ocrName = app.scanSession.parsed?.nameGuess,
                 ocrText = app.scanSession.ocrText,
                 rulesPending = app.scanSession.rulesPending,
-                waitedMs = System.currentTimeMillis() - started,
+                waitedMs = elapsed(),
             )
         ) {
             delay(40)
+            local = app.explainLocalLanguage(card)
         }
-        return app.rememberDetectedLanguage(card)
+        val result = com.scantrader.app.ui.confirm.LanguageAutosave.resolve(
+            local = local.takeIf { it.language != null },
+            capMs = left(),
+            scope = viewModelScope,
+            remote = { app.detectLanguagePrinted(card) },
+            onRemote = { detection -> publishLateLanguage(detection) },
+        )
+        com.scantrader.app.scan.ScanDebug.d(
+            "autosave: wait lang ${result.waitedMs}ms source=${result.source}",
+        )
+        if (result.language != null) {
+            app.scanSession.language = result.language
+            liveLanguage.value = result.language
+        }
+        return result.language
+    }
+
+    private fun publishLateLanguage(detection: com.scantrader.app.data.catalog.CardLanguageDetector.Detection) {
+        val language = detection.language ?: return
+        if (languageFrozen.get()) return
+        app.scanSession.language = language
+        app.scanSession.languageEvidence = detection.evidence
+        liveLanguage.value = language
     }
 
     /**
@@ -2146,6 +2191,7 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         onDone: () -> Unit,
     ) {
         if (saving.value) return
+        languageFrozen.set(true)
         viewModelScope.launch {
             saving.value = true
             try {
@@ -2173,50 +2219,34 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
  * A confident result is stored on the session so the confirm dropdown and
  * timed auto-save both start on that language. Logcat: `ScanTrader lang:`.
  */
-private suspend fun ScanTraderApp.rememberDetectedLanguage(card: IdentifiedCard?): CardLanguage? {
-    if (!prefs.currentDefaults().detectCardLanguage) {
-        com.scantrader.app.scan.ScanDebug.d("lang: off")
-        return null
-    }
+private fun ScanTraderApp.explainLocalLanguage(
+    card: IdentifiedCard,
+): com.scantrader.app.data.catalog.CardLanguageDetector.Detection {
+    val ocrName = scanSession.parsed?.nameGuess
+    val ocrText = scanSession.ocrText
+    return languageResolver.explainLocal(card, ocrName, ocrText)
+}
+
+private suspend fun ScanTraderApp.detectLanguagePrinted(
+    card: IdentifiedCard,
+): com.scantrader.app.data.catalog.CardLanguageDetector.Detection? {
+    if (!prefs.currentDefaults().detectCardLanguage) return null
     val ocrName = scanSession.parsed?.nameGuess
     val ocrText = scanSession.ocrText
     val detection = try {
-        if (card != null) {
-            languageResolver.explain(card, ocrName, ocrText)
-        } else if (scanSession.game == Game.POKEMON) {
-            com.scantrader.app.data.catalog.CardLanguageDetector.explain(
-                ocrName = ocrName,
-                englishName = null,
-                printed = emptyMap(),
-                ocrText = ocrText,
-                pokemonSignals = true,
-            )
-        } else {
-            com.scantrader.app.data.catalog.CardLanguageDetector.Detection(null, "none")
-        }
+        languageResolver.explainPrinted(card, ocrName, ocrText)
     } catch (cancel: CancellationException) {
         throw cancel
     } catch (error: Throwable) {
         com.scantrader.app.scan.ScanDebug.w("lang: failed", error)
-        com.scantrader.app.data.catalog.CardLanguageDetector.Detection(null, "error")
+        return null
     }
     val published = com.scantrader.app.data.catalog.CardLanguageDetector.retainConfident(
         scanSession.language,
         detection,
     )
-    if (published.language != null && detection.language == null) {
-        val evidence = scanSession.languageEvidence?.takeIf { it.isNotBlank() } ?: "none"
-        com.scantrader.app.scan.ScanDebug.d(
-            "lang: ${published.language.label} evidence=kept previous=$evidence",
-        )
-        return published.language
-    }
     com.scantrader.app.scan.ScanDebug.d(published.logLine())
-    if (detection.language != null) {
-        scanSession.language = detection.language
-        scanSession.languageEvidence = detection.evidence
-    }
-    return detection.language
+    return published
 }
 
 inline fun <reified VM : ViewModel> factoryOf(crossinline create: () -> VM): ViewModelProvider.Factory =

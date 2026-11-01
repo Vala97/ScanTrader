@@ -41,6 +41,7 @@ class UserPreferences(private val context: Context) {
             neuralPromptShown = prefs[NEURAL_PROMPT_SHOWN] ?: false,
             onboardingCompleted = prefs[ONBOARDING_COMPLETED] ?: false,
             autoUpdateCheck = prefs[AUTO_UPDATE_CHECK] ?: true,
+            recognitionSound = prefs[RECOGNITION_SOUND] ?: true,
         )
     }
 
@@ -84,6 +85,10 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setShowDebugInfo(enabled: Boolean) {
         context.dataStore.edit { it[SHOW_DEBUG_INFO] = enabled }
+    }
+
+    suspend fun setRecognitionSound(enabled: Boolean) {
+        context.dataStore.edit { it[RECOGNITION_SOUND] = enabled }
     }
 
     suspend fun setAutoUpdateCheck(enabled: Boolean) {
@@ -158,6 +163,7 @@ class UserPreferences(private val context: Context) {
         val NEURAL_PROMPT_SHOWN = booleanPreferencesKey("neural_prompt_shown")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
+        val RECOGNITION_SOUND = booleanPreferencesKey("recognition_sound")
         val UPDATE_CHECKED_AT = longPreferencesKey("app_update_checked_at")
         val EXPANSIONS_SYNCED_AT = longPreferencesKey("ct_expansions_synced_at")
         val PENDING_APP_UPDATE = stringPreferencesKey("app_update_pending")
@@ -195,4 +201,6 @@ data class ScanDefaults(
     val onboardingCompleted: Boolean = false,
     /** Daily GitHub release check. A manual check ignores this. */
     val autoUpdateCheck: Boolean = true,
+    /** Beep when auto-scan recognizes a card. Silent and vibrate stay quiet. */
+    val recognitionSound: Boolean = true,
 )

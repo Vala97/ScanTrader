@@ -167,6 +167,24 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
+                        Text("Suono al riconoscimento")
+                        Text(
+                            "Un beep quando l’auto-scan riconosce la carta. Non suona in silenzioso o vibrazione.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = defaults.recognitionSound,
+                        onCheckedChange = viewModel::setRecognitionSound,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
                         Text("Mostra informazioni aggiuntive (debug)")
                         Text(
                             "In conferma mostra il banner «Conferma a mano» e la percentuale di riconoscimento.",
