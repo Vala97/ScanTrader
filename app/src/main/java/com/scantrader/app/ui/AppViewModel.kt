@@ -901,6 +901,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         val autoMode = requireMatch
         return withContext(Dispatchers.IO) {
             val t0 = System.currentTimeMillis()
+            val shot = com.scantrader.app.scan.ShotClock()
+            try {
             com.scantrader.app.scan.ScanDebug.d(
                 "analyze start game=${game.value} requireMatch=$requireMatch " +
                     "bitmap=${bitmap.width}x${bitmap.height} " +
@@ -1493,6 +1495,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                         cropped,
                                         matched,
                                         printedLang = printedLang,
+                                        shot = shot,
                                     )
                                 }
                                     .onFailure {
@@ -1502,7 +1505,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             }
                         }
                         Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> if (neuralOn) {
-                            runCatching { app.galleryMatcher.matchCt(game.value, cropped, matched) }
+                            runCatching { app.galleryMatcher.matchCt(game.value, cropped, matched, shot = shot) }
                                 .onFailure { com.scantrader.app.scan.ScanDebug.e("gallery.matchCt failed", it) }
                                 .getOrDefault(emptyList())
                         } else {
@@ -1514,7 +1517,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                 com.scantrader.app.scan.ScanDebug.d("gallery skipped (Pokémon pack not installed)")
                                 emptyList()
                             } else {
-                                runCatching { app.galleryMatcher.matchPokemon(cropped, matched) }
+                                runCatching { app.galleryMatcher.matchPokemon(cropped, matched, shot = shot) }
                                     .onFailure {
                                         com.scantrader.app.scan.ScanDebug.e("gallery.matchPokemon failed", it)
                                     }
@@ -1578,7 +1581,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             ) {
                 // giochi CardTrader: le versioni (normale, Pre-release, promo) hanno quasi la stessa arte,
                 // l'ordine resta quello del catalogo (prima il numero esatto)
-                runCatching { app.visualRanker.rank(fingerprint, catalogHits) }
+                runCatching { app.visualRanker.rank(fingerprint, catalogHits, matched, shot) }
                     .onFailure { com.scantrader.app.scan.ScanDebug.w("visualRanker failed", it) }
                     .getOrDefault(catalogHits)
             } else {
@@ -1786,6 +1789,14 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 scheduleRulesOcr(croppedFull)
             }
             if (requireMatch) acceptAuto || chooseVersion else true
+            } finally {
+                com.scantrader.app.scan.ScanDebug.shot(
+                    embedMs = shot.embedMs,
+                    rotationSkipped = shot.rotationSkipped,
+                    rankerSkipped = shot.rankerSkipped,
+                    totalMs = System.currentTimeMillis() - t0,
+                )
+            }
         }
     }
 
@@ -2008,7 +2019,9 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
                 val hits = app.catalog.identify(app.scanSession.game, parsedText, query)
                 val fingerprint = app.scanSession.queryFingerprint
                 val ranked = if (fingerprint != null && hits.isNotEmpty()) {
-                    runCatching { app.visualRanker.rank(fingerprint, hits) }.getOrDefault(hits)
+                    runCatching {
+                        app.visualRanker.rank(fingerprint, hits, parsedText)
+                    }.getOrDefault(hits)
                 } else {
                     hits
                 }

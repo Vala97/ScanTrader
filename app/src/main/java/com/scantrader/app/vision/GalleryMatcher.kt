@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
+import com.scantrader.app.scan.ShotClock
 import com.scantrader.app.network.scryfall.ScryfallCard
 import com.scantrader.app.network.scryfall.ScryfallClient
 import com.scantrader.app.network.tcgdex.TcgdexApi
@@ -26,7 +27,8 @@ class GalleryMatcher(
         parsed: ParsedCardText,
         topK: Int = 8,
         printedLang: String? = null,
-    ): List<IdentifiedCard> = matchGame(Game.MTG, cardCrop, parsed, topK, printedLang)
+        shot: ShotClock? = null,
+    ): List<IdentifiedCard> = matchGame(Game.MTG, cardCrop, parsed, topK, printedLang, shot)
 
     /** One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: l'id della galleria porta gia' i dati del blueprint CardTrader. */
     suspend fun matchCt(
@@ -34,13 +36,15 @@ class GalleryMatcher(
         cardCrop: Bitmap,
         parsed: ParsedCardText,
         topK: Int = 8,
-    ): List<IdentifiedCard> = matchGame(game, cardCrop, parsed, topK)
+        shot: ShotClock? = null,
+    ): List<IdentifiedCard> = matchGame(game, cardCrop, parsed, topK, shot = shot)
 
     suspend fun matchPokemon(
         cardCrop: Bitmap,
         parsed: ParsedCardText,
         topK: Int = 8,
-    ): List<IdentifiedCard> = matchGame(Game.POKEMON, cardCrop, parsed, topK)
+        shot: ShotClock? = null,
+    ): List<IdentifiedCard> = matchGame(Game.POKEMON, cardCrop, parsed, topK, shot = shot)
 
     private suspend fun matchGame(
         game: Game,
@@ -48,6 +52,7 @@ class GalleryMatcher(
         parsed: ParsedCardText,
         topK: Int,
         printedLang: String? = null,
+        shot: ShotClock? = null,
     ): List<IdentifiedCard> = withContext(Dispatchers.Default) {
         val t0 = System.currentTimeMillis()
         if (!pack.ensureLoaded(game)) {
@@ -61,15 +66,27 @@ class GalleryMatcher(
             return@withContext emptyList()
         }
 
-        val embeddings = embedder.embedWithRotation(cardCrop)
+        val uprightHits = ArrayList<EmbeddingCatalog.Hit>(topK)
+        val pass = embedder.embedWithRotation(cardCrop) { vector ->
+            uprightHits.clear()
+            uprightHits.addAll(catalog.search(vector, topK = topK))
+            RotationSkip.skip(uprightHits.map { it.score })
+        }
+        shot?.embedMs = pass.embedMs
+        shot?.rotationSkipped = pass.rotationSkipped
         val scoreById = linkedMapOf<String, Float>()
-        for (emb in embeddings) {
-            for (hit in catalog.search(emb, topK = topK)) {
+        fun absorb(hits: List<EmbeddingCatalog.Hit>) {
+            for (hit in hits) {
                 val prev = scoreById[hit.cardId]
                 if (prev == null || hit.score > prev) {
                     scoreById[hit.cardId] = hit.score
                 }
             }
+        }
+        absorb(uprightHits)
+        if (!pass.rotationSkipped) {
+            val rotated = pass.vectors.getOrNull(1)
+            if (rotated != null) absorb(catalog.search(rotated, topK = topK))
         }
         val ranked = scoreById.entries
             .sortedByDescending { it.value }
@@ -79,7 +96,8 @@ class GalleryMatcher(
         com.scantrader.app.scan.ScanDebug.d(
             "gallery: game=$game catalogSize=${catalog.size} rawHits=${scoreById.size} " +
                 "aboveMin=${ranked.size} top=${ranked.firstOrNull()?.let { "${it.key}=${it.value}" }} " +
-                "embedMs=${System.currentTimeMillis() - t0}",
+                "embedMs=${pass.embedMs} rotationSkipped=${if (pass.rotationSkipped) "yes" else "no"} " +
+                "totalMs=${System.currentTimeMillis() - t0}",
         )
 
         if (ranked.isEmpty()) return@withContext emptyList()
