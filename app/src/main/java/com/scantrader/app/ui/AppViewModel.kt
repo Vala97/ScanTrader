@@ -1467,22 +1467,25 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 logTiming("catalog-skipped", ocrMs, 0, System.currentTimeMillis() - t0)
                 return@withContext false
             }
-            if (autoMode && !queryCatalog && prefetched == null) {
-                val heldReason = if (cooling) "cooldown" else "debounce"
+            // Debounce hold: do not embed. The next frame is ~0.7s away and can query.
+            // Cooldown cannot call Scryfall, so the gallery below is the lookup.
+            if (autoMode && !queryCatalog && prefetched == null && !cooling) {
                 com.scantrader.app.scan.ScanDebug.d(
-                    "catalog held reason=$heldReason id=$catalogIdentity neural=true",
+                    "catalog held reason=debounce id=$catalogIdentity neural=true",
+                )
+                autoHold = AutoHold.UNSTABLE
+                app.scanSession.parsed = matched
+                logTiming("catalog-held", ocrMs, 0, System.currentTimeMillis() - t0)
+                return@withContext false
+            }
+            if (autoMode && !queryCatalog && prefetched == null) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "catalog held reason=cooldown id=$catalogIdentity neural=true",
                 )
             }
-            // Auto + cn+set skips the gallery only when the catalog query runs.
-            // A held catalog still embeds, so a flickering set cannot drop both paths.
             // giochi CardTrader: l'immagine serve anche con il codice letto (sceglie fra le versioni)
-            val skipHeavyVision = com.scantrader.app.scan.HeavyVision.skip(
-                autoMode = autoMode,
-                idReady = idReady,
-                queryCatalog = queryCatalog,
-                neuralChoosesPrinting = game.value in app.ctGames && neuralOn,
-            )
-            val fingerprint = if (skipHeavyVision || !queryCatalog) {
+            val neuralChoosesPrinting = game.value in app.ctGames && neuralOn
+            val fingerprint = if (!queryCatalog || (autoMode && idReady && !neuralChoosesPrinting)) {
                 com.scantrader.app.scan.ScanDebug.d("fingerprint skipped (auto id-ready)")
                 null
             } else {
@@ -1492,30 +1495,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     .getOrNull()
             }
 
-            val fetched = if (prefetched != null) {
-                prefetched to emptyList<IdentifiedCard>()
-            } else try {
-                coroutineScope {
-                val ocrJob = async {
-                    if (!queryCatalog) {
-                        return@async emptyList()
-                    }
-                    try {
-                        app.catalog.identify(game.value, matched)
-                    } catch (busy: ScryfallBusyException) {
-                        throw busy
-                    } catch (t: Throwable) {
-                        com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", t)
-                        if (game.value == Game.RIFTBOUND || game.value in app.ctGames) app.scanSession.errorMessage = t.message
-                        emptyList()
-                    }
-                }
-                val galleryJob = async {
-                    if (skipHeavyVision) {
-                        com.scantrader.app.scan.ScanDebug.d("gallery skipped (auto id-ready)")
-                        return@async emptyList()
-                    }
-                    when (game.value) {
+            // Milo / .stcat indexes are full card scans. The guide crop is that
+            // card (63:88). cropBitmap() on the 1280×960 buffer is nearly square.
+            suspend fun embedGallery(): List<IdentifiedCard> = when (game.value) {
                         Game.MTG -> {
                             if (!app.neuralPack.isInstalled(Game.MTG)) {
                                 com.scantrader.app.scan.ScanDebug.d("gallery skipped (MTG pack not installed)")
@@ -1558,7 +1540,43 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                     .getOrDefault(emptyList())
                             }
                         }
+            }
+
+            val fetched = if (prefetched != null) {
+                prefetched to emptyList<IdentifiedCard>()
+            } else try {
+                coroutineScope {
+                val ocrJob = async {
+                    if (!queryCatalog) {
+                        return@async emptyList()
                     }
+                    try {
+                        app.catalog.identify(game.value, matched)
+                    } catch (busy: ScryfallBusyException) {
+                        throw busy
+                    } catch (t: Throwable) {
+                        com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", t)
+                        if (game.value == Game.RIFTBOUND || game.value in app.ctGames) app.scanSession.errorMessage = t.message
+                        emptyList()
+                    }
+                }
+                val galleryJob = async {
+                    if (!com.scantrader.app.scan.HeavyVision.embedAlongsideCatalog(
+                            autoMode = autoMode,
+                            cooling = cooling,
+                            queryCatalog = queryCatalog,
+                        )
+                    ) {
+                        com.scantrader.app.scan.ScanDebug.d(
+                            if (autoMode && queryCatalog) {
+                                "gallery deferred (catalog first)"
+                            } else {
+                                "gallery skipped (debounce)"
+                            },
+                        )
+                        return@async emptyList()
+                    }
+                    embedGallery()
                 }
                 ocrJob.await() to galleryJob.await()
                 }
@@ -1571,7 +1589,16 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 return@withContext false
             }
             var catalogHits = fetched.first
-            val galleryHits = fetched.second
+            var galleryHits = fetched.second
+            if (galleryHits.isEmpty() &&
+                com.scantrader.app.scan.HeavyVision.embedAfterCatalog(
+                    autoMode = autoMode,
+                    queryCatalog = queryCatalog,
+                    hitCount = catalogHits.size,
+                )
+            ) {
+                galleryHits = embedGallery()
+            }
             val catalogMs = System.currentTimeMillis() - tCat0
             com.scantrader.app.scan.ScanDebug.d(
                 "catalogHits=${catalogHits.size} galleryHits=${galleryHits.size} " +

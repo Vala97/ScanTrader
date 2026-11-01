@@ -14,10 +14,27 @@ class CatalogQueryDebounceTest {
         assertTrue(!debounce.shouldQuery("pioppo|83|"))
         assertTrue(debounce.shouldQuery("pioppo|83|"))
         assertTrue(!debounce.shouldQuery("pioppo|83|"))
-        // Same name + collector. A set that appears later is not a new card.
+        // Collector + set is a new lookup key, then it stays quiet.
+        assertTrue(debounce.shouldQuery("pioppo|83|dft"))
         assertTrue(!debounce.shouldQuery("pioppo|83|dft"))
-        assertTrue(!debounce.shouldQuery("altro|83|dft"))
-        assertTrue(debounce.shouldQuery("altro|83|dft"))
+        assertTrue(!debounce.shouldQuery("pioppo|99|dft"))
+        assertTrue(debounce.shouldQuery("pioppo|99|dft"))
+    }
+
+    @Test
+    fun collectorAndSetIgnoreNameNoise() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
+        assertTrue(!debounce.shouldQuery(mtg("me di tatrice di bosco afro", "226", "blb")))
+        assertTrue(debounce.shouldQuery(mtg("me di tatrice di bosco atro", "226", "blb")))
+        assertEquals("blb", debounce.votedFrame()?.setCode)
+        assertEquals("226", debounce.votedFrame()?.collectorNumber)
+    }
+
+    @Test
+    fun similarNamesWithoutASetStillCountAsOneCard() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
+        assertTrue(!debounce.shouldQuery(mtg("me di tatrice di bosco afro", "226", null)))
+        assertTrue(debounce.shouldQuery(mtg("me di tatrice di bosco atro", "226", null)))
     }
 
     @Test
@@ -73,7 +90,7 @@ class CatalogQueryDebounceTest {
         val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, now = { t })
         assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", "fra")))
         t = 100L
-        assertTrue(debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", "mh3")))
+        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", "mh3")))
         assertEquals("mh3", debounce.votedFrame()?.setCode)
         t = 150L
         assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "26", null)))

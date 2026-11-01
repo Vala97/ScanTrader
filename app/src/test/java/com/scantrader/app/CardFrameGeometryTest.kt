@@ -42,6 +42,30 @@ class CardFrameGeometryTest {
     }
 
     @Test
+    fun guideCropKeepsCardAspectOnTheAnalysisBuffer() {
+        // ImageAnalysis is 1280×960, upright 960×1280. Milo indexes are full
+        // card scans (63:88). frameIn() on that buffer is nearly square.
+        // The on-screen guide, mapped through FILL_CENTER, stays 63:88.
+        val bitmapW = 960
+        val bitmapH = 1280
+        val viewW = 1080f
+        val viewH = 2400f
+        val naive = CardFrameGeometry.frameIn(bitmapW.toFloat(), bitmapH.toFloat())
+        val guide = CardFrameGeometry.frameIn(viewW, viewH)
+        val mapped = CardFrameGeometry.mapFillCenterViewRectToBitmap(
+            bitmapWidth = bitmapW,
+            bitmapHeight = bitmapH,
+            viewWidth = viewW,
+            viewHeight = viewH,
+            guide = guide,
+        )
+        val naiveAspect = naive.width / naive.height
+        val mappedAspect = mapped.width.toFloat() / mapped.height.toFloat()
+        assertTrue(kotlin.math.abs(naiveAspect - CardFrameGeometry.ASPECT) > 0.2f)
+        assertEquals(CardFrameGeometry.ASPECT, mappedAspect, 0.02f)
+    }
+
+    @Test
     fun fillCenterDropsTheBufferEdgesThatAreOutsideTheView() {
         val viewW = 100f
         val viewH = 200f

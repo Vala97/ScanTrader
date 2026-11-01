@@ -7,53 +7,73 @@ import org.junit.Test
 
 class HeavyVisionTest {
     @Test
-    fun heldCatalogStillRunsTheGalleryWhenIdentityIsReady() {
+    fun debounceHoldDoesNotEmbed() {
         assertFalse(
-            HeavyVision.skip(
+            HeavyVision.embedAlongsideCatalog(
                 autoMode = true,
-                idReady = true,
+                cooling = false,
                 queryCatalog = false,
-                neuralChoosesPrinting = false,
+            ),
+        )
+        assertFalse(
+            HeavyVision.embedAfterCatalog(
+                autoMode = true,
+                queryCatalog = false,
+                hitCount = 0,
             ),
         )
     }
 
     @Test
-    fun catalogQuerySkipsTheGalleryWhenIdentityIsReady() {
+    fun cooldownEmbedsWithoutWaitingForAnotherFrame() {
         assertTrue(
-            HeavyVision.skip(
+            HeavyVision.embedAlongsideCatalog(
                 autoMode = true,
-                idReady = true,
-                queryCatalog = true,
-                neuralChoosesPrinting = false,
+                cooling = true,
+                queryCatalog = false,
             ),
         )
     }
 
     @Test
-    fun manualScanMissingIdentityAndCardTraderKeepTheGallery() {
+    fun galleryRunsOnlyAfterAnEmptyCatalogQuery() {
         assertFalse(
-            HeavyVision.skip(
+            HeavyVision.embedAlongsideCatalog(
+                autoMode = true,
+                cooling = false,
+                queryCatalog = true,
+            ),
+        )
+        assertTrue(
+            HeavyVision.embedAfterCatalog(
+                autoMode = true,
+                queryCatalog = true,
+                hitCount = 0,
+            ),
+        )
+        assertFalse(
+            HeavyVision.embedAfterCatalog(
+                autoMode = true,
+                queryCatalog = true,
+                hitCount = 1,
+            ),
+        )
+    }
+
+    @Test
+    fun manualScanStillEmbedsBesideTheCatalog() {
+        assertTrue(
+            HeavyVision.embedAlongsideCatalog(
                 autoMode = false,
-                idReady = true,
+                cooling = false,
                 queryCatalog = true,
-                neuralChoosesPrinting = false,
             ),
         )
         assertFalse(
-            HeavyVision.skip(
-                autoMode = true,
-                idReady = false,
+            HeavyVision.embedAfterCatalog(
+                autoMode = false,
                 queryCatalog = true,
-                neuralChoosesPrinting = false,
-            ),
-        )
-        assertFalse(
-            HeavyVision.skip(
-                autoMode = true,
-                idReady = true,
-                queryCatalog = true,
-                neuralChoosesPrinting = true,
+                hitCount = 0,
             ),
         )
     }
