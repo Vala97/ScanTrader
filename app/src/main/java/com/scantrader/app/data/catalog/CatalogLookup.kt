@@ -24,6 +24,7 @@ class CatalogLookup(
     private val localSets: LocalSetCatalog? = null,
     private val riftbound: RiftboundCatalog? = null,
     private val ctGames: Map<Game, CtGameCatalog> = emptyMap(),
+    private val pokemonExpansionCodes: () -> Set<String> = { emptySet() },
 ) {
     suspend fun identify(game: Game, parsed: ParsedCardText, manualQuery: String? = null): List<IdentifiedCard> {
         val queryName = manualQuery?.trim()?.takeIf { it.isNotBlank() } ?: parsed.nameGuess
@@ -439,7 +440,7 @@ class CatalogLookup(
     }
 
     private suspend fun lookupPokemon(parsedInput: ParsedCardText, name: String?): List<IdentifiedCard> {
-        val parsed = KnownSetCodes.scrub(Game.POKEMON, parsedInput)
+        val parsed = KnownSetCodes.scrub(Game.POKEMON, parsedInput, pokemonExpansionCodes())
         val number = OcrParser.collectorCandidates(parsed.collectorNumber).firstOrNull()
         val noisyName = OcrParser.looksLikeAbilityOrAttackName(name) ||
             (name != null && com.scantrader.app.data.catalog.CardIdentity.isStageNoise(name))

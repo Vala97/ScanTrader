@@ -150,7 +150,14 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         ctGames = com.scantrader.app.data.catalog.CtGameCatalog.GAME_IDS.mapValues { (g, id) ->
             com.scantrader.app.data.catalog.CtGameCatalog(g, id, cardTraderApi, { secrets.getCardTraderToken() }, File(filesDir, "catalogo-${g.csvLabel}"))
         }
-        catalog = CatalogLookup(scryfall, tcgdex, localSets, riftbound, ctGames)
+        catalog = CatalogLookup(
+            scryfall,
+            tcgdex,
+            localSets,
+            riftbound,
+            ctGames,
+            pokemonExpansionCodes = { expansionResolver.pokemonCodes() },
+        )
         // collegamento con il DLS Tracker: le carte salvate vanno nel registro e da li' su Cardtrader
         tracker = com.scantrader.app.tracker.TrackerLink(this, secrets, appScope, database, expansionResolver)
         languageResolver = CardLanguageResolver(scryfall, tcgdex)

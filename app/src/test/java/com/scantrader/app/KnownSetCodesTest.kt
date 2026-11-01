@@ -49,6 +49,16 @@ class KnownSetCodesTest {
         assertTrue(KnownSetCodes.isKnown(Game.POKEMON, "dri"))
         assertTrue(KnownSetCodes.isKnown(Game.POKEMON, "sv2a"))
         assertTrue(KnownSetCodes.isKnown(Game.POKEMON, "oasc"))
+        assertTrue(KnownSetCodes.isKnown(Game.POKEMON, "ssh"))
+        assertTrue(KnownSetCodes.isKnown(Game.POKEMON, "evo"))
+        assertFalse(KnownSetCodes.isKnown(Game.POKEMON, "zzz9"))
+        assertTrue(KnownSetCodes.isKnown(Game.POKEMON, "zzz9", extraKnown = setOf("zzz9")))
+        val kept = KnownSetCodes.scrub(
+            Game.POKEMON,
+            ParsedCardText("Pikachu", "25", "zzz9"),
+            extraKnown = setOf("zzz9"),
+        )
+        assertEquals("zzz9", kept.setCode)
         assertFalse(KnownSetCodes.isKnown(Game.POKEMON, "wird"))
         assertFalse(KnownSetCodes.isKnown(Game.POKEMON, "div"))
         val scrubbed = KnownSetCodes.scrub(
