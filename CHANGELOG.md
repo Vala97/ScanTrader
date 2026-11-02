@@ -5,6 +5,26 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Aggiunto
+- In auto-scan, appena sopra Impostazioni scan e dentro l’area della fotocamera, un’etichetta mostra l’ultima carta salvata (nome, set, numero, lingua, ora) e lo stato di quella inquadrata: «Già salvata», «Nuova: …» o «Analisi in corso…».
+- Al primo avvio l’app misura Milo con NNAPI e con la CPU e tiene il più veloce. Sul Pixel 9 Pro ha vinto la CPU (circa 0,5 s contro 3,3 s a embed; NNAPI spezzava il grafo in 90 partizioni).
+
+### Modificato
+- Milo riceve la carta raddrizzata sui quattro angoli della guida, a piena risoluzione (CardDewarp), non più il ritaglio quadrato con lo sfondo, e parte insieme all’OCR.
+- Il primo frame con nome e numero sicuri va subito al catalogo, senza debounce. La rete del catalogo si ferma dopo 3 secondi e si usano i dati locali. L’autosave parte circa 0,8 secondi dopo la conferma.
+- La conferma automatica accetta Milo da 0,60 se il numero di collezione coincide, anche senza nome. Se nome e numero coincidono, basta una confidenza da 0,62.
+- Se la lettura non è ancora stabile, il frame non aspetta Milo. Con set e numero la stabilità usa quelli; un nome quasi uguale conta come la stessa carta.
+
+### Corretto
+- Sulle carte vecchie il numero xx/xxx si legge dopo «Wizards of the Coast», con o senza «Inc.». Gli anni del copyright non diventano il numero.
+- Un titolo italiano si riconosce da Scryfall anche se il nome inglese è diverso. Se la fascia del titolo è vuota, un secondo passaggio al 22% con enhance legge il nome. La lettura dell’intera carta è di nuovo quella completa.
+- Se la lingua non arriva in tempo, resta quella dell’ultima carta salvata. Lo spagnolo si sceglie solo con un indizio vero.
+- Dopo l’attesa della lingua il salvataggio parte comunque. Un tocco sull’anteprima non lo annulla più.
+- Cambiando carta, la precedente non resta in conferma (gate softFail).
+- Finché la carta già salvata resta inquadrata, l’analisi si mette in pausa.
+
+## [1.2] - 2026-11-01
+
 > **Stato dei giochi nuovi:** Riftbound funziona bene (provato sul telefono, anche in autoscan). One Piece: **l'autoscan non funziona ancora** (con la foto manuale sì); ci sta lavorando Vala. Dragon Ball, Yu-Gi-Oh! e Union Arena: solo test automatici, non ancora provati con carte vere.
 
 ### Aggiunto
@@ -20,6 +40,18 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - **Collegamento al DLS Tracker** (home → icona carrello: indirizzo, utente, password cifrata nel Keystore). Ogni carta salvata parte con un codice unico e resta in una coda in uscita finché il tracker non la conferma: niente carte perse se cade la rete, niente doppioni se si riprova. Solo il tracker scrive su CardTrader, dopo 10 minuti e con le sue Regole prezzi. «Manda al tracker» nella collezione manda le copie non ancora mandate. Le vendite segnate nel registro tolgono le copie dalle collezioni (e le rimettono se la vendita viene annullata). La collezione «Cardtrader» è lo specchio, aggiornato da solo, dei propri annunci; non compare in «Salva in». La schermata del tracker mostra l’inventario per gioco ed espansione e lo stato della coda.
 - **Riconoscimento per immagine dei giochi CardTrader** (sperimentale, per ora One Piece: l'autoscan non funziona ancora). Una galleria Milo (`.stcat`, stesso formato dei Pokémon) costruita dalle immagini CardTrader; l'id di ogni carta porta già i dati del blueprint. L'app la scarica quando si sceglie il gioco da `BuildConfig.CT_GALLERY_URL` (`-Pscantrader.ctGalleryUrl=…`): **vuoto = funzione spenta**, come nella build normale. Con la galleria: il codice letto più un'immagine netta scelgono la versione e la carta si salva da sola; senza codice si salva solo con un'immagine molto netta; altrimenti l'autoscan apre la conferma con la carta proposta. Soglie (`MatchFusion.CT_VISUAL_*`) misurate su 500 foto simulate: nessuna carta sbagliata salvata.
 - Nuovi test: `RiftboundTest` e `CtGamesTest` (codici stampati con errori OCR, versioni, catalogo sul telefono senza rete, codici di altri giochi).
+
+### Modificato
+- Il token CardTrader non entra più nell’APK. Si scrive solo in Impostazioni e resta cifrato sul telefono. Se `local.properties` contiene `cardtrader.token`, o se si passa `-Pscantrader.cardTraderToken`, la build si ferma.
+- In Informazioni ci sono i link a Licenza (AGPL-3.0) e Informativa privacy. Accanto al download del pack neurale si ricorda che il modello Milo è AGPL-3.0.
+- Nell’introduzione, l’ultima pagina divide l’elenco in Magic e Pokémon. Il pack neurale Magic mostra la dimensione, se è nota, e «da scaricare» o «già installato». Ogni catalogo Pokémon fa lo stesso quando lo stato è noto. Il pulsante è «Scarica tutto», «Scarica pack Magic» o «Scarica cataloghi Pokémon», e non compare se pack e cataloghi sono già sul telefono.
+
+### Corretto
+- La versione release non si chiude più all’avvio. R8 toglieva la firma generica dei TypeToken di Gson, usata dalla cache TCGdex. Le regole ProGuard tengono TypeToken e le classi in `vision`.
+
+## [1.1] - 2026-10-28
+
+### Aggiunto
 - L’APK di release si firma da `keystore.properties` (ignorato da git) o dalle variabili `SCANTRADER_KEYSTORE_*`. Senza keystore la release si compila comunque, non firmata. Minify e riduzione delle risorse sono attivi; nell’APK di release resta solo `arm64-v8a` (la debug tiene tutte le ABI). `VERSION_NAME` e `VERSION_CODE` stanno solo in `app/version.properties`.
 - All’avvio l’app controlla un aggiornamento su GitHub, al massimo una volta al giorno, dall’URL fisso del release prerelease `app-update` (non da `releases/latest`, che resta ai cataloghi). In Impostazioni generali ci sono «Controlla aggiornamenti automaticamente» (acceso) e «Controlla aggiornamenti». Se c’è una versione più nuova, un dialogo offre «Aggiorna» e «Più tardi», con le note. Il file si scarica, si controlla lo sha256 e si installa solo se torna; altrimenti non si installa nulla. Senza il permesso di installare da questa origine, un messaggio indica le impostazioni. Una build Play passa `-Pscantrader.githubSelfUpdate=false` e nasconde il controllo. L’indice si prepara con `tools/publish_app_update` (lo script non carica nulla).
 - Nella collezione i filtri e l’ordine stanno in un pannello chiuso di default, accanto alla ricerca. Un puntino segnala un filtro o un ordine diverso dal numero di collezione. Copie, valore e «Azzera» restano sempre visibili. Lo stato aperto o chiuso resta salvato per quella collezione. La ricerca trova anche l’espansione: nome del set già salvato o letto dalla cache locale (inglese e, se c’è, il nome nella lingua stampata) e codice set, per esempio «Morningtide», «Foundations» o «fra». Mentre si scrive non parte nessuna richiesta di rete.
@@ -32,15 +64,11 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Al primo avvio un'introduzione a pagine (si scorre, con i pallini). «Salta» è sempre visibile; «Avanti» sull'ultima pagina diventa «Inizia». Le pagine spiegano lo scan di Magic e Pokémon, come inquadrare titolo e numero di collezione, l'auto-scan (soglia e niente doppione di fila) e l'export CSV per CardTrader. L'ultima pagina chiede il permesso della fotocamera e propone il pack neurale Magic e i cataloghi Pokémon, al posto del dialogo precedente. Se il permesso è negato si può continuare. Compare una sola volta: chi aveva già risposto a quel dialogo non la rivede. In Impostazioni, «Rivedi introduzione» la riapre.
 
 ### Modificato
-- Il token CardTrader non entra più nell’APK. Si scrive solo in Impostazioni e resta cifrato sul telefono. Se `local.properties` contiene `cardtrader.token`, o se si passa `-Pscantrader.cardTraderToken`, la build si ferma.
-- In Informazioni ci sono i link a Licenza (AGPL-3.0) e Informativa privacy. Accanto al download del pack neurale si ricorda che il modello Milo è AGPL-3.0.
-- Nell’introduzione, l’ultima pagina divide l’elenco in Magic e Pokémon. Il pack neurale Magic mostra la dimensione, se è nota, e «da scaricare» o «già installato». Ogni catalogo Pokémon fa lo stesso quando lo stato è noto. Il pulsante è «Scarica tutto», «Scarica pack Magic» o «Scarica cataloghi Pokémon», e non compare se pack e cataloghi sono già sul telefono.
 - Dalle impostazioni di scan è sparita l’opzione «Sessione». Lo scan resta quello di una carta alla volta.
 - Icona dell’app: medaglione blu e oro (cristallo, teschio, due uccelli e i simboli elementali) al posto del robot. Icone legacy e adattiva, con il disegno nel 66% centrale così la maschera non taglia il medaglione, fondo `#233154` (bordi dell’immagine) e strato monocromatico. In **Informazioni** si vede la nuova icona. L’originale è in `docs/branding/app_logo.jpg`.
 - README allineato allo stato attuale: pack neurali, auto-scan con conferma, nomi in altre lingue, lettura del codice set, niente prezzo foil per Pokémon, CSV con nome inglese e `scryfall_id` inglese (va riesportato dopo l’aggiornamento), AGP 8.13.2 / Gradle 8.13 / JDK 17, nuova icona.
 
 ### Corretto
-- La versione release non si chiude più all’avvio. R8 toglieva la firma generica dei TypeToken di Gson, usata dalla cache TCGdex. Le regole ProGuard tengono TypeToken e le classi in `vision`.
 - La lingua è quella stampata sulla carta. «Druido del Suolo Avvizzito» (Morningtide 59) resta italiano anche se Scryfall ha solo la stampa inglese: il prezzo e l’export CardTrader usano ancora il nome inglese, e in collezione la lingua è `it`. Un’altra lingua della stessa stampa non viene bloccata come duplicato. Nel log: `lang: Italiano evidence=title=it not-en cue=…`.
 - Il nome della carta è solo il titolo in alto. «Resistenza di Tam» e «Winter, Giocatore di Squadra» restano il nome anche se contengono una parola che compare anche nelle regole (`giocatore`, `creatura`, `terra`, `bersaglio`, `carta`, `magia`, `resistenza`, `danno`). Una riga che è davvero una frase di regole o una riga di tipo (`Stregoneria`, `Creatura — Guerriero`) non diventa il titolo. Se la fascia del titolo è vuota o illeggibile, il nome resta vuoto. Un titolo tagliato (`Winter, Giocatore di Squadr`) conferma comunque la carta col nome stampato intero. Vale anche per le facce adventure, le split, le bifronte e i Pokémon, il cui nome è comunque in alto.
 - Un hit per set e numero di collezione, in locale o online, non si salva da solo se il titolo letto non conferma la carta. `fra` 13 letto al posto di 130, senza nome, non accetta più Kindred Judgment (confidenza 0,98). Si continua a inquadrare finché il nome non torna.
