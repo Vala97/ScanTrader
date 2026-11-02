@@ -85,17 +85,17 @@ class CatalogQueryDebounce(
             clearRegion()
             return false
         }
-        return observe(withCarriedSet(frame), agreed)
+        return observe(withCarriedSet(frame), agreed, sure = false)
     }
 
-    fun shouldQuery(frame: Frame): Boolean {
+    fun shouldQuery(frame: Frame, sure: Boolean = false): Boolean {
         val agreed = agreementKey(exactKey(frame))
         noteExact(agreed)
         if (!hasSignal(frame)) {
             clearRegion()
             return false
         }
-        return observe(withCarriedSet(frame), agreed)
+        return observe(withCarriedSet(frame), agreed, sure)
     }
 
     /**
@@ -178,7 +178,7 @@ class CatalogQueryDebounce(
         )
     }
 
-    private fun observe(frame: Frame, exactKey: String): Boolean {
+    private fun observe(frame: Frame, exactKey: String, sure: Boolean): Boolean {
         val t = now()
         val previous = lastFrame
         val same = previous != null && sameCardRegion(previous, frame)
@@ -205,7 +205,8 @@ class CatalogQueryDebounce(
                         CardIdentity.normCollector(it.collectorNumber) == cn)
             }
         }
-        val ready = seenCount >= stableFramesNeeded ||
+        val ready = sure ||
+            seenCount >= stableFramesNeeded ||
             primaryHits >= stableFramesNeeded ||
             nameHits >= stableFramesNeeded ||
             regionFrames >= fallbackFrames ||

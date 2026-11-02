@@ -301,13 +301,17 @@ fun ConfirmScreen(
         scheduledMatch.value = claim.activeKey
         autoSaveJob.value?.cancel()
         autoSaveJob.value = autoSaveScope.launch {
-            ScanDebug.d("autosave: scheduled")
-            for (left in wait downTo 1) {
+            val pause = AutoSaveSchedule.POST_CONFIRM_DELAY_MS
+            ScanDebug.d("autosave: scheduled ${pause}ms")
+            secondsLeftState.intValue = 1
+            var leftMs = pause
+            while (leftMs > 0) {
                 if (autoSaveCancelledState.value) return@launch
-                val shown = selectedState.value?.identityKey()
-                if (shown != null && shown != key) return@launch
-                secondsLeftState.intValue = left
-                delay(1_000)
+                val shownNow = selectedState.value?.identityKey()
+                if (shownNow != null && shownNow != key) return@launch
+                val slice = minOf(100L, leftMs)
+                delay(slice)
+                leftMs -= slice
             }
             if (autoSaveCancelledState.value) return@launch
             secondsLeftState.intValue = 0

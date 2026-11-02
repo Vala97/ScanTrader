@@ -1,11 +1,14 @@
 package com.scantrader.app.scan
 
+import com.scantrader.app.data.model.CardLanguage
+
 /** Last card written into a collection during this scan visit. */
 data class LastSavedCard(
     val name: String,
     val setCode: String,
     val collectorNumber: String,
     val languageLabel: String,
+    val language: CardLanguage,
     val savedAtMs: Long,
     val identityKey: String,
 )

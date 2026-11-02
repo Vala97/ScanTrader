@@ -57,6 +57,54 @@ class AutoSaveCommitTest {
     }
 
     @Test
+    fun timeoutKeepsTheLastSavedLanguage() {
+        assertEquals(
+            CardLanguage.ITALIAN,
+            AutoSaveCommit.languageOnTimeout(
+                lastSaved = CardLanguage.ITALIAN,
+                session = CardLanguage.SPANISH,
+                fallback = CardLanguage.ENGLISH,
+                spanishClue = false,
+            ),
+        )
+        assertFalse(AutoSaveCommit.spanishClue("Volare", "LRW • ES 80"))
+        assertEquals(
+            CardLanguage.ITALIAN,
+            AutoSaveCommit.languageOnTimeout(
+                lastSaved = CardLanguage.ITALIAN,
+                session = CardLanguage.SPANISH,
+                fallback = CardLanguage.ENGLISH,
+                spanishClue = AutoSaveCommit.spanishClue("Volare", "LRW • ES"),
+            ),
+        )
+    }
+
+    @Test
+    fun timeoutChoosesSpanishOnlyWithARealClue() {
+        assertTrue(AutoSaveCommit.spanishClue("Señor de la Atlántida", null))
+        assertTrue(AutoSaveCommit.spanishClue(null, "debilidad fuego"))
+        assertFalse(AutoSaveCommit.spanishClue("Bolla Protettiva", "lrw 80"))
+        assertEquals(
+            CardLanguage.SPANISH,
+            AutoSaveCommit.languageOnTimeout(
+                lastSaved = CardLanguage.ITALIAN,
+                session = CardLanguage.ITALIAN,
+                fallback = CardLanguage.ENGLISH,
+                spanishClue = true,
+            ),
+        )
+        assertEquals(
+            CardLanguage.ENGLISH,
+            AutoSaveCommit.languageOnTimeout(
+                lastSaved = null,
+                session = null,
+                fallback = CardLanguage.ENGLISH,
+                spanishClue = false,
+            ),
+        )
+    }
+
+    @Test
     fun timeoutUsesTheBestLanguageOnHand() {
         assertEquals(
             CardLanguage.ITALIAN,

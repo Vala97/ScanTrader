@@ -64,6 +64,8 @@ data class RotationEmbed(
  */
 class MiloEmbedder(
     modelFile: File,
+    private val preferredProvider: String? = null,
+    private val exclusiveProvider: Boolean = false,
 ) : AutoCloseable {
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val session: OrtSession
@@ -132,7 +134,7 @@ class MiloEmbedder(
         } else if (!nnapi) {
             ScanDebug.d("onnx: nnapi off sdk=$sdk emulator=$emulator")
         }
-        val order = providerOrder(forceCpuOnly, nnapi)
+        val order = sessionOrder(forceCpuOnly, nnapi, preferredProvider, exclusiveProvider)
         var error: Throwable? = null
         for (name in order) {
             try {
@@ -220,15 +222,24 @@ class MiloEmbedder(
         var forceCpuOnly: Boolean = false
 
         fun providerOrder(forceCpuOnly: Boolean, nnapi: Boolean): List<String> =
-            if (forceCpuOnly) {
-                listOf("cpu")
-            } else {
-                buildList {
-                    if (nnapi) add("nnapi+xnnpack")
-                    add("xnnpack")
-                    add("cpu")
-                }
+            sessionOrder(forceCpuOnly, nnapi, preferred = null, exclusive = false)
+
+        fun sessionOrder(
+            forceCpuOnly: Boolean,
+            nnapi: Boolean,
+            preferred: String?,
+            exclusive: Boolean,
+        ): List<String> {
+            if (forceCpuOnly) return listOf("cpu")
+            if (exclusive && !preferred.isNullOrBlank()) return listOf(preferred)
+            val base = buildList {
+                if (nnapi) add(EmbedProviderBench.NNAPI)
+                add(EmbedProviderBench.XNNPACK)
+                add("cpu")
             }
+            if (preferred.isNullOrBlank() || preferred !in base) return base
+            return listOf(preferred) + base.filter { it != preferred }
+        }
         private val XNNPACK_OPTIONS = mapOf("intra_op_num_threads" to "2")
         private const val MEAN_R = 0.485f
         private const val MEAN_G = 0.456f

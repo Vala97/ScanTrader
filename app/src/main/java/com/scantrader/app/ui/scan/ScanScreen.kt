@@ -172,6 +172,8 @@ fun ScanScreen(
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
     val autoScan by viewModel.autoScan.collectAsStateWithLifecycle()
     val autoStatus by viewModel.autoStatus.collectAsStateWithLifecycle()
+    val lastSaved by viewModel.lastSaved.collectAsStateWithLifecycle()
+    val framedCard by viewModel.framedCard.collectAsStateWithLifecycle()
     val mtgPack by viewModel.mtgPackState.collectAsStateWithLifecycle()
     val torchOn by viewModel.torchOn.collectAsStateWithLifecycle()
     val lightIntensity by viewModel.lightIntensity.collectAsStateWithLifecycle()
@@ -690,6 +692,13 @@ fun ScanScreen(
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (autoScan) {
+                AutoScanBanner(
+                    lastSaved = lastSaved,
+                    framed = framedCard,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = ScanColors.panel,

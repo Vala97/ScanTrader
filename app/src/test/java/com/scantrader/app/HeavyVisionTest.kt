@@ -36,19 +36,20 @@ class HeavyVisionTest {
     }
 
     @Test
-    fun galleryRunsOnlyAfterAnEmptyCatalogQuery() {
-        assertFalse(
+    fun catalogQueryEmbedsWithOcrAndDoesNotRepeat() {
+        assertTrue(
             HeavyVision.embedAlongsideCatalog(
                 autoMode = true,
                 cooling = false,
                 queryCatalog = true,
             ),
         )
-        assertTrue(
+        assertFalse(
             HeavyVision.embedAfterCatalog(
                 autoMode = true,
                 queryCatalog = true,
                 hitCount = 0,
+                ranAlongside = true,
             ),
         )
         assertFalse(
@@ -56,6 +57,7 @@ class HeavyVisionTest {
                 autoMode = true,
                 queryCatalog = true,
                 hitCount = 1,
+                ranAlongside = true,
             ),
         )
     }

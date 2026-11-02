@@ -351,6 +351,16 @@ class CatalogQueryDebounceTest {
         assertEquals("Maxus del Team Rocket", debounce.votedFrame()?.name)
     }
 
+    @Test
+    fun sureNameAndCollectorQueriesOnTheFirstFrame() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, requeryAfterMs = 2_000L, now = { 0L })
+        val card = mtg("Bolla Protettiva", "80", "lrw")
+        assertTrue(debounce.shouldQuery(card, sure = true))
+        assertTrue(!debounce.shouldQuery(card, sure = true))
+        val waiting = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
+        assertTrue(!waiting.shouldQuery(mtg("Bolla Protettiva", "80", "lrw"), sure = false))
+    }
+
     private fun mtg(name: String, cn: String, set: String? = null) = Frame(
         name = name,
         collectorNumber = cn,

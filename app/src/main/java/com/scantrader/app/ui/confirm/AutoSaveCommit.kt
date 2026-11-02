@@ -31,4 +31,31 @@ object AutoSaveCommit {
         session: CardLanguage?,
         fallback: CardLanguage,
     ): CardLanguage = detected ?: local ?: printed ?: session ?: fallback
+
+    /**
+     * The printed-name lookup did not finish. Keep the last card that was
+     * actually saved. Spanish is a common false read of `IT` on the collector
+     * line (`ES`), so it wins only with a real clue in the title or rules.
+     */
+    fun languageOnTimeout(
+        lastSaved: CardLanguage?,
+        session: CardLanguage?,
+        fallback: CardLanguage,
+        spanishClue: Boolean,
+    ): CardLanguage {
+        if (spanishClue) return CardLanguage.SPANISH
+        return lastSaved ?: session ?: fallback
+    }
+
+    /** ñ, or a Spanish function word. A bare `ES` token is not a clue. */
+    fun spanishClue(ocrName: String?, ocrText: String?): Boolean {
+        val raw = listOfNotNull(ocrName, ocrText).filter { it.isNotBlank() }.joinToString("\n")
+        if (raw.isEmpty()) return false
+        if (raw.contains('ñ') || raw.contains('Ñ')) return true
+        return SPANISH_CLUE.containsMatchIn(raw)
+    }
+
+    private val SPANISH_CLUE = Regex(
+        """(?i)\b(?:los|las|evoluciona|debilidad|retirada)\b""",
+    )
 }

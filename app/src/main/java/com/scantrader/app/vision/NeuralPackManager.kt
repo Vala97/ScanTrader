@@ -109,6 +109,8 @@ class NeuralPackManager(
         }
     }
 
+    private val providerFile = File(root, "milo-provider.txt")
+
     /** Reopens the session when [MiloEmbedder.forceCpuOnly] changed. */
     private fun openEmbedder(): MiloEmbedder {
         val current = embedder
@@ -120,8 +122,52 @@ class NeuralPackManager(
             current.close()
             embedder = null
         }
-        return MiloEmbedder(modelFile).also { embedder = it }
+        val preferred = if (MiloEmbedder.forceCpuOnly) null else chosenProvider()
+        return MiloEmbedder(modelFile, preferredProvider = preferred).also { embedder = it }
     }
+
+    /** Saved choice, or a one-time NNAPI vs XNNPACK embed on first launch. */
+    private fun chosenProvider(): String? {
+        val saved = providerFile.takeIf { it.isFile }?.readText()?.trim()
+        if (saved == EmbedProviderBench.NNAPI || saved == EmbedProviderBench.XNNPACK) return saved
+        return runCatching { benchmarkProvider() }
+            .onFailure { com.scantrader.app.scan.ScanDebug.w("onnx: provider benchmark failed", it) }
+            .getOrNull()
+    }
+
+    private fun benchmarkProvider(): String {
+        val bitmap = android.graphics.Bitmap.createBitmap(63, 88, android.graphics.Bitmap.Config.ARGB_8888)
+        try {
+            val nnapiMs = timeProvider(EmbedProviderBench.NNAPI, bitmap)
+            val xnnpackMs = timeProvider(EmbedProviderBench.XNNPACK, bitmap)
+            val choice = EmbedProviderBench.choose(nnapiMs, xnnpackMs)
+            com.scantrader.app.scan.ScanDebug.d(
+                "onnx: chose provider=$choice nnapiMs=${nnapiMs ?: "fail"} xnnpackMs=${xnnpackMs ?: "fail"}",
+            )
+            providerFile.writeText(choice)
+            return choice
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun timeProvider(name: String, bitmap: android.graphics.Bitmap): Long? =
+        runCatching {
+            val trial = MiloEmbedder(
+                modelFile,
+                preferredProvider = name,
+                exclusiveProvider = true,
+            )
+            try {
+                val started = System.nanoTime()
+                trial.embed(bitmap)
+                (System.nanoTime() - started) / 1_000_000L
+            } finally {
+                trial.close()
+            }
+        }.onFailure {
+            com.scantrader.app.scan.ScanDebug.w("onnx: bench $name failed", it)
+        }.getOrNull()
 
     private fun loadGameLocked(game: Game): Boolean {
         if (game == Game.POKEMON) return loadPokemonLocked()

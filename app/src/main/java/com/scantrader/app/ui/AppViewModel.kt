@@ -942,6 +942,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             dismissConfirm = false
             val t0 = System.currentTimeMillis()
             val shot = com.scantrader.app.scan.ShotClock()
+            var earlyRank: Deferred<List<Pair<String, Float>>>? = null
             try {
             com.scantrader.app.scan.ScanDebug.d(
                 "analyze start game=${game.value} requireMatch=$requireMatch " +
@@ -955,7 +956,6 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "portrait ${bitmap.width}x${bitmap.height} -> ${oriented.width}x${oriented.height}",
                 )
             }
-            var cardUpsideDown = false
             var croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropToGuide(
                 oriented,
                 viewWidth = app.scanSession.guideViewWidth,
@@ -966,6 +966,18 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             if (autoMode && skipUnstableFrame(croppedFull, t0)) {
                 return@withContext false
+            }
+            if (app.neuralPack.isInstalled(game.value)) {
+                com.scantrader.app.scan.ScanDebug.d("gallery started with ocr")
+                earlyRank = viewModelScope.async(Dispatchers.Default) {
+                    app.galleryMatcher.rankFromGuide(
+                        game = game.value,
+                        source = oriented,
+                        viewWidth = app.scanSession.guideViewWidth,
+                        viewHeight = app.scanSession.guideViewHeight,
+                        shot = shot,
+                    )
+                }
             }
             val isMtg = game.value == Game.MTG
             val isPokemon = game.value == Game.POKEMON
@@ -1158,7 +1170,6 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             croppedFull = flippedFull
                             cropped = flippedBottom
                             titleCard = flippedTitle
-                            cardUpsideDown = true
                             if (newTop.isNotBlank()) top = newTop
                             if (newBl.isNotBlank()) bl = newBl
                             quick = retry
@@ -1510,10 +1521,21 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             } else {
                 null
             }
+            val sureFrame = autoMode && com.scantrader.app.scan.SureFrame.skipDebounce(
+                name = parsed.nameGuess,
+                collector = parsed.collectorNumber,
+                confidence = null,
+                strict = false,
+            )
+            if (sureFrame) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "debounce skipped (sure name+cn name=${parsed.nameGuess} cn=${parsed.collectorNumber})",
+                )
+            }
             val debounceWants = when {
                 !autoMode -> true
                 cooling -> false
-                else -> catalogDebounce.shouldQuery(debounceFrame)
+                else -> catalogDebounce.shouldQuery(debounceFrame, sure = sureFrame)
             }
             // Prefetched hits already are the lookup. An empty prefetch still falls through once.
             val queryCatalog = prefetched == null &&
@@ -1566,67 +1588,34 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     .getOrNull()
             }
 
-            // Full-resolution guide quad, straightened. Not the 480px OCR bitmap
-            // and not the square cropBitmap fallback.
+            // The embed started with OCR. This only hydrates the ids it already ranked.
             suspend fun embedGallery(): List<IdentifiedCard> {
-                val card = com.scantrader.app.scan.CardDewarp.cardFromGuide(
+                val ranked = earlyRank?.await() ?: app.galleryMatcher.rankFromGuide(
+                    game = game.value,
                     source = oriented,
                     viewWidth = app.scanSession.guideViewWidth,
                     viewHeight = app.scanSession.guideViewHeight,
-                    rotate180 = cardUpsideDown,
+                    shot = shot,
                 )
-                if (card == null) {
-                    com.scantrader.app.scan.ScanDebug.d("gallery skipped (no guide crop)")
+                if (ranked.isEmpty()) {
+                    if (app.scanSession.guideViewWidth <= 1f || app.scanSession.guideViewHeight <= 1f) {
+                        com.scantrader.app.scan.ScanDebug.d("gallery skipped (no guide crop)")
+                    }
                     return emptyList()
                 }
-                try {
-                    return when (game.value) {
-                        Game.MTG -> {
-                            if (!app.neuralPack.isInstalled(Game.MTG)) {
-                                com.scantrader.app.scan.ScanDebug.d("gallery skipped (MTG pack not installed)")
-                                emptyList()
-                            } else {
-                                val printedLang = (
-                                    app.scanSession.language ?: CardLanguage.ENGLISH
-                                    ).scryfallLang()
-                                runCatching {
-                                    app.galleryMatcher.matchMtg(
-                                        card,
-                                        matched,
-                                        printedLang = printedLang,
-                                        shot = shot,
-                                    )
-                                }
-                                    .onFailure {
-                                        com.scantrader.app.scan.ScanDebug.e("gallery.matchMtg failed", it)
-                                    }
-                                    .getOrDefault(emptyList())
-                            }
-                        }
-                        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> if (neuralOn) {
-                            runCatching { app.galleryMatcher.matchCt(game.value, card, matched, shot = shot) }
-                                .onFailure { com.scantrader.app.scan.ScanDebug.e("gallery.matchCt failed", it) }
-                                .getOrDefault(emptyList())
-                        } else {
-                            emptyList()
-                        }
-                        Game.RIFTBOUND, Game.OTHER -> emptyList<IdentifiedCard>() // nessun pack visivo
-                        Game.POKEMON -> {
-                            if (!app.neuralPack.isInstalled(Game.POKEMON)) {
-                                com.scantrader.app.scan.ScanDebug.d("gallery skipped (Pokémon pack not installed)")
-                                emptyList()
-                            } else {
-                                runCatching { app.galleryMatcher.matchPokemon(card, matched, shot = shot) }
-                                    .onFailure {
-                                        com.scantrader.app.scan.ScanDebug.e("gallery.matchPokemon failed", it)
-                                    }
-                                    .getOrDefault(emptyList())
-                            }
-                        }
-                    }
-                } finally {
-                    if (card !== oriented) card.recycle()
-                }
+                val printedLang = (
+                    app.scanSession.language ?: CardLanguage.ENGLISH
+                    ).scryfallLang()
+                return runCatching {
+                    app.galleryMatcher.cardsFromRank(
+                        game = game.value,
+                        ranked = ranked,
+                        parsed = matched,
+                        printedLang = printedLang,
+                    )
+                }.onFailure {
+                    com.scantrader.app.scan.ScanDebug.e("gallery hydrate failed", it)
+                }.getOrDefault(emptyList())
             }
 
             val fetched = if (prefetched != null) {
@@ -1647,21 +1636,16 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         emptyList()
                     }
                 }
+                val galleryAlongside = com.scantrader.app.scan.HeavyVision.embedAlongsideCatalog(
+                    autoMode = autoMode,
+                    cooling = cooling,
+                    queryCatalog = queryCatalog,
+                    stabilizeByGallery = galleryCanStabilize && !queryCatalog,
+                )
                 val galleryJob = async {
-                    if (!com.scantrader.app.scan.HeavyVision.embedAlongsideCatalog(
-                            autoMode = autoMode,
-                            cooling = cooling,
-                            queryCatalog = queryCatalog,
-                            stabilizeByGallery = galleryCanStabilize && !queryCatalog,
-                        )
-                    ) {
-                        com.scantrader.app.scan.ScanDebug.d(
-                            if (autoMode && queryCatalog) {
-                                "gallery deferred (catalog first)"
-                            } else {
-                                "gallery skipped (debounce)"
-                            },
-                        )
+                    if (!galleryAlongside) {
+                        com.scantrader.app.scan.ScanDebug.d("gallery skipped (debounce)")
+                        earlyRank?.cancel()
                         return@async emptyList()
                     }
                     embedGallery()
@@ -1711,6 +1695,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     autoMode = autoMode,
                     queryCatalog = queryCatalog,
                     hitCount = catalogHits.size,
+                    ranAlongside = com.scantrader.app.scan.HeavyVision.embedAlongsideCatalog(
+                        autoMode = autoMode,
+                        cooling = cooling,
+                        queryCatalog = queryCatalog,
+                        stabilizeByGallery = galleryCanStabilize && !queryCatalog,
+                    ),
                 )
             ) {
                 galleryHits = embedGallery()
@@ -1985,6 +1975,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             if (requireMatch) acceptAuto || chooseVersion else true
             } finally {
+                earlyRank?.let { if (it.isActive) it.cancel() }
                 com.scantrader.app.scan.ScanDebug.shot(
                     embedMs = shot.embedMs,
                     rotationSkipped = shot.rotationSkipped,
@@ -2312,13 +2303,25 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         val printed = app.scanSession.parsed?.printedLang?.let {
             com.scantrader.app.data.model.CardLanguage.fromCatalogCode(it)
         }
-        val best = com.scantrader.app.ui.confirm.AutoSaveCommit.languageAfterWait(
-            detected = result.language,
-            local = local.language,
-            printed = printed,
-            session = app.scanSession.language,
-            fallback = defaults.value.language,
-        )
+        val best = if (result.source == "timeout") {
+            com.scantrader.app.ui.confirm.AutoSaveCommit.languageOnTimeout(
+                lastSaved = app.scanSession.lastSaved.value?.language,
+                session = app.scanSession.language,
+                fallback = defaults.value.language,
+                spanishClue = com.scantrader.app.ui.confirm.AutoSaveCommit.spanishClue(
+                    app.scanSession.parsed?.nameGuess,
+                    app.scanSession.ocrText,
+                ),
+            )
+        } else {
+            com.scantrader.app.ui.confirm.AutoSaveCommit.languageAfterWait(
+                detected = result.language,
+                local = local.language,
+                printed = printed,
+                session = app.scanSession.language,
+                fallback = defaults.value.language,
+            )
+        }
         com.scantrader.app.scan.ScanDebug.d(
             "autosave: wait lang ${result.waitedMs}ms source=${result.source} lang=${best.label}",
         )
@@ -2412,6 +2415,7 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
                         setCode = card.setCode,
                         collectorNumber = card.collectorNumber,
                         languageLabel = language.label,
+                        language = language,
                         savedAtMs = System.currentTimeMillis(),
                         identityKey = card.identityKey(),
                     ),

@@ -1,10 +1,9 @@
 package com.scantrader.app.scan
 
 /**
- * Auto-scan embeds only when the catalog cannot answer.
- * A debounce hold returns without Milo so the next frame can query.
- * Cooldown cannot call Scryfall, so the gallery runs instead.
- * A query that comes back empty embeds afterwards; a hit does not.
+ * Milo starts with OCR. A catalog query awaits that embed instead of waiting
+ * until Scryfall returns empty. A debounce hold still does not wait for it.
+ * Cooldown cannot call Scryfall, so the gallery is the lookup.
  * Manual scan still embeds beside the catalog.
  */
 object HeavyVision {
@@ -16,12 +15,13 @@ object HeavyVision {
     ): Boolean {
         if (stabilizeByGallery) return true
         if (!autoMode) return true
-        return cooling && !queryCatalog
+        return queryCatalog || cooling
     }
 
     fun embedAfterCatalog(
         autoMode: Boolean,
         queryCatalog: Boolean,
         hitCount: Int,
-    ): Boolean = autoMode && queryCatalog && hitCount <= 0
+        ranAlongside: Boolean = false,
+    ): Boolean = autoMode && queryCatalog && hitCount <= 0 && !ranAlongside
 }
