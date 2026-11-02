@@ -134,12 +134,13 @@ fun SettingsScreen(
                     selected = waitSelected,
                     onSelect = viewModel::setAutoSaveWaitSeconds,
                     labelOf = { seconds ->
-                        if (seconds == 0) "Disattivato" else "$seconds s"
+                        if (seconds == 0) "Disattivato" else "Attivo · circa 0,8 s"
                     },
                 )
                 Text(
                     "In auto-scan, se il riconoscimento supera la soglia scelta in Impostazioni scan " +
-                        "e non tocchi la carta, salva in collezione dopo N secondi. Sotto la soglia resta in conferma.",
+                        "e non tocchi la carta, salva in collezione circa 0,8 secondi dopo la conferma. " +
+                        "Sotto la soglia resta in conferma. Zero disattiva il salvataggio automatico.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

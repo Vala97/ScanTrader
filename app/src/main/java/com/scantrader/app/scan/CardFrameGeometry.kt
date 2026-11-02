@@ -102,8 +102,38 @@ object CardFrameGeometry {
     }
 
     /**
+     * Four corners of the on-screen guide, in bitmap pixels: TL, TR, BR, BL.
+     * Null when the preview size is unknown. Callers that embed a card must not
+     * substitute [cropBitmap]: on a 960×1280 analysis buffer that crop is nearly square
+     * and includes the background Milo's indexes were not built from.
+     */
+    fun guideCorners(
+        bitmapWidth: Int,
+        bitmapHeight: Int,
+        viewWidth: Float,
+        viewHeight: Float,
+    ): FloatArray? {
+        if (viewWidth <= 1f || viewHeight <= 1f) return null
+        if (bitmapWidth <= 1 || bitmapHeight <= 1) return null
+        val guide = frameStable(viewWidth, viewHeight, viewWidth, viewHeight)
+        val crop = mapFillCenterViewRectToBitmap(
+            bitmapWidth = bitmapWidth,
+            bitmapHeight = bitmapHeight,
+            viewWidth = viewWidth,
+            viewHeight = viewHeight,
+            guide = guide,
+        )
+        val left = crop.left.toFloat()
+        val top = crop.top.toFloat()
+        val right = (crop.left + crop.width).toFloat()
+        val bottom = (crop.top + crop.height).toFloat()
+        return floatArrayOf(left, top, right, top, right, bottom, left, bottom)
+    }
+
+    /**
      * Crops [source] to the on-screen guide. [viewWidth] and [viewHeight] are the
      * locked preview size the overlay uses. Unknown size falls back to [cropBitmap].
+     * OCR may use that fallback. The neural embedder must use [guideCorners] instead.
      */
     fun cropToGuide(
         source: android.graphics.Bitmap,
@@ -157,8 +187,12 @@ object CardFrameGeometry {
      * Pokémon ~22% tall (title row). MTG ~14% (name bar — avoid rules text).
      * The right of the bar is the mana cost or the HP value, so it is left out.
      */
-    fun topNameStrip(cardCrop: android.graphics.Bitmap, mtg: Boolean = false): android.graphics.Bitmap {
-        val fraction = if (mtg) 0.14f else 0.22f
+    fun topNameStrip(
+        cardCrop: android.graphics.Bitmap,
+        mtg: Boolean = false,
+        heightFraction: Float? = null,
+    ): android.graphics.Bitmap {
+        val fraction = heightFraction ?: if (mtg) 0.14f else 0.22f
         val widthFraction = if (mtg) MTG_TITLE_WIDTH_FRACTION else POKEMON_TITLE_WIDTH_FRACTION
         val stripH = (cardCrop.height * fraction).toInt().coerceAtLeast(1).coerceAtMost(cardCrop.height)
         val stripW = (cardCrop.width * widthFraction).toInt().coerceIn(1, cardCrop.width)

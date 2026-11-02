@@ -253,6 +253,25 @@ object OcrParser {
         val name = nameFromRegions(rawText, namePriorityText, Game.MTG)
         val glued = gluedMtgSetLang(prepared)
         val hit = bestMtgBottom(prepared)
+        // Old frames print xx/xxx right after the copyright holder. A modern
+        // `0181 • DFT` line still outranks that. Year crumbs must not.
+        val anchored = copyrightCollector(source)
+        if (hit != null && hit.setCode != null && hit.score >= 100) {
+            return ParsedCardText(
+                nameGuess = name,
+                collectorNumber = hit.collector,
+                setCode = hit.setCode,
+                printedLang = hit.printedLang ?: glued?.lang,
+            )
+        }
+        if (anchored != null) {
+            return ParsedCardText(
+                nameGuess = name,
+                collectorNumber = anchored,
+                setCode = glued?.setCode,
+                printedLang = glued?.lang,
+            )
+        }
         if (hit != null) {
             return ParsedCardText(
                 nameGuess = name,
@@ -261,9 +280,11 @@ object OcrParser {
                 printedLang = hit.printedLang ?: glued?.lang,
             )
         }
+        val fallbackCn = extractCollector(prepared, prepared, Game.MTG)
+            ?.takeUnless { copyrightYearPiece(source, it) }
         return ParsedCardText(
             nameGuess = name,
-            collectorNumber = extractCollector(prepared, prepared, Game.MTG),
+            collectorNumber = fallbackCn,
             setCode = extractSet(prepared, prepared, Game.MTG) ?: glued?.setCode,
             printedLang = glued?.lang,
         )
@@ -396,6 +417,104 @@ object OcrParser {
     )
 
     /**
+     * Old-frame collector: `xx/xxx` is printed right after the copyright holder.
+     * `Inc.` may be absent. OCR noise (`Wianls ef the Cat`, `iande of te Cot`,
+     * `Wiands of he Coat`, `lnc` / `lec`) is accepted. A glued `17150` is `17/150`
+     * when the total is a plausible set size. Copyright years are not a collector.
+     */
+    fun copyrightCollector(text: String): String? {
+        if (text.isBlank()) return null
+        val end = wizardsHolderEnd(text) ?: return collectorAfterInc(text)
+        return collectorAfterHolder(text.substring(end))
+    }
+
+    private fun wizardsHolderEnd(text: String): Int? {
+        val tokens = Regex("""[A-Za-z]{2,10}""").findAll(text).toList()
+        for (i in 0..tokens.size - 4) {
+            val a = tokens[i]
+            val b = tokens[i + 1]
+            val c = tokens[i + 2]
+            val d = tokens[i + 3]
+            if (b.range.first - a.range.last > 3) continue
+            if (c.range.first - b.range.last > 3) continue
+            if (d.range.first - c.range.last > 3) continue
+            if (!likeWizards(a.value) || !likeOf(b.value) || !likeThe(c.value) || !likeCoast(d.value)) {
+                continue
+            }
+            return d.range.last + 1
+        }
+        return null
+    }
+
+    private fun likeWizards(raw: String): Boolean {
+        val t = raw.lowercase()
+        if (t.length !in 4..8) return false
+        if (editDistance(t, "wizards") <= 3) return true
+        return listOf("wiz", "wian", "iand", "zard", "wand", "ianl").any { t.contains(it) }
+    }
+
+    private fun likeOf(raw: String): Boolean {
+        val t = raw.lowercase()
+        return t == "of" || t == "ef" || t == "off" || t == "0f"
+    }
+
+    private fun likeThe(raw: String): Boolean {
+        val t = raw.lowercase()
+        return t == "the" || t == "te" || t == "he" || t == "tne" || t == "tho" || t == "hte"
+    }
+
+    private fun likeCoast(raw: String): Boolean {
+        val t = raw.lowercase()
+        if (t.length !in 3..6 || !t.startsWith('c')) return false
+        if (t in setOf("coast", "coat", "cot", "cat", "cast", "coas", "cost")) return true
+        return editDistance(t, "coast") <= 2
+    }
+
+    /** `Inc.` / `lnc` / `lec` is optional. The number has to follow immediately. */
+    private fun collectorAfterHolder(tail: String): String? {
+        val inc = Regex(
+            """(?i)^[\s,.;:]*((?:inc|lnc|lec|lne|1nc)\.?)[\s,.;:]*""",
+        ).find(tail)
+        val after = if (inc != null) tail.substring(inc.range.last + 1) else tail
+        return readOldFrameCount(after)
+    }
+
+    /** Snippet that kept only the garbled Inc token: `lec 12/150`. */
+    private fun collectorAfterInc(text: String): String? {
+        val match = Regex(
+            """(?i)(?<![A-Za-z])(?:inc|lnc|lec|lne)\.?\s+([0-9OolINn|]{1,3}\s*/\s*[0-9OolINn|]{2,3}|[0-9OolINn|]{4,6})""",
+        ).find(text) ?: return null
+        return readOldFrameCount(match.groupValues[1])
+    }
+
+    private fun readOldFrameCount(tail: String): String? {
+        val head = tail.trimStart(' ', '\t', ',', '.', ';', ':')
+        val fraction = Regex("""^([0-9OolINn|]{1,3})\s*/\s*([0-9OolINn|]{2,3})\b""").find(head)
+        if (fraction != null) {
+            val cn = fixOcrDigits(fraction.groupValues[1])
+            val total = fixOcrDigits(fraction.groupValues[2])
+            plausibleOldFrame(cn, total)?.let { return it }
+        }
+        val glued = Regex("""^([0-9OolINn|]{4,6})\b""").find(head) ?: return null
+        val digits = fixOcrDigits(glued.groupValues[1])
+        if (!digits.all { it.isDigit() }) return null
+        // 17150 → 17/150. Prefer a 3-digit set size.
+        for ((cnLen, totalLen) in listOf(2 to 3, 1 to 3, 3 to 3, 2 to 2)) {
+            if (digits.length != cnLen + totalLen) continue
+            plausibleOldFrame(digits.substring(0, cnLen), digits.substring(cnLen))?.let { return it }
+        }
+        return null
+    }
+
+    private fun plausibleOldFrame(cnRaw: String, totalRaw: String): String? {
+        val cn = cnRaw.toIntOrNull() ?: return null
+        val total = totalRaw.toIntOrNull() ?: return null
+        if (cn >= 1900 || total >= 1900) return null
+        if (total !in 40..450 || cn !in 1 until total) return null
+        return normalizeCollector(cn.toString())
+    }
+
+    /**
      * Copyright / illustrator line. `©2026 Wizards of the Coast`, OCR
      * `wat 036 Waarda of the Coast`, `&2026 Waards`. Not a collector.
      * A line that also has `74/165` or `N3/150` is an old frame and is kept.
@@ -520,7 +639,22 @@ object OcrParser {
                 hit.copy(setCode = glued.setCode, printedLang = glued.lang, score = hit.score + 17)
             }
         }
-        return hits.maxByOrNull { it.score }
+        return hits
+            .filterNot { copyrightYearPiece(prepared, it.collector) }
+            .maxByOrNull { it.score }
+    }
+
+    /**
+     * `1993`, `2006`, or a fragment of `993-2006` is the copyright line, not
+     * the collector. A real `17/150` does not match.
+     */
+    fun copyrightYearPiece(text: String, collector: String): Boolean {
+        val digits = collector.trim().trimStart('0').ifBlank { "0" }
+        val n = digits.toIntOrNull() ?: return false
+        if (n in 1900..2099) return true
+        val body = text
+        if (Regex("""(?<![0-9])0*${Regex.escape(digits)}\s*[-–—]""").containsMatchIn(body)) return true
+        return Regex("""[-–—]\s*0*${Regex.escape(digits)}(?![0-9])""").containsMatchIn(body)
     }
 
     /** `ELDITTAYLOR` / `ELD -ITTDR` → set `eld`, language `it`. */

@@ -85,6 +85,28 @@ class ScanSession {
     @Volatile
     var ocrGeneration: Int = 0
 
+    /**
+     * Card accepted for autosave. Survives [resetResults] so a later frame
+     * cannot drop the save by clearing the confirm list.
+     */
+    @Volatile
+    var pendingAutoSave: IdentifiedCard? = null
+
+    /** Last successful save this visit. Not cleared by [resetResults]. */
+    val lastSaved = MutableStateFlow<LastSavedCard?>(null)
+
+    /** Card in the guide during auto-scan. Not cleared by [resetResults]. */
+    val framedCard = MutableStateFlow(FramedCard(FramedKind.ANALYZING, null))
+
+    fun noteSaved(card: LastSavedCard) {
+        lastSaved.value = card
+        framedCard.value = AutoScanLive.framed(sameAsSaved = true, recognizedName = card.name)
+    }
+
+    fun noteFramed(sameAsSaved: Boolean, recognizedName: String?) {
+        framedCard.value = AutoScanLive.framed(sameAsSaved, recognizedName)
+    }
+
     fun resetResults() {
         ocrText = ""
         parsed = null

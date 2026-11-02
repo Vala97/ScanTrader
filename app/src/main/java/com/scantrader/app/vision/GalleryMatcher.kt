@@ -2,6 +2,7 @@ package com.scantrader.app.vision
 
 import android.graphics.Bitmap
 import com.scantrader.app.data.model.Game
+import java.util.Locale
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.scan.ShotClock
@@ -46,6 +47,52 @@ class GalleryMatcher(
         shot: ShotClock? = null,
     ): List<IdentifiedCard> = matchGame(Game.POKEMON, cardCrop, parsed, topK, shot = shot)
 
+    /**
+     * Embeds the guide quad while OCR is still running. Hydration waits until
+     * the parsed title exists. Null guide size returns an empty rank, not a square crop.
+     */
+    suspend fun rankFromGuide(
+        game: Game,
+        source: Bitmap,
+        viewWidth: Float,
+        viewHeight: Float,
+        shot: ShotClock? = null,
+        topK: Int = 8,
+    ): List<Pair<String, Float>> {
+        val card = com.scantrader.app.scan.CardDewarp.cardFromGuide(
+            source,
+            viewWidth,
+            viewHeight,
+        ) ?: return emptyList()
+        return try {
+            rankCrop(game, card, topK, shot)
+        } finally {
+            if (card !== source) card.recycle()
+        }
+    }
+
+    suspend fun cardsFromRank(
+        game: Game,
+        ranked: List<Pair<String, Float>>,
+        parsed: ParsedCardText,
+        printedLang: String? = null,
+    ): List<IdentifiedCard> {
+        if (ranked.isEmpty()) return emptyList()
+        return coroutineScope {
+            ranked.map { (id, score) ->
+                async(Dispatchers.IO) {
+                    when (game) {
+                        Game.MTG -> hydrateMtg(id, score, parsed, printedLang)
+                        Game.POKEMON -> hydratePokemon(id, score, parsed)
+                        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA ->
+                            ctFromId(game, id, score, parsed)
+                        Game.RIFTBOUND, Game.OTHER -> null
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+    }
+
     private suspend fun matchGame(
         game: Game,
         cardCrop: Bitmap,
@@ -53,7 +100,17 @@ class GalleryMatcher(
         topK: Int,
         printedLang: String? = null,
         shot: ShotClock? = null,
-    ): List<IdentifiedCard> = withContext(Dispatchers.Default) {
+    ): List<IdentifiedCard> {
+        val ranked = rankCrop(game, cardCrop, topK, shot)
+        return cardsFromRank(game, ranked, parsed, printedLang)
+    }
+
+    private suspend fun rankCrop(
+        game: Game,
+        cardCrop: Bitmap,
+        topK: Int,
+        shot: ShotClock?,
+    ): List<Pair<String, Float>> = withContext(Dispatchers.Default) {
         val t0 = System.currentTimeMillis()
         if (!pack.ensureLoaded(game)) {
             com.scantrader.app.scan.ScanDebug.w("gallery: neural pack ensureLoaded=false game=$game")
@@ -88,32 +145,23 @@ class GalleryMatcher(
             val rotated = pass.vectors.getOrNull(1)
             if (rotated != null) absorb(catalog.search(rotated, topK = topK))
         }
+        val best = scoreById.maxByOrNull { it.value }
         val ranked = scoreById.entries
             .sortedByDescending { it.value }
             .take(topK)
             .filter { it.value >= MIN_SCORE }
+        val aspect = if (cardCrop.height == 0) 0f else cardCrop.width.toFloat() / cardCrop.height
 
         com.scantrader.app.scan.ScanDebug.d(
             "gallery: game=$game catalogSize=${catalog.size} rawHits=${scoreById.size} " +
+                "best=${best?.let { "${it.key}=${"%.4f".format(Locale.US, it.value)}" } ?: "none"} " +
                 "aboveMin=${ranked.size} top=${ranked.firstOrNull()?.let { "${it.key}=${it.value}" }} " +
+                "bitmap=${cardCrop.width}x${cardCrop.height} aspect=${"%.3f".format(Locale.US, aspect)} " +
+                "provider=${embedder.providerName} " +
                 "embedMs=${pass.embedMs} rotationSkipped=${if (pass.rotationSkipped) "yes" else "no"} " +
                 "totalMs=${System.currentTimeMillis() - t0}",
         )
-
-        if (ranked.isEmpty()) return@withContext emptyList()
-
-        coroutineScope {
-            ranked.map { (id, score) ->
-                async(Dispatchers.IO) {
-                    when (game) {
-                        Game.MTG -> hydrateMtg(id, score, parsed, printedLang)
-                        Game.POKEMON -> hydratePokemon(id, score, parsed)
-                        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> ctFromId(game, id, score, parsed)
-                        Game.RIFTBOUND, Game.OTHER -> null
-                    }
-                }
-            }.awaitAll().filterNotNull()
-        }
+        ranked.map { it.key to it.value }
     }
 
     /**

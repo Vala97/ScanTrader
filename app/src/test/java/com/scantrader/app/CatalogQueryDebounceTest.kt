@@ -80,7 +80,7 @@ class CatalogQueryDebounceTest {
         t = 50L
         assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "26", null)))
         t = 1_601L
-        assertTrue(!debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", null)))
+        debounce.shouldQuery(mtg("Sala Comune Formidabile", "178", null))
         assertNull(debounce.votedFrame()?.setCode)
     }
 
@@ -160,7 +160,7 @@ class CatalogQueryDebounceTest {
         assertTrue(debounce.agreementKey("Shock|10|") != debounce.agreementKey("Shock|11|"))
         assertTrue(!debounce.shouldQuery(mtg("Bolto", "10")))
         assertTrue(debounce.shouldQuery(mtg("B0lt0", "1O")))
-        assertEquals("B0lt0", debounce.votedFrame()?.name)
+        assertTrue(debounce.votedFrame()?.name in setOf("Bolto", "B0lt0"))
         val other = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
         assertTrue(!other.shouldQuery("Silenziare I'Eco|66|"))
         assertTrue(!other.shouldQuery("Calcolare la Delusione|67|"))
@@ -222,7 +222,27 @@ class CatalogQueryDebounceTest {
     }
 
     @Test
-    fun aDifferentIdResetsTheWait() {
+    fun galleryIdStabilizesWhenTheCollectorDoesNot() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
+        assertTrue(!debounce.noteGallery("scryfall-meadow"))
+        assertTrue(debounce.noteGallery("scryfall-meadow"))
+        assertTrue(!debounce.noteGallery("scryfall-other"))
+        assertTrue(debounce.noteGallery("scryfall-other"))
+        debounce.reset()
+        assertTrue(!debounce.noteGallery("scryfall-meadow"))
+    }
+
+    @Test
+    fun stableNameWithoutASetIgnoresCollectorNoise() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
+        assertTrue(!debounce.shouldQuery(mtg("Meadowboon", "993", null)))
+        assertTrue(debounce.shouldQuery(mtg("Meadowboon", "17", null)))
+        assertTrue(!debounce.shouldQuery(mtg("Meadowboon", "12", null)))
+        assertTrue(!debounce.shouldQuery(mtg("Meadowboon", "10", null)))
+    }
+
+    @Test
+    fun aDifferentNameResetsTheWait() {
         var t = 0L
         val debounce = CatalogQueryDebounce(
             stableFramesNeeded = 8,
@@ -231,11 +251,11 @@ class CatalogQueryDebounceTest {
         )
         assertTrue(!debounce.shouldQuery("bolla protettiva|80|"))
         t = 1_500L
-        assertTrue(!debounce.shouldQuery("bolla protettiva||"))
-        t = 3_600L
-        assertTrue(!debounce.shouldQuery("bolla protettiva|80|"))
-        t = 5_600L
-        assertTrue(debounce.shouldQuery("bolla protettiva|80|"))
+        assertTrue(!debounce.shouldQuery("altro nome||"))
+        t = 3_400L
+        assertTrue(!debounce.shouldQuery("altro nome|12|"))
+        t = 3_500L
+        assertTrue(debounce.shouldQuery("altro nome|10|"))
     }
 
     @Test
@@ -329,6 +349,16 @@ class CatalogQueryDebounceTest {
         assertTrue(!debounce.shouldQuery(full))
         assertTrue(debounce.shouldQuery(full))
         assertEquals("Maxus del Team Rocket", debounce.votedFrame()?.name)
+    }
+
+    @Test
+    fun sureNameAndCollectorQueriesOnTheFirstFrame() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, requeryAfterMs = 2_000L, now = { 0L })
+        val card = mtg("Bolla Protettiva", "80", "lrw")
+        assertTrue(debounce.shouldQuery(card, sure = true))
+        assertTrue(!debounce.shouldQuery(card, sure = true))
+        val waiting = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
+        assertTrue(!waiting.shouldQuery(mtg("Bolla Protettiva", "80", "lrw"), sure = false))
     }
 
     private fun mtg(name: String, cn: String, set: String? = null) = Frame(

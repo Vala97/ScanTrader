@@ -64,18 +64,23 @@ data class RotationEmbed(
  */
 class MiloEmbedder(
     modelFile: File,
+    private val preferredProvider: String? = null,
+    private val exclusiveProvider: Boolean = false,
 ) : AutoCloseable {
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val session: OrtSession
     val providerName: String
+    /** Value of [forceCpuOnly] when this session was opened. */
+    val cpuOnly: Boolean = forceCpuOnly
     private val inputName: String
+
+    fun matchesPreference(): Boolean = cpuOnly == forceCpuOnly
 
     init {
         val opened = openSession(modelFile)
         session = opened.first
         providerName = opened.second
         inputName = session.inputNames.first()
-        ScanDebug.d("onnx: provider=$providerName")
     }
 
     fun embed(cardCrop: Bitmap): FloatArray = runOnce(cardCrop)
@@ -124,14 +129,12 @@ class MiloEmbedder(
             android.os.Build.PRODUCT.orEmpty(),
         )
         val nnapi = OnnxProviders.nnapiIsSafe(sdk, emulator)
-        if (!nnapi) {
+        if (forceCpuOnly) {
+            ScanDebug.d("onnx: forceCpu sdk=$sdk")
+        } else if (!nnapi) {
             ScanDebug.d("onnx: nnapi off sdk=$sdk emulator=$emulator")
         }
-        val order = buildList {
-            if (nnapi) add("nnapi+xnnpack")
-            add("xnnpack")
-            add("cpu")
-        }
+        val order = sessionOrder(forceCpuOnly, nnapi, preferredProvider, exclusiveProvider)
         var error: Throwable? = null
         for (name in order) {
             try {
@@ -149,6 +152,7 @@ class MiloEmbedder(
                     }
                     env.createSession(path, options)
                 }
+                ScanDebug.d("onnx: provider=$name forceCpu=$forceCpuOnly")
                 return session to name
             } catch (t: Throwable) {
                 error = t
@@ -208,6 +212,34 @@ class MiloEmbedder(
 
     companion object {
         const val INPUT_SIZE = 448
+
+        /**
+         * Debug switch. True opens the next session on CPU only, so a device
+         * log can compare cosines with XNNPACK/NNAPI. NNAPI stays available
+         * when this is false. Takes effect the next time the pack is loaded.
+         */
+        @Volatile
+        var forceCpuOnly: Boolean = false
+
+        fun providerOrder(forceCpuOnly: Boolean, nnapi: Boolean): List<String> =
+            sessionOrder(forceCpuOnly, nnapi, preferred = null, exclusive = false)
+
+        fun sessionOrder(
+            forceCpuOnly: Boolean,
+            nnapi: Boolean,
+            preferred: String?,
+            exclusive: Boolean,
+        ): List<String> {
+            if (forceCpuOnly) return listOf("cpu")
+            if (exclusive && !preferred.isNullOrBlank()) return listOf(preferred)
+            val base = buildList {
+                if (nnapi) add(EmbedProviderBench.NNAPI)
+                add(EmbedProviderBench.XNNPACK)
+                add("cpu")
+            }
+            if (preferred.isNullOrBlank() || preferred !in base) return base
+            return listOf(preferred) + base.filter { it != preferred }
+        }
         private val XNNPACK_OPTIONS = mapOf("intra_op_num_threads" to "2")
         private const val MEAN_R = 0.485f
         private const val MEAN_G = 0.456f

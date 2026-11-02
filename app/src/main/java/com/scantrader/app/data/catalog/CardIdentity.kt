@@ -1,6 +1,7 @@
 package com.scantrader.app.data.catalog
 
 import java.text.Normalizer
+import java.util.Locale
 
 /**
  * Compares OCR reads of the same physical card.
@@ -70,7 +71,7 @@ object CardIdentity {
         if (raw.isNullOrBlank()) return ""
         val decomposed = Normalizer.normalize(raw, Normalizer.Form.NFD)
             .replace(Regex("""\p{Mn}+"""), "")
-        return decomposed.lowercase()
+        return decomposed.lowercase(Locale.ROOT)
             .replace(Regex("""[^a-z0-9\s]"""), " ")
             .split(Regex("""\s+"""))
             .filter { it.length >= 3 }

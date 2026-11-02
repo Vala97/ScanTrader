@@ -51,7 +51,17 @@ class CatalogLookup(
             return hits
         }
         if (scryfall.coolingDown()) throw ScryfallBusyException()
-        val hits = lookupMtgOnline(parsed, name, setCandidates, number, nameAttempts)
+        val hits = CatalogNetwork.awaitOrNull {
+            lookupMtgOnline(parsed, name, setCandidates, number, nameAttempts)
+        }
+        if (hits == null) {
+            com.scantrader.app.scan.ScanDebug.d(
+                "catalog timeout ${CatalogNetwork.TIMEOUT_MS}ms, using local",
+            )
+            return resolveMtgLocal(parsed, name, setCandidates, number, nameAttempts)
+                ?.also { rememberSets(Game.MTG, it) }
+                .orEmpty()
+        }
         rememberSets(Game.MTG, hits)
         return hits
     }
@@ -453,18 +463,28 @@ class CatalogLookup(
             rememberSets(Game.POKEMON, hits)
             return hits
         }
-        val cards = coroutineScope {
-            langs.map { lang ->
-                async {
-                    searchPokemonLanguage(
-                        lang,
-                        searchName,
-                        number,
-                        parsed,
-                        idFirst = (setKnown && number != null) || noisyName,
-                    )
-                }
-            }.awaitAll().flatten()
+        val cards = CatalogNetwork.awaitOrNull {
+            coroutineScope {
+                langs.map { lang ->
+                    async {
+                        searchPokemonLanguage(
+                            lang,
+                            searchName,
+                            number,
+                            parsed,
+                            idFirst = (setKnown && number != null) || noisyName,
+                        )
+                    }
+                }.awaitAll().flatten()
+            }
+        }
+        if (cards == null) {
+            com.scantrader.app.scan.ScanDebug.d(
+                "catalog timeout ${CatalogNetwork.TIMEOUT_MS}ms, using local",
+            )
+            return resolvePokemonLocal(parsed, searchName, number, noisyName)
+                ?.also { rememberSets(Game.POKEMON, it) }
+                .orEmpty()
         }
         val ranked = rankPokemon(cards, parsed, searchName, number, noisyName)
         rememberSets(Game.POKEMON, ranked)

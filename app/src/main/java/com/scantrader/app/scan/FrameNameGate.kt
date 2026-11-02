@@ -32,22 +32,37 @@ object FrameNameGate {
 
     fun agrees(card: IdentifiedCard, frame: ParsedCardText): Boolean {
         val frameName = confidentTitle(frame.nameGuess) ?: return true
-        if (agreesName(card.game, card.name, card.printedName, frameName)) return true
+        if (agreesName(card.game, card.name, card.printedName, frameName, card.catalogName)) return true
         // Italian OCR vs the English gallery title is the same card when the
         // collector matches. An English title that names a different card
         // (Ravening Warg vs Elrond, no gallery score) stays a conflict.
         return foreignGalleryAgrees(card, frame, frameName)
     }
 
-    /** Fuzzy title check. An id hit whose name disagrees is not a match. */
-    fun agreesName(game: Game, cardName: String?, printedName: String?, ocrName: String): Boolean {
+    /**
+     * Fuzzy title check. An id hit whose name disagrees is not a match.
+     * Oracle [cardName], printed title, and [catalogName] are the same card
+     * when the normalized text is equal (`Meadowboon` vs `Meadowboon`).
+     */
+    fun agreesName(
+        game: Game,
+        cardName: String?,
+        printedName: String?,
+        ocrName: String,
+        catalogName: String? = null,
+    ): Boolean {
         if (game == Game.POKEMON) {
             return PokemonCatalog.nameMatches(cardName, ocrName) ||
-                PokemonCatalog.nameMatches(printedName, ocrName)
+                PokemonCatalog.nameMatches(printedName, ocrName) ||
+                PokemonCatalog.nameMatches(catalogName, ocrName)
         }
-        val titles = faceTitles(cardName) + faceTitles(printedName)
+        val query = CardIdentity.normalizeName(ocrName)
+        val titles = faceTitles(cardName) + faceTitles(printedName) + faceTitles(catalogName)
         return titles.any { title ->
-            CardIdentity.namesSimilar(title, ocrName) || partialMtgTitle(title, ocrName)
+            val norm = CardIdentity.normalizeName(title)
+            (query.isNotBlank() && query == norm) ||
+                CardIdentity.namesSimilar(title, ocrName) ||
+                partialMtgTitle(title, ocrName)
         }
     }
 

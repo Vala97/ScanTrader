@@ -109,6 +109,66 @@ class NeuralPackManager(
         }
     }
 
+    private val providerFile = File(root, "milo-provider.txt")
+
+    /** Reopens the session when [MiloEmbedder.forceCpuOnly] changed. */
+    private fun openEmbedder(): MiloEmbedder {
+        val current = embedder
+        if (current != null && current.matchesPreference()) return current
+        if (current != null) {
+            com.scantrader.app.scan.ScanDebug.d(
+                "neural: reload embedder forceCpu=${MiloEmbedder.forceCpuOnly}",
+            )
+            current.close()
+            embedder = null
+        }
+        val preferred = if (MiloEmbedder.forceCpuOnly) null else chosenProvider()
+        return MiloEmbedder(modelFile, preferredProvider = preferred).also { embedder = it }
+    }
+
+    /** Saved choice, or a one-time NNAPI vs XNNPACK embed on first launch. */
+    private fun chosenProvider(): String? {
+        val saved = providerFile.takeIf { it.isFile }?.readText()?.trim()
+        if (saved == EmbedProviderBench.NNAPI || saved == EmbedProviderBench.XNNPACK) return saved
+        return runCatching { benchmarkProvider() }
+            .onFailure { com.scantrader.app.scan.ScanDebug.w("onnx: provider benchmark failed", it) }
+            .getOrNull()
+    }
+
+    private fun benchmarkProvider(): String {
+        val bitmap = android.graphics.Bitmap.createBitmap(63, 88, android.graphics.Bitmap.Config.ARGB_8888)
+        try {
+            val nnapiMs = timeProvider(EmbedProviderBench.NNAPI, bitmap)
+            val xnnpackMs = timeProvider(EmbedProviderBench.XNNPACK, bitmap)
+            val choice = EmbedProviderBench.choose(nnapiMs, xnnpackMs)
+            com.scantrader.app.scan.ScanDebug.d(
+                "onnx: chose provider=$choice nnapiMs=${nnapiMs ?: "fail"} xnnpackMs=${xnnpackMs ?: "fail"}",
+            )
+            providerFile.writeText(choice)
+            return choice
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun timeProvider(name: String, bitmap: android.graphics.Bitmap): Long? =
+        runCatching {
+            val trial = MiloEmbedder(
+                modelFile,
+                preferredProvider = name,
+                exclusiveProvider = true,
+            )
+            try {
+                val started = System.nanoTime()
+                trial.embed(bitmap)
+                (System.nanoTime() - started) / 1_000_000L
+            } finally {
+                trial.close()
+            }
+        }.onFailure {
+            com.scantrader.app.scan.ScanDebug.w("onnx: bench $name failed", it)
+        }.getOrNull()
+
     private fun loadGameLocked(game: Game): Boolean {
         if (game == Game.POKEMON) return loadPokemonLocked()
         val catalogFile = catalogFile(game)
@@ -118,7 +178,7 @@ class NeuralPackManager(
             return false
         }
         val existing = catalogOrNull(game)
-        if (embedder != null && existing != null) {
+        if (embedder?.matchesPreference() == true && existing != null) {
             stateFlow.value = NeuralPackState.Ready(existing.size)
             return true
         }
@@ -127,9 +187,7 @@ class NeuralPackManager(
             com.scantrader.app.scan.ScanDebug.d(
                 "neural: loading model=${modelFile.name} catalog=${catalogFile.name} game=$game",
             )
-            if (embedder == null) {
-                embedder = MiloEmbedder(modelFile)
-            }
+            openEmbedder()
             val loaded = EmbeddingCatalog.load(catalogFile)
             setCatalog(game, loaded)
             stateFlow.value = NeuralPackState.Ready(loaded.size)
@@ -163,15 +221,13 @@ class NeuralPackManager(
             return false
         }
         val existing = pokemonCatalog
-        if (embedder != null && existing != null) {
+        if (embedder?.matchesPreference() == true && existing != null) {
             _pokemonState.value = NeuralPackState.Ready(existing.size)
             return true
         }
         return runCatching {
             _pokemonState.value = NeuralPackState.Loading
-            if (embedder == null) {
-                embedder = MiloEmbedder(modelFile)
-            }
+            openEmbedder()
             val loaded = files.mapNotNull { file ->
                 runCatching { EmbeddingCatalog.load(file) }
                     .onFailure {
@@ -294,9 +350,7 @@ class NeuralPackManager(
                 versionFile().writeText(entry.version)
                 _mtgCatalogStatus.value = readMtgCatalogStatus(remoteVersion = entry.version)
 
-                if (embedder == null) {
-                    embedder = MiloEmbedder(modelFile)
-                }
+                openEmbedder()
                 mtgCatalog = converted
                 _mtgState.value = NeuralPackState.Ready(converted.size)
                 // Refresh Pokémon status if its catalog was already present.
@@ -473,11 +527,11 @@ class NeuralPackManager(
     private val ctChecked = java.util.Collections.synchronizedSet(mutableSetOf<Game>())
 
     private fun loadCtLocked(game: Game): Boolean {
-        ctCatalogs[game]?.let { if (embedder != null) return true }
+        ctCatalogs[game]?.let { if (embedder?.matchesPreference() == true) return true }
         val file = ctFile(game)
         if (!modelFile.exists() || !file.exists()) return false
         return runCatching {
-            if (embedder == null) embedder = MiloEmbedder(modelFile)
+            openEmbedder()
             ctCatalogs[game] = EmbeddingCatalog.load(file)
             com.scantrader.app.scan.ScanDebug.d("neural: ready game=$game cards=${ctCatalogs[game]?.size}")
             true

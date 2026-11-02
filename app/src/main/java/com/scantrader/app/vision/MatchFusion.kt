@@ -51,9 +51,24 @@ object MatchFusion {
             visual != null && visual >= 0.80f && ocr < 0.35f -> 0.05f
             else -> 0f
         }
+        var confidence = (base + agreementBonus - conflictPenalty).coerceIn(0f, 1f)
+        // Gallery hit of the title we actually read (oracle, printed, or catalog).
+        // A wrong collector must not hold that under the autosave bar.
+        // No OCR title, or only a foreign title plus the collector, is not a boost.
+        val readTitle = com.scantrader.app.scan.FrameNameGate.confidentTitle(parsed.nameGuess)
+        val titled = readTitle != null && com.scantrader.app.scan.FrameNameGate.agreesName(
+            card.game,
+            card.name,
+            card.printedName,
+            readTitle,
+            card.catalogName,
+        )
+        if (titled && visual != null && visual >= GalleryMatcher.MIN_SCORE) {
+            confidence = maxOf(confidence, AUTO_CONFIDENCE_MIN)
+        }
         return card.copy(
             ocrScore = ocr,
-            matchConfidence = (base + agreementBonus - conflictPenalty).coerceIn(0f, 1f),
+            matchConfidence = confidence,
         )
     }
 
@@ -64,6 +79,12 @@ object MatchFusion {
      */
     const val POKEMON_AUTO_CONFIDENCE_MIN = 0.48f
     const val MTG_AUTO_CONFIDENCE_MIN = 0.52f
+
+    /**
+     * Name and collector both agree. Auto-accept from here.
+     * The previous name+cn path needed OCR at 0.65, which left 0.6336 rejected.
+     */
+    const val NAME_CN_CONFIDENCE_MIN = 0.62f
 
     /** Result of the auto-scan confidence gate. */
     data class AutoMatchDecision(
@@ -195,6 +216,7 @@ object MatchFusion {
             "conf+visual" -> "immagine e confidenza sono solo medie"
             "scryfallName" -> "la ricerca per nome ha trovato la carta e il titolo OCR è in un'altra lingua"
             "cn+neural" -> "il numero coincide e il riconoscimento visivo conferma la carta"
+            "cn+visual" -> "il numero coincide e l'immagine riconosce la carta"
             "cn+set+visualStrong" -> "set, numero e immagine coincidono"
             "cn+set" -> "set e numero collezionista coincidono"
             "name+cn+set" -> "nome, numero e set coincidono"
@@ -248,10 +270,31 @@ object MatchFusion {
         // giochi CardTrader: regole proprie (codice + immagine), mai la soglia generica di Magic/Pokémon
         if (top.game in CT_GAMES) return evaluateCtCode(top, parsed, confidence, ocr, candidates)
         // A missing title is not agreement. Set+number alone must not autosave.
+        val readTitle = parsed?.let { FrameNameGate.confidentTitle(it.nameGuess) }
         val readAgrees = parsed?.let { frame ->
-            FrameNameGate.confidentTitle(frame.nameGuess) != null &&
-                FrameNameGate.agrees(top, frame)
+            readTitle != null && FrameNameGate.agrees(top, frame)
         } == true
+        val sameTitle = readTitle != null && FrameNameGate.agreesName(
+            top.game,
+            top.name,
+            top.printedName,
+            readTitle,
+            top.catalogName,
+        )
+        // Same written title plus a gallery hit. A foreign title that only
+        // shares the collector stays on the softer name-search path.
+        // Visual alone, with no title, stays under the bar.
+        if (sameTitle && visual != null && visual >= GalleryMatcher.MIN_SCORE &&
+            confidence >= AUTO_CONFIDENCE_MIN
+        ) {
+            return AutoMatchDecision(
+                accepted = true,
+                strict = true,
+                reason = "name+visual",
+                nameOk = true,
+                confidence = confidence,
+            )
+        }
         val strictOk = confidence >= AUTO_CONFIDENCE_MIN && when {
             visual != null && visual >= 0.88f && confidence >= 0.78f -> true
             visual != null && visual >= 0.80f && confidence >= AUTO_CONFIDENCE_MIN -> true
@@ -498,7 +541,8 @@ object MatchFusion {
         val namePresent = nameGuess.length >= 2
         val nameOk = namePresent && (
             mtgNameMatches(top.name, nameGuess) ||
-                mtgNameMatches(top.printedName.orEmpty(), nameGuess)
+                mtgNameMatches(top.printedName.orEmpty(), nameGuess) ||
+                mtgNameMatches(top.catalogName.orEmpty(), nameGuess)
             )
         val numbers = OcrParser.collectorCandidates(parsed.collectorNumber)
         val cn = top.collectorNumber.trimStart('0').ifBlank { top.collectorNumber }
@@ -557,15 +601,25 @@ object MatchFusion {
             nameOk && cnOk && setOk && confidence >= 0.70f -> "cn+set"
             nameOk && cnOk && setOk -> "name+cn+set"
             nameOk && cnOk && ocr >= 0.65f -> "name+cn"
+            nameOk && cnOk && confidence >= NAME_CN_CONFIDENCE_MIN -> "name+cn"
             nameOk && setOk && confidence >= 0.58f && ocr >= 0.50f -> "name+set"
             nameOk && ocr >= 0.80f && confidence >= 0.55f -> "nameExact"
             nameOk && (visual ?: 0f) >= 0.55f && confidence >= 0.55f && ocr >= 0.50f -> "name+visual"
             nameOk && cnOk && setOk && (visual ?: 0f) >= 0.60f && ocr >= 0.50f -> "cn+set+visual"
+            // Old frames have no set, and the title strip may be empty.
+            // Gallery ≥ 0.60 plus the same collector is enough.
+            // A real conflicting title, or rules noise ("er. If"), is not.
+            cnOk && (visual ?: 0f) >= 0.60f &&
+                nameGuess.isBlank() && !looksLikeMtgRulesNoise(nameGuess) -> "cn+visual"
+            cnOk && (visual ?: 0f) >= 0.60f && nameOk -> "cn+visual"
             else -> "softFail"
         }
         val accepted = softReason != "softFail"
+        val strictVisual = accepted && softReason == "cn+visual" &&
+            confidence >= AUTO_CONFIDENCE_MIN
         return AutoMatchDecision(
             accepted = accepted,
+            strict = strictVisual,
             reason = softReason,
             nameOk = nameOk || exact,
             nameConflict = false,
@@ -579,10 +633,12 @@ object MatchFusion {
 
     private fun String.sentence(): String = replaceFirstChar { it.uppercaseChar() }
 
-    private fun looksLikeMtgRulesNoise(name: String): Boolean =
-        Regex(
+    private fun looksLikeMtgRulesNoise(name: String): Boolean {
+        if (name.isBlank()) return false
+        return Regex(
             """(?i)\b(?:if|exile|target|creature|battlefield|mana|wizards|mtgstory)\b""",
         ).containsMatchIn(name) || name.trim().length < 4
+    }
 
     /** True when [cardTitle] and the OCR title share enough tokens (EN or printed IT). */
     fun titleMatches(cardTitle: String?, ocrTitle: String?): Boolean {

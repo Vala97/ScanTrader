@@ -546,6 +546,53 @@ class MatchFusionTest {
     }
 
     @Test
+    fun mtgSoftAcceptsNameAndCollectorAt062() {
+        val parsed = ParsedCardText(
+            nameGuess = "Walker of the Grove",
+            collectorNumber = "174",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Walker of the Grove",
+            setCode = "lrw",
+            setName = "Lorwyn",
+            collectorNumber = "174",
+            ocrScore = 0.50f,
+            visualScore = 0.70f,
+            matchConfidence = 0.6336f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertTrue(decision.accepted)
+        assertTrue(decision.nameOk)
+        assertTrue(decision.cnOk)
+        assertEquals("name+cn", decision.reason)
+    }
+
+    @Test
+    fun mtgSoftRejectsNameAndCollectorBelow062() {
+        val parsed = ParsedCardText(
+            nameGuess = "Walker of the Grove",
+            collectorNumber = "174",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Walker of the Grove",
+            setCode = "lrw",
+            setName = "Lorwyn",
+            collectorNumber = "174",
+            ocrScore = 0.50f,
+            visualScore = 0.40f,
+            matchConfidence = 0.61f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertFalse(decision.accepted)
+        assertTrue(decision.nameOk)
+        assertTrue(decision.cnOk)
+    }
+
+    @Test
     fun mtgSoftAcceptsNameAndCollector() {
         val mtgParsed = ParsedCardText(
             nameGuess = "Lightning Bolt",
@@ -878,6 +925,81 @@ class MatchFusionTest {
         )
         assertEquals("Salvataggio automatico", autoNote.title)
         assertEquals(autoNote, MatchFusion.confirmNoteForDisplay(autoNote, showDebug = false))
+    }
+
+    @Test
+    fun galleryAndCollectorAcceptWithoutNameOrSet() {
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Pack's Disdain",
+            setCode = "mor",
+            setName = "Morningtide",
+            collectorNumber = "73",
+            visualScore = 0.65f,
+            ocrScore = 0.2f,
+            matchConfidence = 0.83f,
+            printedName = "Sdegno del Branco",
+        )
+        val nameless = ParsedCardText(nameGuess = null, collectorNumber = "73", setCode = null)
+        val decision = MatchFusion.evaluateAutoMatch(card, nameless)
+        assertTrue(decision.accepted)
+        assertTrue(decision.strict)
+        assertTrue(decision.cnOk)
+        assertFalse(decision.nameConflict)
+        assertFalse(decision.setOk)
+        assertEquals("cn+visual", decision.reason)
+        assertTrue(MatchFusion.allowsAutoSave(decision))
+
+        val low = card.copy(visualScore = 0.59f)
+        assertFalse(MatchFusion.evaluateAutoMatch(low, nameless).accepted)
+
+        val conflict = ParsedCardText(
+            nameGuess = "Sentinella del Ripensamento",
+            collectorNumber = "73",
+            setCode = null,
+        )
+        val rejected = MatchFusion.evaluateAutoMatch(card.copy(matchConfidence = 0.55f), conflict)
+        assertFalse(rejected.accepted)
+        assertTrue(rejected.nameConflict)
+    }
+
+    @Test
+    fun italianPrintedTitleAgreesWithOcr() {
+        val card = card("Pack's Disdain", "mor", "73", ocr = 0.4f, visual = 0.65f)
+            .copy(printedName = "Sdegno del Branco", catalogName = "Pack's Disdain")
+        val read = ParsedCardText("Sdegno del Branco", "73", null)
+        assertTrue(FrameNameGate.agrees(card, read))
+        val decision = MatchFusion.evaluateAutoMatch(
+            MatchFusion.score(card, read),
+            read,
+        )
+        assertTrue(decision.nameOk || decision.accepted)
+    }
+
+    @Test
+    fun identicalNamesAreKeptAndAGalleryHitClearsAutosave() {
+        val meadow = card("Meadowboon", "tsp", "17", ocr = null, visual = 0.64f)
+            .copy(catalogName = "Meadowboon", printedName = "Meadowboon")
+        val read = ParsedCardText(nameGuess = "Meadowboon", collectorNumber = "993", setCode = null)
+        assertTrue(FrameNameGate.agrees(meadow, read))
+        assertEquals(1, FrameNameGate.keep(listOf(meadow), read).size)
+        val scored = MatchFusion.score(meadow, read)
+        assertTrue((scored.matchConfidence ?: 0f) >= MatchFusion.AUTO_CONFIDENCE_MIN)
+        val decision = MatchFusion.evaluateAutoMatch(scored, read)
+        assertTrue(decision.accepted)
+        assertTrue(decision.strict)
+        assertEquals("name+visual", decision.reason)
+        assertTrue(MatchFusion.allowsAutoSave(decision))
+    }
+
+    @Test
+    fun galleryHitWithoutAReadTitleStaysUnderTheBar() {
+        val meadow = card("Meadowboon", "tsp", "17", ocr = null, visual = 0.64f)
+        val nameless = ParsedCardText(nameGuess = null, collectorNumber = "99", setCode = null)
+        val scored = MatchFusion.score(meadow, nameless)
+        assertTrue((scored.matchConfidence ?: 1f) < MatchFusion.AUTO_CONFIDENCE_MIN)
+        assertFalse(MatchFusion.evaluateAutoMatch(scored, nameless).accepted)
+        assertFalse(MatchFusion.allowsAutoSave(MatchFusion.evaluateAutoMatch(scored, nameless)))
     }
 
     private fun card(

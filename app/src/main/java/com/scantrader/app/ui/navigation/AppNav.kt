@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -89,6 +90,9 @@ fun AppNav() {
             // Confirm stays in this destination. A separate route would stop the
             // scanner lifecycle, detach PreviewView, and rebind the camera at 1×.
             var showConfirm by rememberSaveable { mutableStateOf(false) }
+            LaunchedEffect(vm) {
+                vm.cardChanged.collect { showConfirm = false }
+            }
             Box(Modifier.fillMaxSize()) {
                 ScanScreen(
                     viewModel = vm,
