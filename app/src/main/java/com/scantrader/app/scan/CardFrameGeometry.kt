@@ -102,8 +102,38 @@ object CardFrameGeometry {
     }
 
     /**
+     * Four corners of the on-screen guide, in bitmap pixels: TL, TR, BR, BL.
+     * Null when the preview size is unknown. Callers that embed a card must not
+     * substitute [cropBitmap]: on a 960×1280 analysis buffer that crop is nearly square
+     * and includes the background Milo's indexes were not built from.
+     */
+    fun guideCorners(
+        bitmapWidth: Int,
+        bitmapHeight: Int,
+        viewWidth: Float,
+        viewHeight: Float,
+    ): FloatArray? {
+        if (viewWidth <= 1f || viewHeight <= 1f) return null
+        if (bitmapWidth <= 1 || bitmapHeight <= 1) return null
+        val guide = frameStable(viewWidth, viewHeight, viewWidth, viewHeight)
+        val crop = mapFillCenterViewRectToBitmap(
+            bitmapWidth = bitmapWidth,
+            bitmapHeight = bitmapHeight,
+            viewWidth = viewWidth,
+            viewHeight = viewHeight,
+            guide = guide,
+        )
+        val left = crop.left.toFloat()
+        val top = crop.top.toFloat()
+        val right = (crop.left + crop.width).toFloat()
+        val bottom = (crop.top + crop.height).toFloat()
+        return floatArrayOf(left, top, right, top, right, bottom, left, bottom)
+    }
+
+    /**
      * Crops [source] to the on-screen guide. [viewWidth] and [viewHeight] are the
      * locked preview size the overlay uses. Unknown size falls back to [cropBitmap].
+     * OCR may use that fallback. The neural embedder must use [guideCorners] instead.
      */
     fun cropToGuide(
         source: android.graphics.Bitmap,

@@ -2,6 +2,7 @@ package com.scantrader.app.vision
 
 import android.graphics.Bitmap
 import com.scantrader.app.data.model.Game
+import java.util.Locale
 import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.data.model.ParsedCardText
 import com.scantrader.app.scan.ShotClock
@@ -88,14 +89,19 @@ class GalleryMatcher(
             val rotated = pass.vectors.getOrNull(1)
             if (rotated != null) absorb(catalog.search(rotated, topK = topK))
         }
+        val best = scoreById.maxByOrNull { it.value }
         val ranked = scoreById.entries
             .sortedByDescending { it.value }
             .take(topK)
             .filter { it.value >= MIN_SCORE }
+        val aspect = if (cardCrop.height == 0) 0f else cardCrop.width.toFloat() / cardCrop.height
 
         com.scantrader.app.scan.ScanDebug.d(
             "gallery: game=$game catalogSize=${catalog.size} rawHits=${scoreById.size} " +
+                "best=${best?.let { "${it.key}=${"%.4f".format(Locale.US, it.value)}" } ?: "none"} " +
                 "aboveMin=${ranked.size} top=${ranked.firstOrNull()?.let { "${it.key}=${it.value}" }} " +
+                "bitmap=${cardCrop.width}x${cardCrop.height} aspect=${"%.3f".format(Locale.US, aspect)} " +
+                "provider=${embedder.providerName} " +
                 "embedMs=${pass.embedMs} rotationSkipped=${if (pass.rotationSkipped) "yes" else "no"} " +
                 "totalMs=${System.currentTimeMillis() - t0}",
         )

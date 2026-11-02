@@ -955,6 +955,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "portrait ${bitmap.width}x${bitmap.height} -> ${oriented.width}x${oriented.height}",
                 )
             }
+            var cardUpsideDown = false
             var croppedFull = com.scantrader.app.scan.CardFrameGeometry.cropToGuide(
                 oriented,
                 viewWidth = app.scanSession.guideViewWidth,
@@ -1157,6 +1158,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             croppedFull = flippedFull
                             cropped = flippedBottom
                             titleCard = flippedTitle
+                            cardUpsideDown = true
                             if (newTop.isNotBlank()) top = newTop
                             if (newBl.isNotBlank()) bl = newBl
                             quick = retry
@@ -1564,9 +1566,21 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     .getOrNull()
             }
 
-            // Milo / .stcat indexes are full card scans. The guide crop is that
-            // card (63:88). cropBitmap() on the 1280×960 buffer is nearly square.
-            suspend fun embedGallery(): List<IdentifiedCard> = when (game.value) {
+            // Full-resolution guide quad, straightened. Not the 480px OCR bitmap
+            // and not the square cropBitmap fallback.
+            suspend fun embedGallery(): List<IdentifiedCard> {
+                val card = com.scantrader.app.scan.CardDewarp.cardFromGuide(
+                    source = oriented,
+                    viewWidth = app.scanSession.guideViewWidth,
+                    viewHeight = app.scanSession.guideViewHeight,
+                    rotate180 = cardUpsideDown,
+                )
+                if (card == null) {
+                    com.scantrader.app.scan.ScanDebug.d("gallery skipped (no guide crop)")
+                    return emptyList()
+                }
+                try {
+                    return when (game.value) {
                         Game.MTG -> {
                             if (!app.neuralPack.isInstalled(Game.MTG)) {
                                 com.scantrader.app.scan.ScanDebug.d("gallery skipped (MTG pack not installed)")
@@ -1577,7 +1591,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                     ).scryfallLang()
                                 runCatching {
                                     app.galleryMatcher.matchMtg(
-                                        cropped,
+                                        card,
                                         matched,
                                         printedLang = printedLang,
                                         shot = shot,
@@ -1590,7 +1604,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             }
                         }
                         Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> if (neuralOn) {
-                            runCatching { app.galleryMatcher.matchCt(game.value, cropped, matched, shot = shot) }
+                            runCatching { app.galleryMatcher.matchCt(game.value, card, matched, shot = shot) }
                                 .onFailure { com.scantrader.app.scan.ScanDebug.e("gallery.matchCt failed", it) }
                                 .getOrDefault(emptyList())
                         } else {
@@ -1602,13 +1616,17 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                                 com.scantrader.app.scan.ScanDebug.d("gallery skipped (Pokémon pack not installed)")
                                 emptyList()
                             } else {
-                                runCatching { app.galleryMatcher.matchPokemon(cropped, matched, shot = shot) }
+                                runCatching { app.galleryMatcher.matchPokemon(card, matched, shot = shot) }
                                     .onFailure {
                                         com.scantrader.app.scan.ScanDebug.e("gallery.matchPokemon failed", it)
                                     }
                                     .getOrDefault(emptyList())
                             }
                         }
+                    }
+                } finally {
+                    if (card !== oriented) card.recycle()
+                }
             }
 
             val fetched = if (prefetched != null) {
