@@ -546,6 +546,53 @@ class MatchFusionTest {
     }
 
     @Test
+    fun mtgSoftAcceptsNameAndCollectorAt062() {
+        val parsed = ParsedCardText(
+            nameGuess = "Walker of the Grove",
+            collectorNumber = "174",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Walker of the Grove",
+            setCode = "lrw",
+            setName = "Lorwyn",
+            collectorNumber = "174",
+            ocrScore = 0.50f,
+            visualScore = 0.70f,
+            matchConfidence = 0.6336f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertTrue(decision.accepted)
+        assertTrue(decision.nameOk)
+        assertTrue(decision.cnOk)
+        assertEquals("name+cn", decision.reason)
+    }
+
+    @Test
+    fun mtgSoftRejectsNameAndCollectorBelow062() {
+        val parsed = ParsedCardText(
+            nameGuess = "Walker of the Grove",
+            collectorNumber = "174",
+            setCode = null,
+        )
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Walker of the Grove",
+            setCode = "lrw",
+            setName = "Lorwyn",
+            collectorNumber = "174",
+            ocrScore = 0.50f,
+            visualScore = 0.40f,
+            matchConfidence = 0.61f,
+        )
+        val decision = MatchFusion.evaluateAutoMatch(card, parsed)
+        assertFalse(decision.accepted)
+        assertTrue(decision.nameOk)
+        assertTrue(decision.cnOk)
+    }
+
+    @Test
     fun mtgSoftAcceptsNameAndCollector() {
         val mtgParsed = ParsedCardText(
             nameGuess = "Lightning Bolt",

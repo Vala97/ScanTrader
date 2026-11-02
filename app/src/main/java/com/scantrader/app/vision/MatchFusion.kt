@@ -80,6 +80,12 @@ object MatchFusion {
     const val POKEMON_AUTO_CONFIDENCE_MIN = 0.48f
     const val MTG_AUTO_CONFIDENCE_MIN = 0.52f
 
+    /**
+     * Name and collector both agree. Auto-accept from here.
+     * The previous name+cn path needed OCR at 0.65, which left 0.6336 rejected.
+     */
+    const val NAME_CN_CONFIDENCE_MIN = 0.62f
+
     /** Result of the auto-scan confidence gate. */
     data class AutoMatchDecision(
         val accepted: Boolean,
@@ -595,6 +601,7 @@ object MatchFusion {
             nameOk && cnOk && setOk && confidence >= 0.70f -> "cn+set"
             nameOk && cnOk && setOk -> "name+cn+set"
             nameOk && cnOk && ocr >= 0.65f -> "name+cn"
+            nameOk && cnOk && confidence >= NAME_CN_CONFIDENCE_MIN -> "name+cn"
             nameOk && setOk && confidence >= 0.58f && ocr >= 0.50f -> "name+set"
             nameOk && ocr >= 0.80f && confidence >= 0.55f -> "nameExact"
             nameOk && (visual ?: 0f) >= 0.55f && confidence >= 0.55f && ocr >= 0.50f -> "name+visual"

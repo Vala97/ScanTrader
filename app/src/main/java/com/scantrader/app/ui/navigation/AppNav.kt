@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -14,9 +16,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -33,6 +38,7 @@ import com.scantrader.app.ui.about.AboutScreen
 import com.scantrader.app.ui.collection.CollectionScreen
 import com.scantrader.app.ui.confirm.ConfirmScreen
 import com.scantrader.app.ui.home.HomeScreen
+import com.scantrader.app.ui.scan.AutoScanBanner
 import com.scantrader.app.ui.scan.ScanScreen
 import com.scantrader.app.ui.onboarding.OnboardingScreen
 import com.scantrader.app.ui.onboarding.OnboardingViewModel
@@ -90,6 +96,9 @@ fun AppNav() {
             // Confirm stays in this destination. A separate route would stop the
             // scanner lifecycle, detach PreviewView, and rebind the camera at 1×.
             var showConfirm by rememberSaveable { mutableStateOf(false) }
+            val autoScanOn by vm.autoScan.collectAsStateWithLifecycle()
+            val lastSaved by vm.lastSaved.collectAsStateWithLifecycle()
+            val framedCard by vm.framedCard.collectAsStateWithLifecycle()
             LaunchedEffect(vm) {
                 vm.cardChanged.collect { showConfirm = false }
             }
@@ -128,6 +137,17 @@ fun AppNav() {
                             },
                         )
                     }
+                }
+                if (autoScanOn) {
+                    AutoScanBanner(
+                        lastSaved = lastSaved,
+                        framed = framedCard,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .statusBarsPadding()
+                            .padding(top = 8.dp, start = 12.dp, end = 12.dp)
+                            .zIndex(2f),
+                    )
                 }
             }
         }

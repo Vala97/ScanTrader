@@ -2,8 +2,6 @@ package com.scantrader.app.ui.confirm
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -58,8 +56,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.ContentScale
@@ -254,6 +250,7 @@ fun ConfirmScreen(
     val lockedNow = viewModel.autoMatchCardKey
     val preferredNow = candidates.firstOrNull { lockedNow != null && it.identityKey() == lockedNow }
         ?: candidates.firstOrNull()
+        ?: viewModel.pendingAutoSave?.takeIf { candidates.isEmpty() }
     val lockedMismatchNow = lockedNow != null && !userPickedState.value &&
         selected?.identityKey() != lockedNow &&
         preferredNow?.identityKey() == lockedNow
@@ -276,12 +273,17 @@ fun ConfirmScreen(
     val autoSaveScope = rememberCoroutineScope()
     val autoSaveJob = remember { mutableStateOf<Job?>(null) }
     val scheduledMatch = remember { mutableStateOf<String?>(null) }
-    val matchKey = selected?.identityKey()
+    val snapshotState = remember { mutableStateOf<IdentifiedCard?>(null) }
     val languageWaitStart = remember { mutableStateOf(0L) }
     val languageWaitKey = remember { mutableStateOf<String?>(null) }
     SideEffect {
+        val current = selectedState.value ?: viewModel.pendingAutoSave
+        if (current != null && autoSaveArmed) {
+            snapshotState.value = current
+        }
+        val card = snapshotState.value
         val wait = defaults.autoSaveWaitSeconds
-        val key = matchKey
+        val key = card?.identityKey()
         if (key != languageWaitKey.value) {
             languageWaitKey.value = key
             languageWaitStart.value = System.currentTimeMillis()
@@ -290,7 +292,10 @@ fun ConfirmScreen(
         if (!AutoSaveSchedule.readyToCount(defaults.detectCardLanguage, languageReady, waited)) {
             return@SideEffect
         }
-        if (!autoSaveArmed || key == null || collectionId == null || wait <= 0) return@SideEffect
+        // Armed once is enough. A later frame may clear the gate; the timeout still saves.
+        if (autoSaveCancelled) return@SideEffect
+        if (card == null || key == null || collectionId == null || wait <= 0) return@SideEffect
+        if (snapshotState.value?.identityKey() != key) return@SideEffect
         val claim = AutoSaveSchedule.claim(scheduledMatch.value, key)
         if (!claim.start) return@SideEffect
         scheduledMatch.value = claim.activeKey
@@ -299,16 +304,25 @@ fun ConfirmScreen(
             ScanDebug.d("autosave: scheduled")
             for (left in wait downTo 1) {
                 if (autoSaveCancelledState.value) return@launch
-                if (selectedState.value?.identityKey() != key) return@launch
+                val shown = selectedState.value?.identityKey()
+                if (shown != null && shown != key) return@launch
                 secondsLeftState.intValue = left
                 delay(1_000)
             }
             if (autoSaveCancelledState.value) return@launch
             secondsLeftState.intValue = 0
-            val card = selectedState.value
             val target = collectionIdState.value
-            val stillShown = viewModel.candidates.value.any { it.identityKey() == key }
-            if (card != null && card.identityKey() == key && stillShown && target != null && !viewModel.saving.value) {
+            val shown = selectedState.value?.identityKey()
+            val pickedOther = userPickedState.value && shown != null && shown != key
+            if (AutoSaveCommit.shouldCommit(
+                    cancelled = autoSaveCancelledState.value,
+                    saving = viewModel.saving.value,
+                    targetPresent = target != null,
+                    scheduledKey = key,
+                    selectedKey = shown,
+                    userPickedOther = pickedOther,
+                ) && target != null
+            ) {
                 ScanDebug.d("autosave: saved")
                 viewModel.save(
                     card,
@@ -386,17 +400,13 @@ fun ConfirmScreen(
                 }
             }
         }
+        // The camera preview is under this sheet. A tap on it must not cancel.
+        // Only the result card and the buttons do.
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .nestedScroll(cancelOnScroll)
-                .pointerInput(autoSaveCancelledState, autoSaveOfferedState, secondsLeftState) {
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        cancelAutoSaveRef.block(AutoSaveControl.Gesture.TAP)
-                    }
-                },
+                .nestedScroll(cancelOnScroll),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -419,7 +429,8 @@ fun ConfirmScreen(
                             contentDescription = current.name,
                             modifier = Modifier
                                 .width(200.dp)
-                                .height(280.dp),
+                                .height(280.dp)
+                                .clickable { cancelAutoSave(AutoSaveControl.Gesture.CANDIDATE) },
                             contentScale = ContentScale.Fit,
                         )
                         Text(current.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)

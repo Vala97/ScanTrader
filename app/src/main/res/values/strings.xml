@@ -14,4 +14,8 @@
     <string name="lens_section">Fotocamera</string>
     <string name="lens_field">Lente</string>
     <string name="lens_hint">La lente scelta resta salvata. Torcia e auto-scan continuano a funzionare.</string>
+    <string name="scan_last_saved">Ultima salvata: %1$s · %2$s %3$s · %4$s · %5$s</string>
+    <string name="scan_framed_saved">Già salvata</string>
+    <string name="scan_framed_new">Nuova: %1$s</string>
+    <string name="scan_framed_analyzing">Analisi in corso…</string>
 </resources>

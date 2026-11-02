@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="scan_last_saved">Last saved: %1$s · %2$s %3$s · %4$s · %5$s</string>
+    <string name="scan_framed_saved">Already saved</string>
+    <string name="scan_framed_new">New: %1$s</string>
+    <string name="scan_framed_analyzing">Analyzing…</string>
+</resources>
