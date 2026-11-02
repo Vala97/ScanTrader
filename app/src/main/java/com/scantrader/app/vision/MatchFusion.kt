@@ -51,9 +51,24 @@ object MatchFusion {
             visual != null && visual >= 0.80f && ocr < 0.35f -> 0.05f
             else -> 0f
         }
+        var confidence = (base + agreementBonus - conflictPenalty).coerceIn(0f, 1f)
+        // Gallery hit of the title we actually read (oracle, printed, or catalog).
+        // A wrong collector must not hold that under the autosave bar.
+        // No OCR title, or only a foreign title plus the collector, is not a boost.
+        val readTitle = com.scantrader.app.scan.FrameNameGate.confidentTitle(parsed.nameGuess)
+        val titled = readTitle != null && com.scantrader.app.scan.FrameNameGate.agreesName(
+            card.game,
+            card.name,
+            card.printedName,
+            readTitle,
+            card.catalogName,
+        )
+        if (titled && visual != null && visual >= GalleryMatcher.MIN_SCORE) {
+            confidence = maxOf(confidence, AUTO_CONFIDENCE_MIN)
+        }
         return card.copy(
             ocrScore = ocr,
-            matchConfidence = (base + agreementBonus - conflictPenalty).coerceIn(0f, 1f),
+            matchConfidence = confidence,
         )
     }
 
@@ -248,10 +263,31 @@ object MatchFusion {
         // giochi CardTrader: regole proprie (codice + immagine), mai la soglia generica di Magic/Pokémon
         if (top.game in CT_GAMES) return evaluateCtCode(top, parsed, confidence, ocr, candidates)
         // A missing title is not agreement. Set+number alone must not autosave.
+        val readTitle = parsed?.let { FrameNameGate.confidentTitle(it.nameGuess) }
         val readAgrees = parsed?.let { frame ->
-            FrameNameGate.confidentTitle(frame.nameGuess) != null &&
-                FrameNameGate.agrees(top, frame)
+            readTitle != null && FrameNameGate.agrees(top, frame)
         } == true
+        val sameTitle = readTitle != null && FrameNameGate.agreesName(
+            top.game,
+            top.name,
+            top.printedName,
+            readTitle,
+            top.catalogName,
+        )
+        // Same written title plus a gallery hit. A foreign title that only
+        // shares the collector stays on the softer name-search path.
+        // Visual alone, with no title, stays under the bar.
+        if (sameTitle && visual != null && visual >= GalleryMatcher.MIN_SCORE &&
+            confidence >= AUTO_CONFIDENCE_MIN
+        ) {
+            return AutoMatchDecision(
+                accepted = true,
+                strict = true,
+                reason = "name+visual",
+                nameOk = true,
+                confidence = confidence,
+            )
+        }
         val strictOk = confidence >= AUTO_CONFIDENCE_MIN && when {
             visual != null && visual >= 0.88f && confidence >= 0.78f -> true
             visual != null && visual >= 0.80f && confidence >= AUTO_CONFIDENCE_MIN -> true

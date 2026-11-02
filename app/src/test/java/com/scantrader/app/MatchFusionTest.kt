@@ -880,6 +880,32 @@ class MatchFusionTest {
         assertEquals(autoNote, MatchFusion.confirmNoteForDisplay(autoNote, showDebug = false))
     }
 
+    @Test
+    fun identicalNamesAreKeptAndAGalleryHitClearsAutosave() {
+        val meadow = card("Meadowboon", "tsp", "17", ocr = null, visual = 0.64f)
+            .copy(catalogName = "Meadowboon", printedName = "Meadowboon")
+        val read = ParsedCardText(nameGuess = "Meadowboon", collectorNumber = "993", setCode = null)
+        assertTrue(FrameNameGate.agrees(meadow, read))
+        assertEquals(1, FrameNameGate.keep(listOf(meadow), read).size)
+        val scored = MatchFusion.score(meadow, read)
+        assertTrue((scored.matchConfidence ?: 0f) >= MatchFusion.AUTO_CONFIDENCE_MIN)
+        val decision = MatchFusion.evaluateAutoMatch(scored, read)
+        assertTrue(decision.accepted)
+        assertTrue(decision.strict)
+        assertEquals("name+visual", decision.reason)
+        assertTrue(MatchFusion.allowsAutoSave(decision))
+    }
+
+    @Test
+    fun galleryHitWithoutAReadTitleStaysUnderTheBar() {
+        val meadow = card("Meadowboon", "tsp", "17", ocr = null, visual = 0.64f)
+        val nameless = ParsedCardText(nameGuess = null, collectorNumber = "99", setCode = null)
+        val scored = MatchFusion.score(meadow, nameless)
+        assertTrue((scored.matchConfidence ?: 1f) < MatchFusion.AUTO_CONFIDENCE_MIN)
+        assertFalse(MatchFusion.evaluateAutoMatch(scored, nameless).accepted)
+        assertFalse(MatchFusion.allowsAutoSave(MatchFusion.evaluateAutoMatch(scored, nameless)))
+    }
+
     private fun card(
         name: String,
         set: String,

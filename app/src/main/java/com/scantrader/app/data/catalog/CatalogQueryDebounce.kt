@@ -178,9 +178,11 @@ class CatalogQueryDebounce(
             0
         } else {
             val cn = CardIdentity.normCollector(frame.collectorNumber)
+            val set = plainSet(frame.setCode)
             recent.count {
                 namesClose(it.name, frame.name) &&
-                    CardIdentity.normCollector(it.collectorNumber) == cn
+                    (set == null && plainSet(it.setCode) == null ||
+                        CardIdentity.normCollector(it.collectorNumber) == cn)
             }
         }
         val ready = seenCount >= stableFramesNeeded ||
@@ -260,7 +262,14 @@ class CatalogQueryDebounce(
         val cnCur = CardIdentity.normCollector(current.collectorNumber)
         val countPrev = previous.setCardCount
         val countCur = current.setCardCount
-        if (cnPrev != null && cnCur != null && cnPrev != cnCur) return false
+        val setPrevEarly = plainSet(previous.setCode)
+        val setCurEarly = plainSet(current.setCode)
+        val oldFrameName = !previous.pokemon && !current.pokemon &&
+            setPrevEarly == null && setCurEarly == null &&
+            namesClose(previous.name, current.name)
+        // Old Magic cards have no set. A stable title is the card; 993 vs 17
+        // is copyright noise and must not start a new region.
+        if (cnPrev != null && cnCur != null && cnPrev != cnCur && !oldFrameName) return false
         if (countPrev != null && countCur != null && countPrev != countCur) return false
 
         if (previous.pokemon || current.pokemon) {
@@ -271,6 +280,10 @@ class CatalogQueryDebounce(
 
         val setPrev = plainSet(previous.setCode)
         val setCur = plainSet(current.setCode)
+        // No printed set: the name is the card. Collector noise stays in the region.
+        if (setPrev == null && setCur == null && namesClose(previous.name, current.name)) {
+            return true
+        }
         // A different collector is a different card, including a number that
         // disappears. Name noise does not override that.
         if (cnPrev != cnCur) return false
@@ -288,11 +301,14 @@ class CatalogQueryDebounce(
             val trainer = OcrParser.trainerStabilityName(frame.name) ?: return null
             return "t:$trainer"
         }
-        if (cn == null) return null
         val set = plainSet(frame.setCode)
-        if (set != null) return "m:$cn/$set"
-        val name = nameKey(frame.name) ?: return null
-        return "m:$name/$cn"
+        val name = nameKey(frame.name)
+        if (set == null) {
+            // xx/xxx may flicker. The stable title is what we query on.
+            return name?.let { "n:$it" }
+        }
+        if (cn == null) return null
+        return "m:$cn/$set"
     }
 
     /**

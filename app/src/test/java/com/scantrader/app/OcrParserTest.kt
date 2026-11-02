@@ -538,6 +538,17 @@ class OcrParserTest {
     }
 
     @Test
+    fun copyrightYearFragmentIsNotTheCollector() {
+        assertTrue(OcrParser.copyrightYearPiece("&C993-200", "993"))
+        assertTrue(OcrParser.copyrightYearPiece("© 1993-2006 Wizards of the Coast", "1993"))
+        assertTrue(OcrParser.copyrightYearPiece("© 1993-2006 Wizards of the Coast", "2006"))
+        assertFalse(OcrParser.copyrightYearPiece("Wizards of the Coast 17/150", "17"))
+        assertNull(OcrParser.parse("Meadowboon", Game.MTG, "&C993-200").collectorNumber)
+        val bottom = "Steven Belledin | &C993-200 Wian of the Cot, lnc 17150 | play.) | 3/3"
+        assertEquals("17", OcrParser.parse("Meadowboon", Game.MTG, bottom).collectorNumber)
+    }
+
+    @Test
     fun modernBottomLineOutranksOldFractionInTheSameBand() {
         val bottom = """
             83/150

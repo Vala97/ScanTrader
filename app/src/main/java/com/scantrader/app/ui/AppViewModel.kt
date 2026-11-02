@@ -1674,10 +1674,14 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 }
                 .take(12)
             val candidates = FrameNameGate.keep(fused, parsed)
-            if (candidates.size < fused.size) {
+            val fusedTop = fused.firstOrNull()
+            val topKept = fusedTop == null ||
+                candidates.any { it.identityKey() == fusedTop.identityKey() }
+            if (!topKept) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "result dropped (name disagrees frame=${parsed.nameGuess} " +
-                        "top=${fused.firstOrNull()?.name})",
+                        "top=${fusedTop?.name} catalog=${fusedTop?.catalogName} " +
+                        "printed=${fusedTop?.printedName})",
                 )
             }
             val top = candidates.firstOrNull()

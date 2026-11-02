@@ -280,9 +280,11 @@ object OcrParser {
                 printedLang = hit.printedLang ?: glued?.lang,
             )
         }
+        val fallbackCn = extractCollector(prepared, prepared, Game.MTG)
+            ?.takeUnless { copyrightYearPiece(source, it) }
         return ParsedCardText(
             nameGuess = name,
-            collectorNumber = extractCollector(prepared, prepared, Game.MTG),
+            collectorNumber = fallbackCn,
             setCode = extractSet(prepared, prepared, Game.MTG) ?: glued?.setCode,
             printedLang = glued?.lang,
         )
@@ -637,7 +639,22 @@ object OcrParser {
                 hit.copy(setCode = glued.setCode, printedLang = glued.lang, score = hit.score + 17)
             }
         }
-        return hits.maxByOrNull { it.score }
+        return hits
+            .filterNot { copyrightYearPiece(prepared, it.collector) }
+            .maxByOrNull { it.score }
+    }
+
+    /**
+     * `1993`, `2006`, or a fragment of `993-2006` is the copyright line, not
+     * the collector. A real `17/150` does not match.
+     */
+    fun copyrightYearPiece(text: String, collector: String): Boolean {
+        val digits = collector.trim().trimStart('0').ifBlank { "0" }
+        val n = digits.toIntOrNull() ?: return false
+        if (n in 1900..2099) return true
+        val body = text
+        if (Regex("""(?<![0-9])0*${Regex.escape(digits)}\s*[-–—]""").containsMatchIn(body)) return true
+        return Regex("""[-–—]\s*0*${Regex.escape(digits)}(?![0-9])""").containsMatchIn(body)
     }
 
     /** `ELDITTAYLOR` / `ELD -ITTDR` → set `eld`, language `it`. */
