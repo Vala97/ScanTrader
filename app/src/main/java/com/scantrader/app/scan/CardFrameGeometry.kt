@@ -157,8 +157,12 @@ object CardFrameGeometry {
      * Pokémon ~22% tall (title row). MTG ~14% (name bar — avoid rules text).
      * The right of the bar is the mana cost or the HP value, so it is left out.
      */
-    fun topNameStrip(cardCrop: android.graphics.Bitmap, mtg: Boolean = false): android.graphics.Bitmap {
-        val fraction = if (mtg) 0.14f else 0.22f
+    fun topNameStrip(
+        cardCrop: android.graphics.Bitmap,
+        mtg: Boolean = false,
+        heightFraction: Float? = null,
+    ): android.graphics.Bitmap {
+        val fraction = heightFraction ?: if (mtg) 0.14f else 0.22f
         val widthFraction = if (mtg) MTG_TITLE_WIDTH_FRACTION else POKEMON_TITLE_WIDTH_FRACTION
         val stripH = (cardCrop.height * fraction).toInt().coerceAtLeast(1).coerceAtMost(cardCrop.height)
         val stripW = (cardCrop.width * widthFraction).toInt().coerceIn(1, cardCrop.width)

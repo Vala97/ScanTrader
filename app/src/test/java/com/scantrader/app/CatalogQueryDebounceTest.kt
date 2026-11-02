@@ -222,6 +222,17 @@ class CatalogQueryDebounceTest {
     }
 
     @Test
+    fun galleryIdStabilizesWhenTheCollectorDoesNot() {
+        val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
+        assertTrue(!debounce.noteGallery("scryfall-meadow"))
+        assertTrue(debounce.noteGallery("scryfall-meadow"))
+        assertTrue(!debounce.noteGallery("scryfall-other"))
+        assertTrue(debounce.noteGallery("scryfall-other"))
+        debounce.reset()
+        assertTrue(!debounce.noteGallery("scryfall-meadow"))
+    }
+
+    @Test
     fun stableNameWithoutASetIgnoresCollectorNoise() {
         val debounce = CatalogQueryDebounce(stableFramesNeeded = 2, now = { 0L })
         assertTrue(!debounce.shouldQuery(mtg("Meadowboon", "993", null)))

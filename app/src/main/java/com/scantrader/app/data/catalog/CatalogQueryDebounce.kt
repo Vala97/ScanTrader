@@ -50,6 +50,8 @@ class CatalogQueryDebounce(
     private var lastQueriedKey: String? = null
     private var lastQueryAtMs: Long = 0L
     private var setMemory: SetMemory? = null
+    private var galleryKey: String? = null
+    private var gallerySeen: Int = 0
 
     fun normalize(identity: String): String =
         identity.trim().lowercase().replace(Regex("""\s+"""), " ")
@@ -111,6 +113,22 @@ class CatalogQueryDebounce(
         return true
     }
 
+    /**
+     * When the collector is missing or jumps between frames, the gallery id is
+     * the stability key. True once the same id has been seen [stableFramesNeeded] times.
+     */
+    fun noteGallery(cardId: String): Boolean {
+        val key = cardId.trim()
+        if (key.isEmpty()) return false
+        if (key == galleryKey) {
+            gallerySeen++
+        } else {
+            galleryKey = key
+            gallerySeen = 1
+        }
+        return gallerySeen >= stableFramesNeeded
+    }
+
     /** The last identity failed (429 / cooldown). The next stable frame may query again. */
     fun invalidateLastQuery() {
         lastQueriedKey = null
@@ -128,6 +146,8 @@ class CatalogQueryDebounce(
         lastQueriedKey = null
         lastQueryAtMs = 0L
         setMemory = null
+        galleryKey = null
+        gallerySeen = 0
     }
 
     /** Majority-vote read of the current card region, including the latest frame. */

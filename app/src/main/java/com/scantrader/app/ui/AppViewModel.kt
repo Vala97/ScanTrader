@@ -55,7 +55,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -413,6 +416,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
      * closes and when the parsed name or collector changes.
      */
     private val acceptedLock = AcceptedCandidateLock(clearFramesNeeded = SAME_CARD_CLEAR_FRAMES)
+    /** Confirm overlay should close: the card in frame is not the one on screen. */
+    private val cardChangedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val cardChanged: SharedFlow<Unit> = cardChangedEvents.asSharedFlow()
     private val duplicateGuard = AutosaveDuplicateGuard()
     private val consecutiveGuard = ConsecutivePrintingGuard()
     /** Shutter capture in flight. Auto frames must not accept or autosave until the sheet closes. */
@@ -424,6 +430,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     /** Set when this frame's match is the printing we just accepted. */
     @Volatile
     private var repeatPrinting: Boolean = false
+
+    /** Set when this frame saw a different card and did not accept it. */
+    @Volatile
+    private var dismissConfirm: Boolean = false
 
     private val lastAcceptedCardKey: String?
         get() = acceptedLock.key
@@ -870,7 +880,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 autoHold = AutoHold.NONE
                 repeatPrinting = false
                 val matched = analyze(bitmap, requireMatch = true)
+                val dismiss = dismissConfirm
+                dismissConfirm = false
                 if (manualCapture.get()) return@launch
+                if (!matched && dismiss) {
+                    cardChangedEvents.tryEmit(Unit)
+                    autoStatus.value = "Analisi in corso…"
+                }
                 if (matched) {
                     app.scanSession.manualConfirm = false
                     autoHitPending.set(true)
@@ -919,6 +935,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         app.scanSession.game = game.value
         val autoMode = requireMatch
         return withContext(Dispatchers.IO) {
+            dismissConfirm = false
             val t0 = System.currentTimeMillis()
             val shot = com.scantrader.app.scan.ShotClock()
             try {
@@ -1012,6 +1029,23 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         }
                     }
                     var top = topJob.await()
+                    // Auto skips enhance. A 14% strip then often returns nothing
+                    // (topChars=0) while the title sits just under the border.
+                    if (isMtg && top.isBlank()) {
+                        top = runCatching {
+                            app.ocr.recognize(
+                                com.scantrader.app.scan.CardFrameGeometry.topNameStrip(
+                                    titleCard,
+                                    mtg = true,
+                                    heightFraction = 0.22f,
+                                ),
+                                enhance = true,
+                            )
+                        }.getOrDefault("")
+                        if (top.isNotBlank()) {
+                            com.scantrader.app.scan.ScanDebug.d("OCR title retry chars=${top.length}")
+                        }
+                    }
                     var bl = blJob.await()
                     var br = brJob.await()
                     var edge = ""
@@ -1370,6 +1404,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 cancelSpeculativeJob()
                 speculativeCatalog.clear()
                 catalogDebounce.reset()
+                dismissConfirm = true
                 com.scantrader.app.scan.ScanDebug.d(
                     "candidate lock released name=${parsed.nameGuess} cn=${parsed.collectorNumber}",
                 )
@@ -1467,9 +1502,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 logTiming("catalog-skipped", ocrMs, 0, System.currentTimeMillis() - t0)
                 return@withContext false
             }
+            // Old frames have no set and the collector jitters. The gallery id is
+            // the stability key, so those frames still embed.
+            val galleryCanStabilize = neuralOn && matched.setCode.isNullOrBlank()
             // Debounce hold: do not embed. The next frame is ~0.7s away and can query.
             // Cooldown cannot call Scryfall, so the gallery below is the lookup.
-            if (autoMode && !queryCatalog && prefetched == null && !cooling) {
+            if (autoMode && !queryCatalog && prefetched == null && !cooling && !galleryCanStabilize) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "catalog held reason=debounce id=$catalogIdentity neural=true",
                 )
@@ -1565,6 +1603,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             autoMode = autoMode,
                             cooling = cooling,
                             queryCatalog = queryCatalog,
+                            stabilizeByGallery = galleryCanStabilize && !queryCatalog,
                         )
                     ) {
                         com.scantrader.app.scan.ScanDebug.d(
@@ -1590,6 +1629,34 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             var catalogHits = fetched.first
             var galleryHits = fetched.second
+            val galleryTopHit = galleryHits.firstOrNull()
+            val galleryId = galleryTopHit?.scryfallId?.takeIf { it.isNotBlank() }
+                ?: galleryTopHit?.tcgdexId?.takeIf { it.isNotBlank() }
+            if (autoMode && galleryTopHit != null && acceptedLock.key != null &&
+                galleryTopHit.identityKey() != acceptedLock.key
+            ) {
+                acceptedLock.clear()
+                app.scanSession.resetResults()
+                autoHold = AutoHold.SPECULATIVE
+                dismissConfirm = true
+                com.scantrader.app.scan.ScanDebug.d(
+                    "card changed gallery=${galleryTopHit.name} id=${galleryTopHit.identityKey()}",
+                )
+            }
+            if (!queryCatalog && galleryCanStabilize) {
+                val stableGallery = galleryId != null && catalogDebounce.noteGallery(galleryId)
+                if (stableGallery && catalogHits.isEmpty()) {
+                    catalogHits = galleryHits
+                    com.scantrader.app.scan.ScanDebug.d("catalog from gallery id=$galleryId")
+                } else if (catalogHits.isEmpty()) {
+                    autoHold = AutoHold.SPECULATIVE
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "catalog held reason=debounce gallery=${galleryId ?: "none"}",
+                    )
+                    logTiming("catalog-held", ocrMs, System.currentTimeMillis() - tCat0, System.currentTimeMillis() - t0)
+                    return@withContext false
+                }
+            }
             if (galleryHits.isEmpty() &&
                 com.scantrader.app.scan.HeavyVision.embedAfterCatalog(
                     autoMode = autoMode,

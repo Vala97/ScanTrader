@@ -12,7 +12,9 @@ object HeavyVision {
         autoMode: Boolean,
         cooling: Boolean,
         queryCatalog: Boolean,
+        stabilizeByGallery: Boolean = false,
     ): Boolean {
+        if (stabilizeByGallery) return true
         if (!autoMode) return true
         return cooling && !queryCatalog
     }

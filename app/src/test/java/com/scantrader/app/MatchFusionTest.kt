@@ -881,6 +881,55 @@ class MatchFusionTest {
     }
 
     @Test
+    fun galleryAndCollectorAcceptWithoutNameOrSet() {
+        val card = IdentifiedCard(
+            game = Game.MTG,
+            name = "Pack's Disdain",
+            setCode = "mor",
+            setName = "Morningtide",
+            collectorNumber = "73",
+            visualScore = 0.65f,
+            ocrScore = 0.2f,
+            matchConfidence = 0.83f,
+            printedName = "Sdegno del Branco",
+        )
+        val nameless = ParsedCardText(nameGuess = null, collectorNumber = "73", setCode = null)
+        val decision = MatchFusion.evaluateAutoMatch(card, nameless)
+        assertTrue(decision.accepted)
+        assertTrue(decision.strict)
+        assertTrue(decision.cnOk)
+        assertFalse(decision.nameConflict)
+        assertFalse(decision.setOk)
+        assertEquals("cn+visual", decision.reason)
+        assertTrue(MatchFusion.allowsAutoSave(decision))
+
+        val low = card.copy(visualScore = 0.59f)
+        assertFalse(MatchFusion.evaluateAutoMatch(low, nameless).accepted)
+
+        val conflict = ParsedCardText(
+            nameGuess = "Sentinella del Ripensamento",
+            collectorNumber = "73",
+            setCode = null,
+        )
+        val rejected = MatchFusion.evaluateAutoMatch(card.copy(matchConfidence = 0.55f), conflict)
+        assertFalse(rejected.accepted)
+        assertTrue(rejected.nameConflict)
+    }
+
+    @Test
+    fun italianPrintedTitleAgreesWithOcr() {
+        val card = card("Pack's Disdain", "mor", "73", ocr = 0.4f, visual = 0.65f)
+            .copy(printedName = "Sdegno del Branco", catalogName = "Pack's Disdain")
+        val read = ParsedCardText("Sdegno del Branco", "73", null)
+        assertTrue(FrameNameGate.agrees(card, read))
+        val decision = MatchFusion.evaluateAutoMatch(
+            MatchFusion.score(card, read),
+            read,
+        )
+        assertTrue(decision.nameOk || decision.accepted)
+    }
+
+    @Test
     fun identicalNamesAreKeptAndAGalleryHitClearsAutosave() {
         val meadow = card("Meadowboon", "tsp", "17", ocr = null, visual = 0.64f)
             .copy(catalogName = "Meadowboon", printedName = "Meadowboon")
