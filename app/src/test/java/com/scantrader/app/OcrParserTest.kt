@@ -508,6 +508,36 @@ class OcrParserTest {
     }
 
     @Test
+    fun oldFrameNumberFollowsWizardsWithInc() {
+        val bottom = "© 1993-2006 Wizards of the Coast, Inc. 17/150"
+        val parsed = OcrParser.parse("Meadowboon", Game.MTG, bottom)
+        assertEquals("17", parsed.collectorNumber)
+        assertNull(parsed.setCode)
+        assertEquals("17", OcrParser.copyrightCollector(bottom))
+    }
+
+    @Test
+    fun oldFrameNumberFollowsWizardsWithoutInc() {
+        val bottom = "© 1993-2006 Wizards of the Coast 17/150"
+        val parsed = OcrParser.parse("Meadowboon", Game.MTG, bottom)
+        assertEquals("17", parsed.collectorNumber)
+        assertNull(parsed.setCode)
+        assertEquals("17", OcrParser.copyrightCollector(bottom))
+    }
+
+    @Test
+    fun fuzzyWizardsHolderStillYieldsTheCollector() {
+        assertEquals("17", OcrParser.copyrightCollector("Wianls ef the Cat 17/150"))
+        assertEquals("12", OcrParser.copyrightCollector("iande of te Cot, Inc 12/150"))
+        assertEquals("17", OcrParser.copyrightCollector("Wiands of he Coat 17/150"))
+        val noisy = "Steven Belledin | &C993-200 Wian of the Cot, lnc 17150 | play.) | 3/3"
+        val parsed = OcrParser.parse("Meadowboon", Game.MTG, noisy)
+        assertEquals("17", parsed.collectorNumber)
+        assertNull(parsed.setCode)
+        assertEquals("12", OcrParser.copyrightCollector("lec 12/150"))
+    }
+
+    @Test
     fun modernBottomLineOutranksOldFractionInTheSameBand() {
         val bottom = """
             83/150
