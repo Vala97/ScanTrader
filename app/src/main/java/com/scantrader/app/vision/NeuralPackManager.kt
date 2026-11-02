@@ -109,6 +109,20 @@ class NeuralPackManager(
         }
     }
 
+    /** Reopens the session when [MiloEmbedder.forceCpuOnly] changed. */
+    private fun openEmbedder(): MiloEmbedder {
+        val current = embedder
+        if (current != null && current.matchesPreference()) return current
+        if (current != null) {
+            com.scantrader.app.scan.ScanDebug.d(
+                "neural: reload embedder forceCpu=${MiloEmbedder.forceCpuOnly}",
+            )
+            current.close()
+            embedder = null
+        }
+        return MiloEmbedder(modelFile).also { embedder = it }
+    }
+
     private fun loadGameLocked(game: Game): Boolean {
         if (game == Game.POKEMON) return loadPokemonLocked()
         val catalogFile = catalogFile(game)
@@ -118,7 +132,7 @@ class NeuralPackManager(
             return false
         }
         val existing = catalogOrNull(game)
-        if (embedder != null && existing != null) {
+        if (embedder?.matchesPreference() == true && existing != null) {
             stateFlow.value = NeuralPackState.Ready(existing.size)
             return true
         }
@@ -127,9 +141,7 @@ class NeuralPackManager(
             com.scantrader.app.scan.ScanDebug.d(
                 "neural: loading model=${modelFile.name} catalog=${catalogFile.name} game=$game",
             )
-            if (embedder == null) {
-                embedder = MiloEmbedder(modelFile)
-            }
+            openEmbedder()
             val loaded = EmbeddingCatalog.load(catalogFile)
             setCatalog(game, loaded)
             stateFlow.value = NeuralPackState.Ready(loaded.size)
@@ -163,15 +175,13 @@ class NeuralPackManager(
             return false
         }
         val existing = pokemonCatalog
-        if (embedder != null && existing != null) {
+        if (embedder?.matchesPreference() == true && existing != null) {
             _pokemonState.value = NeuralPackState.Ready(existing.size)
             return true
         }
         return runCatching {
             _pokemonState.value = NeuralPackState.Loading
-            if (embedder == null) {
-                embedder = MiloEmbedder(modelFile)
-            }
+            openEmbedder()
             val loaded = files.mapNotNull { file ->
                 runCatching { EmbeddingCatalog.load(file) }
                     .onFailure {
@@ -294,9 +304,7 @@ class NeuralPackManager(
                 versionFile().writeText(entry.version)
                 _mtgCatalogStatus.value = readMtgCatalogStatus(remoteVersion = entry.version)
 
-                if (embedder == null) {
-                    embedder = MiloEmbedder(modelFile)
-                }
+                openEmbedder()
                 mtgCatalog = converted
                 _mtgState.value = NeuralPackState.Ready(converted.size)
                 // Refresh Pokémon status if its catalog was already present.
@@ -473,11 +481,11 @@ class NeuralPackManager(
     private val ctChecked = java.util.Collections.synchronizedSet(mutableSetOf<Game>())
 
     private fun loadCtLocked(game: Game): Boolean {
-        ctCatalogs[game]?.let { if (embedder != null) return true }
+        ctCatalogs[game]?.let { if (embedder?.matchesPreference() == true) return true }
         val file = ctFile(game)
         if (!modelFile.exists() || !file.exists()) return false
         return runCatching {
-            if (embedder == null) embedder = MiloEmbedder(modelFile)
+            openEmbedder()
             ctCatalogs[game] = EmbeddingCatalog.load(file)
             com.scantrader.app.scan.ScanDebug.d("neural: ready game=$game cards=${ctCatalogs[game]?.size}")
             true
