@@ -354,8 +354,12 @@ object MatchFusion {
     ): AutoMatchDecision {
         val readCn = parsed?.collectorNumber?.takeIf { it.isNotBlank() }
         val setOk = !parsed?.setCode.isNullOrBlank()
-        val cnOk = readCn != null &&
-            com.scantrader.app.data.catalog.CtGameCatalog.base(readCn) == com.scantrader.app.data.catalog.CtGameCatalog.base(top.collectorNumber)
+        val cnOk = readCn != null && (
+            com.scantrader.app.data.catalog.CtGameCatalog.base(readCn) == com.scantrader.app.data.catalog.CtGameCatalog.base(top.collectorNumber) ||
+                (com.scantrader.app.data.catalog.CtGameCatalog.isDonQuery(readCn) &&
+                    com.scantrader.app.data.catalog.CtGameCatalog.isDonName(top.catalogName ?: top.name) &&
+                    com.scantrader.app.data.catalog.CtGameCatalog.donCollectorMatches(top.collectorNumber, readCn))
+            )
         fun decision(accepted: Boolean, reason: String) = AutoMatchDecision(
             accepted = accepted, strict = accepted, reason = reason, cnOk = cnOk, setOk = setOk,
             // la percentuale mostrata e confrontata con la soglia: la piu' forte fra codice e immagine

@@ -24,11 +24,33 @@ class CtGamesTest {
         assertEquals(CtCode("op02", "OP02-013"), OcrParser.ctCode(Game.ONE_PIECE, "Whitebeard Pirates  OP02-013 SR 1"))
         assertEquals(CtCode("st10", "ST10-014"), OcrParser.ctCode(Game.ONE_PIECE, "5T10-0l4"))
         assertEquals(CtCode("eb01", "EB01-001"), OcrParser.ctCode(Game.ONE_PIECE, "EB01 - 001"))
+        assertEquals(CtCode("eb04", "EB04-021"), OcrParser.ctCode(Game.ONE_PIECE, "Igaram EB04-021"))
+        assertEquals(CtCode("eb04", "EB04-026"), OcrParser.ctCode(Game.ONE_PIECE, "Bluegrass EB04-026"))
+        assertEquals(CtCode("eb04", "EB04-001"), OcrParser.ctCode(Game.ONE_PIECE, "EB04-001"))
+        assertEquals(CtCode("eb05", "EB05-010"), OcrParser.ctCode(Game.ONE_PIECE, "EB05-010"))
         assertEquals(CtCode("op02", "OP02-013"), OcrParser.ctCode(Game.ONE_PIECE, "0P02-O13"))
         assertEquals(CtCode("promo", "P-041"), OcrParser.ctCode(Game.ONE_PIECE, "P-041"))
         assertEquals(CtCode("op02", "OP02-013"), OcrParser.ctCode(Game.ONE_PIECE, "OP02013"))
         assertEquals(CtCode("st10", "ST10-014"), OcrParser.ctCode(Game.ONE_PIECE, "ST10 014"))
         assertNull(OcrParser.ctCode(Game.ONE_PIECE, "7000 SPECIAL"))
+        // un codice a tre cifre resta una single anche se l'effetto parla di DON!!
+        assertEquals(CtCode("eb03", "EB03-053"), OcrParser.ctCode(Game.ONE_PIECE, "rested DON!! card to your Leader\nEB03-053"))
+        assertNull(OcrParser.ctCode(Game.ONE_PIECE, "OP05"))
+        assertEquals(CtCode("op05", "OP-05", don = true), OcrParser.ctCode(Game.ONE_PIECE, "DON!! CARD\nYour Turn +1000\nOP-05"))
+        assertEquals(CtCode("eb05", "EB-05", don = true), OcrParser.ctCode(Game.ONE_PIECE, "Your Turn +1000\nEB05"))
+        assertEquals(CtCode("eb05", "EB-05MG", don = true), OcrParser.ctCode(Game.ONE_PIECE, "EB-05mg"))
+        assertEquals(CtCode("eb05", "EB-05M", don = true), OcrParser.ctCode(Game.ONE_PIECE, "EB-05m"))
+        assertEquals(CtCode("eb03", "EB-03-NAMI-G", don = true), OcrParser.ctCode(Game.ONE_PIECE, "EB-03-NAMI-G"))
+        assertEquals(CtCode("eb03", "EB-03-NAMI", don = true), OcrParser.ctCode(Game.ONE_PIECE, "EB-03-NAMI"))
+        assertEquals(CtCode("prb", "PRB-LUFFY-G", don = true), OcrParser.ctCode(Game.ONE_PIECE, "PRB-LUFFY-G"))
+        assertEquals(CtCode("prb", "PRB-RL-G", don = true), OcrParser.ctCode(Game.ONE_PIECE, "PRB-RL_G"))
+        assertEquals(CtCode("dp09", "DP-09", don = true), OcrParser.ctCode(Game.ONE_PIECE, "DP-09"))
+        assertEquals(CtCode("op14", "OP-14G", don = true), OcrParser.ctCode(Game.ONE_PIECE, "OP-14g"))
+        assertEquals(CtCode("op09", "OP-09-BGY", don = true), OcrParser.ctCode(Game.ONE_PIECE, "OP-09-BGY"))
+        assertEquals(CtCode("don", "DON", don = true), OcrParser.ctCode(Game.ONE_PIECE, "DON!! CARD\nYour Turn +1000"))
+        val joined = OcrParser.parse("DON!! CARD\nYour Turn +1000", Game.ONE_PIECE, bottomPriorityText = "OP-05")
+        assertEquals("op05", joined.setCode)
+        assertEquals("OP-05", joined.collectorNumber)
     }
 
     @Test
@@ -82,6 +104,14 @@ class CtGamesTest {
         assertFalse(gate(noCode, card(1, "ST04-003", MatchFusion.CT_VISUAL_STRONG - 0.03f, 0f), card(9, "OP01-001", 0.5f, 0f)).accepted)
         // codice letto che non coincide con l'immagine: mai da sola
         assertFalse(gate(withCode, card(9, "OP01-001", 0.97f, 0f)).accepted)
+        // EB-03 letto sul set: Nami e Robin sono due tipi, l'immagine sceglie
+        fun don(bp: Int, n: String, visual: Float) = com.scantrader.app.data.model.IdentifiedCard(
+            game = Game.ONE_PIECE, name = "DON!! ($bp)", setCode = "eb03", setName = "EB-03", collectorNumber = n,
+            catalogName = "DON!!", ctBlueprintId = bp, visualScore = visual, ocrScore = 0.9f,
+        )
+        val family = OcrParser.parse("Your Turn +1000\nEB-03", Game.ONE_PIECE)
+        val picked = gate(family, don(72, "EB-03-NAMI", v), don(74, "EB-03-ROBIN", v - MatchFusion.CT_VISUAL_MARGIN - 0.02f))
+        assertTrue(picked.reason, picked.accepted)
     }
 
     @Test
@@ -114,6 +144,11 @@ class CtGamesTest {
         val calls = mutableListOf<String>()
         override suspend fun expansions() = listOf(
             CtExpansion(2, 15, "op02", "OP-02: Paramount War"), CtExpansion(3, 15, "eb-01", "Extra Booster"),
+            CtExpansion(44, 15, "eb04", "EB-04: Egghead Crisis"), CtExpansion(14, 15, "op14", "OP-14: The Azure Sea's Seven"),
+            CtExpansion(15, 15, "op15", "OP-15"),
+            CtExpansion(5, 15, "op05", "OP-05"), CtExpansion(55, 15, "eb05", "EB-05"),
+            CtExpansion(33, 15, "eb-03", "EB-03"), CtExpansion(45, 15, "prb01", "PRB-01"),
+            CtExpansion(17, 15, "op17", "OP-17"), CtExpansion(90, 15, "oppr", "One Piece Promos"),
             CtExpansion(9, 4, "op02", "OTS Pack 2 (Yu-Gi-Oh)"), CtExpansion(10, 4, "ygld-2020", "Yugi's Legendary Decks"),
             CtExpansion(11, 4, "potd", "Power of the Duelist"), CtExpansion(20, 21, "ue20bt", "Slime"),
         ).also { calls += "exp" }
@@ -124,6 +159,28 @@ class CtGamesTest {
             return when (expansionId) {
                 2 -> listOf(bp(1, "Portgas.D.Ace", "OP02-013"), bp(2, "Portgas.D.Ace", "OP02-013a", "Alternate Art"), bp(3, "Edward.Newgate", "OP02-001"))
                 3 -> listOf(bp(4, "Luffy", "EB01-001"))
+                44 -> listOf(bp(44, "Egghead Crisis Booster", ""))
+                14 -> listOf(bp(21, "Igaram", "EB04-021"), bp(26, "Bluegrass", "EB04-026"), bp(11, "Other", "EB04-011"))
+                15 -> listOf(bp(101, "Jewelry Bonney", "EB04-001"))
+                5 -> listOf(bp(50, "DON!!", "OP-05", "Luffy vs Kaido"), bp(51, "Monkey.D.Luffy", "OP05-001"))
+                55 -> listOf(
+                    bp(60, "DON!!", "EB-05"), bp(61, "DON!!", "EB-05g", "Gold Foil"),
+                    bp(62, "DON!!", "EB-05m", "Maid Cafè"), bp(63, "DON!!", "EB-05mg", "Maid Cafè | Gold Foil"),
+                )
+                33 -> listOf(
+                    bp(70, "DON!!", "EB-03"), bp(71, "DON!!", "EB-03-G", "Gold Foil"),
+                    bp(72, "DON!!", "EB-03-NAMI", "Nami"), bp(73, "DON!!", "EB-03-NAMI-G", "Nami | Gold Foil"),
+                    bp(74, "DON!!", "EB-03-ROBIN", "Robin"),
+                )
+                45 -> listOf(
+                    bp(80, "DON!!", "PRB-LUFFY", "Luffy"), bp(81, "DON!!", "PRB-LUFFY-G", "Luffy | Gold Foil"),
+                    bp(82, "DON!!", "PRB-ZORO", "Zoro"),
+                )
+                17 -> listOf(
+                    bp(90, "DON!!", "OP-17g", "Luffy | Gold Foil"), bp(91, "DON!!", "OP-17g", "4 Emperors| Gold Foil"),
+                    bp(92, "DON!!", "OP17", "Luffy"),
+                )
+                90 -> listOf(bp(95, "DON!!", "DP-01", "Donquixote Rosinante | Special DON!! Card Pack"))
                 9 -> listOf(bp(5, "Fog King", "001ul"))
                 10 -> listOf(bp(6, "Black Luster Soldier", "A01"))
                 11 -> listOf(bp(7, "Neo-Spacian Aqua Dolphin", "003"))
@@ -155,8 +212,38 @@ class CtGamesTest {
         // un'espansione si scarica una volta sola; mai quelle dello stesso codice di altri giochi (op02 Yu-Gi-Oh)
         assertEquals(1, api.calls.count { it == "bp2" })
         assertFalse(api.calls.contains("bp9"))
-        // eb-01 su CardTrader = EB01 stampato
+        // EB-01 resta nella sua espansione. EB-04 è sigillato: 021/026 in OP-14, 001 in OP-15.
         assertEquals(listOf(4), op.identify(OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "EB01-001")).map { it.ctBlueprintId })
+        val igaram = op.identify(OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "EB04-021"))
+        assertEquals(listOf(21), igaram.map { it.ctBlueprintId })
+        assertEquals("Igaram", igaram.first().name)
+        assertFalse(api.calls.contains("bp15"))
+        assertEquals(listOf(26), op.identify(OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "EB04-026")).map { it.ctBlueprintId })
+        assertEquals(listOf(101), op.identify(OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "EB04-001")).map { it.ctBlueprintId })
+        assertTrue(api.calls.contains("bp15"))
+    }
+
+    @Test
+    fun onePieceDonTypes() = runBlocking {
+        val api = FakeApi(); val op = cat(Game.ONE_PIECE, api)
+        val setDon = op.identify(OcrParser.parse("DON!! CARD\nYour Turn +1000\nOP-05", Game.ONE_PIECE))
+        assertEquals(listOf(50), setDon.map { it.ctBlueprintId })
+        assertEquals("DON!! (Luffy vs Kaido)", setDon.first().name)
+        assertTrue(MatchFusion.evaluateAutoMatch(MatchFusion.fuse(setDon, OcrParser.parse("OP-05", Game.ONE_PIECE)).first(), OcrParser.parse("DON!! CARD\nYour Turn +1000\nOP-05", Game.ONE_PIECE)).accepted)
+        val eb05 = op.identify(OcrParser.parse("Your Turn +1000\nEB-05", Game.ONE_PIECE))
+        assertEquals(setOf(60, 61, 62, 63), eb05.map { it.ctBlueprintId }.toSet())
+        assertFalse(MatchFusion.evaluateAutoMatch(MatchFusion.fuse(eb05, OcrParser.parse("Your Turn +1000\nEB-05", Game.ONE_PIECE)).first(), OcrParser.parse("Your Turn +1000\nEB-05", Game.ONE_PIECE)).accepted)
+        val nami = op.identify(OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "EB-03-NAMI"))
+        assertEquals(listOf(72, 73), nami.map { it.ctBlueprintId })
+        assertEquals("DON!! (Nami | Gold Foil)", nami[1].name)
+        val luffy = op.identify(OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "PRB-LUFFY"))
+        assertEquals(listOf(80, 81), luffy.map { it.ctBlueprintId })
+        assertFalse(api.calls.contains("bp45") && luffy.any { it.ctBlueprintId == 82 })
+        val golds = op.identify(OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "OP-17g"))
+        assertEquals(setOf(90, 91), golds.map { it.ctBlueprintId }.toSet())
+        assertEquals(listOf(95), op.identify(OcrParser.parse("", Game.ONE_PIECE, bottomPriorityText = "DP-01")).map { it.ctBlueprintId })
+        assertTrue(api.calls.contains("bp90"))
+        assertEquals(emptyList<Int>(), op.identify(OcrParser.parse("Your Turn +1000", Game.ONE_PIECE)).map { it.ctBlueprintId })
     }
 
     @Test

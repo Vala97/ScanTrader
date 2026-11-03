@@ -211,7 +211,7 @@ object OcrParser {
         }
         if (game in CT_GAMES) {
             val sources = listOfNotNull(bottomPriorityText?.takeIf { it.isNotBlank() }, rawText.takeIf { it.isNotBlank() })
-            val hit = sources.firstNotNullOfOrNull { ctCode(game, it) }
+            val hit = if (game == Game.ONE_PIECE) onePieceCode(sources) else sources.firstNotNullOfOrNull { ctCode(game, it) }
             // nome: in alto per Yu-Gi-Oh! e Union Arena (serve a distinguere carte con lo stesso numero)
             val name = if (game == Game.YUGIOH || game == Game.UNION_ARENA) {
                 namePriorityText?.lines()?.map { it.trim() }?.firstOrNull { it.length >= 3 && it.any(Char::isLetter) }
@@ -313,7 +313,7 @@ object OcrParser {
     /** Giochi con il catalogo CardTrader per espansione (vedi CtGameCatalog). */
     val CT_GAMES = setOf(Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA)
 
-    data class CtCode(val set: String, val number: String, val lang: String? = null)
+    data class CtCode(val set: String, val number: String, val lang: String? = null, val don: Boolean = false)
 
     private fun digits(raw: String) = raw.replace('O', '0').replace('o', '0').replace('I', '1').replace('l', '1').replace('|', '1')
         .replace('S', '5').replace('B', '8').takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
@@ -321,6 +321,26 @@ object OcrParser {
 
     private val opCode = Regex("""(?<![A-Za-z0-9])(OP|0P|ST|5T|EB|E8|PRB|PR8)\s?([0-9OoIl]{2})\s?[-–—~]?\s?([0-9OoIl]{3})(?![0-9])""", RegexOption.IGNORE_CASE)
     private val opPromo = Regex("""(?<![A-Za-z0-9])P\s?[-–—]\s?([0-9OoIl]{3})(?![0-9])""")
+    /** Il riquadro in basso della DON!! (`DON!! CARD` / `Your Turn +1000`), non il testo "rested DON!! card" di una carta normale. */
+    private val donMarker = Regex(
+        """your\s*turn\s*[+＋]\s*1000|自分のターン|(?m)(?:^|\n)\s*D[O0]N\s*!{2,}\s*CARD\s*(?:\n|$)|ドン\s*!{0,3}\s*カード""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val notCardNumber = """(?!\s*[-–—~]?\s*[0-9OoIl]{3}(?![0-9]))"""
+    private val donPrb = Regex("""(?<![A-Za-z0-9])(PRB|PR8)\s*[-–—]?\s*([A-Z]{2,12})(?:\s*[-_–—]\s*(G))?(?![A-Za-z0-9])""", RegexOption.IGNORE_CASE)
+    private val donPack = Regex("""(?<![A-Za-z0-9])(DP|DF|TS)\s*[-–—]?\s*([0-9OoIl]{2})(?![0-9A-Za-z])""", RegexOption.IGNORE_CASE)
+    private val donNamed = Regex(
+        """(?<![A-Za-z0-9])(EB|E8|OP|0P|ST|5T)\s*[-–—]?\s*([0-9OoIl]{2})$notCardNumber\s*[-–—]\s*([A-Z]{2,12})(?:\s*[-–—]\s*(G))?(?![A-Za-z0-9])""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val donSuffix = Regex(
+        """(?<![A-Za-z0-9])(EB|E8|OP|0P|ST|5T)\s*[-–—]?\s*([0-9OoIl]{2})$notCardNumber[-–—]?(MG|BGY|G|M|A|B)(?![A-Za-z0-9])""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val donSetOnly = Regex(
+        """(?<![A-Za-z0-9])(EB|E8|OP|0P|ST|5T)\s*[-–—]?\s*([0-9OoIl]{2})$notCardNumber(?![A-Za-z0-9])""",
+        RegexOption.IGNORE_CASE,
+    )
     private val dbsCode = Regex("""(?<![A-Za-z0-9])(FB|F8|FS|F5|EB|E8|SB|58)\s?([0-9OoIl]{2})\s?[-–—~]\s?([0-9OoIl]{2,3})(?![0-9])""", RegexOption.IGNORE_CASE)
     private val ygoCode = Regex("""(?<![A-Za-z0-9])([A-Z0-9]{2,4})\s?[-–—]\s?(EN|IT|DE|FR|SP|ES|PT|JP|KR|E|I|G|F|S|P)?\s?([A-Z]?[0-9OoIl]{2,3})(?![0-9])""")
     private val uaCode = Regex("""(?<![A-Za-z0-9])(U[A-Z0-9][0-9OoIl]{2}[A-Z0-9]{2,3})\s?/\s?([A-Z0-9]{2,5})\s?[-–—]\s?([0-9OoIl])\s?[-–—]\s?([0-9OoIl]{3})(?![0-9])""")
@@ -328,9 +348,11 @@ object OcrParser {
 
     /**
      * Codice stampato -> espansione CardTrader e numero come lo scrive CardTrader.
-     * One Piece `OP02-013` / `ST10-014` / `EB01-001` (basso a destra); Dragon Ball Fusion World `FB02-075` /
-     * `FS03-14` (basso a destra); Yu-Gi-Oh! `POTD-EN003` (sotto il disegno: espansione, lingua, numero `003`);
-     * Union Arena `UE20BT/TSK-2-001` (basso a sinistra; numero CardTrader `UE20BT-001`).
+     * One Piece `OP02-013` / `ST10-014` / `EB01-001` (basso a destra). Le DON!! non hanno le tre cifre:
+     * portano il set (`OP-05`, `EB-05`, `ST-10`) e, sui tipi, un suffisso (`EB-05g`, `EB-03-NAMI`, `PRB-LUFFY-G`, `DP-09`).
+     * Dragon Ball Fusion World `FB02-075` / `FS03-14` (basso a destra); Yu-Gi-Oh! `POTD-EN003`
+     * (sotto il disegno: espansione, lingua, numero `003`); Union Arena `UE20BT/TSK-2-001`
+     * (basso a sinistra; numero CardTrader `UE20BT-001`).
      */
     fun ctCode(game: Game, text: String): CtCode? {
         when (game) {
@@ -340,7 +362,9 @@ object OcrParser {
                     val a = digits(m.groupValues[2]) ?: return@let; val b = digits(m.groupValues[3]) ?: return@let
                     return CtCode((pre + a).lowercase(), "$pre$a-$b")
                 }
+                donCode(text)?.let { return it }
                 opPromo.find(text)?.let { m -> digits(m.groupValues[1])?.let { return CtCode("promo", "P-$it") } }
+                if (donMarker.containsMatchIn(text)) return CtCode("don", "DON", don = true)
             }
             Game.DRAGON_BALL -> dbsCode.find(text)?.let { m ->
                 val pre = letters(m.groupValues[1]); val a = digits(m.groupValues[2]) ?: return null; val b = digits(m.groupValues[3]) ?: return null
@@ -364,6 +388,60 @@ object OcrParser {
             else -> {}
         }
         return null
+    }
+
+    /**
+     * Il codice in basso e la scritta DON!! stanno in zone diverse: si uniscono solo se nessuna zona
+     * ha già un codice di carta (`OP02-013`) o un tipo DON preciso (`EB-03-NAMI`).
+     */
+    private fun onePieceCode(sources: List<String>): CtCode? {
+        val per = sources.mapNotNull { ctCode(Game.ONE_PIECE, it) }
+        per.firstOrNull { !it.don }?.let { return it }
+        per.firstOrNull { it.don && !it.number.equals("DON", ignoreCase = true) }?.let { return it }
+        val joined = if (sources.size > 1) ctCode(Game.ONE_PIECE, sources.joinToString("\n")) else null
+        return joined ?: per.firstOrNull()
+    }
+
+    /** Tipo di DON!! (`PRB-LUFFY-G`, `EB-03-NAMI`, `EB-05mg`, `DP-09`). Il solo set (`OP-05`) vale se il testo è una DON!!. */
+    private fun donCode(text: String): CtCode? {
+        var best: CtCode? = null
+        fun consider(code: CtCode) {
+            val prev = best
+            if (prev == null || code.number.length > prev.number.length) best = code
+        }
+        for (m in donPrb.findAll(text)) {
+            val name = m.groupValues[2].uppercase()
+            val gold = m.groupValues[3].isNotEmpty()
+            consider(CtCode("prb", "PRB-$name" + if (gold) "-G" else "", don = true))
+        }
+        for (m in donPack.findAll(text)) {
+            val pre = m.groupValues[1].uppercase()
+            val n = digits(m.groupValues[2]) ?: continue
+            consider(CtCode((pre + n).lowercase(), "$pre-$n", don = true))
+        }
+        for (m in donNamed.findAll(text)) {
+            val pre = letters(m.groupValues[1])
+            val n = digits(m.groupValues[2]) ?: continue
+            val name = m.groupValues[3].uppercase()
+            if (name in setOf("MG", "SR", "SEC", "UC", "TR", "SP")) continue
+            val gold = m.groupValues[4].isNotEmpty()
+            consider(CtCode((pre + n).lowercase(), "$pre-$n-$name" + if (gold) "-G" else "", don = true))
+        }
+        for (m in donSuffix.findAll(text)) {
+            val pre = letters(m.groupValues[1])
+            val n = digits(m.groupValues[2]) ?: continue
+            val tail = m.groupValues[3].uppercase()
+            if (pre in setOf("OP", "ST") && tail !in setOf("G", "A", "B", "MG", "BGY")) continue
+            consider(CtCode((pre + n).lowercase(), "$pre-$n$tail", don = true))
+        }
+        if (donMarker.containsMatchIn(text)) {
+            for (m in donSetOnly.findAll(text)) {
+                val pre = letters(m.groupValues[1])
+                val n = digits(m.groupValues[2]) ?: continue
+                consider(CtCode((pre + n).lowercase(), "$pre-$n", don = true))
+            }
+        }
+        return best
     }
 
     /** Set codes CardTrader uses for Riftbound (lowercase). */

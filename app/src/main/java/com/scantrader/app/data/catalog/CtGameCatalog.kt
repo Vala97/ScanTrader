@@ -69,7 +69,7 @@ class CtGameCatalog(
         val cached = read<CtBlueprint>(name)
         if (cached != null && cached.items.isNotEmpty() && now() - cached.at < MAX_AGE_MS) return cached.items.also { prints[exp.id] = it }
         if (token()?.isBlank() != false) { if (cached != null) return cached.items.also { prints[exp.id] = it }; needToken() }
-        val list = api.blueprints(exp.id).filter { collector(it).isNotEmpty() }
+        val list = api.blueprints(exp.id).filter { collector(it).isNotEmpty() || isDonName(it.name) }
         write(name, Stored(now(), list))
         prints[exp.id] = list
         return list
@@ -95,15 +95,20 @@ class CtGameCatalog(
     private suspend fun lookup(parsed: ParsedCardText): List<IdentifiedCard> {
         val code = parsed.setCode?.takeIf { it.isNotBlank() } ?: return emptyList()
         val number = parsed.collectorNumber?.takeIf { it.isNotBlank() } ?: return emptyList()
+        if (game == Game.ONE_PIECE && isDonQuery(number)) return lookupDon(code, number)
         val exps = loadExpansions()
         // l'espansione dal codice (senza punteggiatura: eb-01 = EB01), poi le sue versioni speciali (op02p, fb02p)
         val main = exps.filter { key(it.code) == key(code) }
         // Yu-Gi-Oh!: CardTrader a volte allunga il codice (YGLD -> ygld-2020)
         val slack = if (game == Game.YUGIOH) 8 else 3
         val extra = exps.filter { e -> main.none { it.id == e.id } && key(e.code).startsWith(key(code)) && key(e.code).length <= key(code).length + slack }
+        // EB-01, EB-02, EB-03 e EB-05 hanno le single nella propria espansione.
+        // EB-04 su CardTrader è solo sigillato: 011-041 stanno in OP-14, il resto in OP-15.
+        val homeKeys = if (game == Game.ONE_PIECE) printedHomes(code, number).map(::key).toSet() else emptySet()
+        val hosted = exps.filter { key(it.code) in homeKeys && main.none { m -> m.id == it.id } && extra.none { m -> m.id == it.id } }
         val wantBase = base(number)
         val out = mutableListOf<Pair<CtExpansion, CtBlueprint>>()
-        for (e in main + extra) for (b in loadPrints(e)) {
+        for (e in main + extra + hosted) for (b in loadPrints(e)) {
             val n = collector(b)
             if (n.equals(number, ignoreCase = true) || base(n) == wantBase) out += e to b
         }
@@ -119,6 +124,30 @@ class CtGameCatalog(
         val ordered = exact + narrowed.filter { it !in exact }
         // con piu' versioni il numero esatto (senza suffisso: la versione normale) resta il primo proposto
         return ordered.map { (e, b) -> b.toIdentified(e, if (narrowed.size > 1 && (e to b) in exact) CHOOSE_SCORE + 0.01f else score) }
+    }
+
+    /**
+     * DON!!: lo stesso set ne ha tanti (normale, gold, personaggio, maid, double pack) e ognuno ha il suo prezzo.
+     * `OP-05` / `EB-05` / `EB-03` restituiscono tutti i tipi di quel set; `EB-03-NAMI` solo Nami e la sua gold.
+     */
+    private suspend fun lookupDon(code: String, number: String): List<IdentifiedCard> {
+        if (number.equals("DON", ignoreCase = true)) return emptyList()
+        val exps = loadExpansions()
+        val homeKeys = donHomes(code, number).map(::key).toSet()
+        val main = exps.filter { key(it.code) == key(code) }
+        val extra = exps.filter { e -> main.none { it.id == e.id } && key(e.code) in homeKeys }
+        val out = mutableListOf<Pair<CtExpansion, CtBlueprint>>()
+        for (e in main + extra) for (b in loadPrints(e)) {
+            if (!isDonName(b.name)) continue
+            if (donCollectorMatches(collector(b), number)) out += e to b
+        }
+        if (out.isEmpty()) return emptyList()
+        val exact = out.filter { (_, b) -> key(collector(b)) == key(number) }
+        val score = if (out.size == 1) EXACT_SCORE else CHOOSE_SCORE
+        val ordered = exact + out.filter { it !in exact }
+        return ordered.map { (e, b) ->
+            b.toIdentified(e, if (out.size > 1 && (e to b) in exact) CHOOSE_SCORE + 0.01f else score)
+        }
     }
 
     /** Ricerca per nome nelle espansioni gia' scaricate di questo gioco (Cerca per nome della conferma). */
@@ -159,6 +188,75 @@ class CtGameCatalog(
 
         /** Gioco dell'app -> id del gioco su CardTrader. */
         val GAME_IDS = mapOf(Game.ONE_PIECE to 15, Game.DRAGON_BALL to 9, Game.YUGIOH to 4, Game.UNION_ARENA to 21)
+
+        /** `DON!!` e `Don!!`: le carte personaggio (Donquixote, Gordon) non lo sono. */
+        fun isDonName(name: String?): Boolean {
+            val head = name?.substringBefore('(')?.trim().orEmpty()
+            return head.isNotEmpty() && key(head) == "don"
+        }
+
+        /** Numero letto che non è una single (`OP02-013`): è una DON!!. */
+        fun isDonQuery(number: String): Boolean {
+            val n = number.trim()
+            if (n.equals("DON", ignoreCase = true)) return true
+            if (Regex("""^(OP|ST|EB|PRB)\d{2}-\d{3}[A-Za-z0-9]*$""", RegexOption.IGNORE_CASE).matches(n.replace(" ", ""))) return false
+            return Regex("""^(PRB|DP|DF|TS|OP|ST|EB)[-A-Za-z0-9]*$""", RegexOption.IGNORE_CASE).matches(n)
+        }
+
+        /**
+         * Stesso tipo, oppure tutti i tipi del set quando il codice letto è solo il set (`EB-05` → `EB-05g`, `EB-05m`).
+         * `EB-03-NAMI` prende anche la gold `EB-03-NAMI-G`, non Robin.
+         */
+        fun donCollectorMatches(collector: String, wanted: String): Boolean {
+            val c = key(collector)
+            val w = key(wanted)
+            if (c.isEmpty() || w.isEmpty()) return false
+            if (c == w || c == w + "g") return true
+            val setOnly = Regex("""^(op|st|eb|dp|df|ts)\d{2}$""").matches(w)
+            return setOnly && c.startsWith(w)
+        }
+
+        /**
+         * Dove sta una DON!! quando il codice stampato non è l'espansione
+         * (`DP-09` in OP-14, `DP-01` nelle promo, `PRB-LUFFY` in PRB-01/02, `OP-11` nei championship).
+         */
+        fun donHomes(setCode: String, number: String): List<String> {
+            val k = key(if (number.equals("DON", ignoreCase = true)) setCode else number)
+            val vol = Regex("""^(?:dp|df|ts)(\d{2})""").find(k)?.groupValues?.get(1)?.toIntOrNull()
+            if (vol != null) {
+                return when (vol) {
+                    1, 2 -> listOf("oppr")
+                    3 -> if (k.startsWith("df")) listOf("oppr") else listOf("op06")
+                    4 -> listOf("op07")
+                    5 -> listOf("op08")
+                    7 -> listOf("op11")
+                    8 -> listOf("op12", "op12p")
+                    9 -> listOf("op14", "op14p")
+                    10 -> listOf("op15", "op15p")
+                    11 -> listOf("op16", "op16p")
+                    12 -> listOf("op17", "op17p")
+                    else -> listOf("oppr")
+                }
+            }
+            if (k.startsWith("prb") || key(setCode) == "prb") return listOf("prb01", "prb02")
+            if (k == "op10") return listOf("oppr", "op10")
+            if (k == "op11") return listOf("op-chp", "op11")
+            return emptyList()
+        }
+
+        /**
+         * Dove CardTrader ha messo le single quando il codice stampato non è l'espansione.
+         * EB04-011…041 (Igaram, Bluegrass) sono in OP-14; EB04-001…010 e EB04-042…061 in OP-15.
+         */
+        fun printedHomes(setCode: String, collectorNumber: String): List<String> {
+            if (key(setCode) != "eb04") return emptyList()
+            val slot = Regex("""(\d{3})""").find(collectorNumber)?.groupValues?.get(1)?.toIntOrNull()
+            return when {
+                slot == null -> listOf("op14", "op15")
+                slot in 11..41 -> listOf("op14", "op14p")
+                else -> listOf("op15", "op15p")
+            }
+        }
 
         fun key(s: String): String = java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
             .replace(Regex("""\p{M}+"""), "").lowercase(Locale.ROOT).replace(Regex("""[^a-z0-9]"""), "")
