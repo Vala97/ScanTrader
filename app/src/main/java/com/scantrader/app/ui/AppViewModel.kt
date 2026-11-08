@@ -376,6 +376,89 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         app.pokemonCatalogs.delete(id)
     }
 
+    val backupMessage = MutableStateFlow<String?>(null)
+    val pendingBackup = MutableStateFlow<com.scantrader.app.data.export.CollectionBackup?>(null)
+    val backupBusy = MutableStateFlow(false)
+
+    fun clearBackupMessage() {
+        backupMessage.value = null
+    }
+
+    fun dismissPendingBackup() {
+        pendingBackup.value = null
+    }
+
+    fun exportCollectionsBackup(context: android.content.Context) {
+        if (backupBusy.value) return
+        viewModelScope.launch {
+            backupBusy.value = true
+            try {
+                val mirrorId = app.tracker.mirrorId
+                val exclude = setOfNotNull(mirrorId)
+                val backup = withContext(Dispatchers.IO) {
+                    app.repository.exportBackup(exclude)
+                }
+                if (backup.collections.isEmpty()) {
+                    backupMessage.value = "Nessuna collezione da esportare."
+                    return@launch
+                }
+                withContext(Dispatchers.Main) {
+                    com.scantrader.app.data.export.CollectionBackupIO.share(context, backup)
+                }
+                backupMessage.value = "Backup pronto · ${backup.collections.size} collezioni"
+            } catch (t: Throwable) {
+                backupMessage.value = t.message ?: "Esportazione non riuscita."
+            } finally {
+                backupBusy.value = false
+            }
+        }
+    }
+
+    fun prepareCollectionsImport(context: android.content.Context, uri: android.net.Uri) {
+        if (backupBusy.value) return
+        viewModelScope.launch {
+            backupBusy.value = true
+            try {
+                val backup = withContext(Dispatchers.IO) {
+                    com.scantrader.app.data.export.CollectionBackupIO.read(context, uri)
+                }
+                if (backup.collections.isEmpty()) {
+                    backupMessage.value = "Il backup non contiene collezioni."
+                    pendingBackup.value = null
+                } else {
+                    pendingBackup.value = backup
+                }
+            } catch (t: Throwable) {
+                pendingBackup.value = null
+                backupMessage.value = t.message ?: "Importazione non riuscita."
+            } finally {
+                backupBusy.value = false
+            }
+        }
+    }
+
+    fun confirmCollectionsImport(mode: com.scantrader.app.data.export.CollectionImportMode) {
+        val backup = pendingBackup.value ?: return
+        if (backupBusy.value) return
+        viewModelScope.launch {
+            backupBusy.value = true
+            pendingBackup.value = null
+            try {
+                val mirrorId = app.tracker.mirrorId
+                val exclude = setOfNotNull(mirrorId)
+                val result = withContext(Dispatchers.IO) {
+                    app.repository.importBackup(backup, mode, exclude)
+                }
+                backupMessage.value =
+                    "Importate ${result.collections} collezioni · ${result.cards} carte"
+            } catch (t: Throwable) {
+                backupMessage.value = t.message ?: "Importazione non riuscita."
+            } finally {
+                backupBusy.value = false
+            }
+        }
+    }
+
     companion object {
         fun factory(app: ScanTraderApp) = factoryOf { SettingsViewModel(app) }
     }

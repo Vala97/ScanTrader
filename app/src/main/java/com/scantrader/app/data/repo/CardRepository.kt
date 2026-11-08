@@ -9,6 +9,8 @@ import com.scantrader.app.data.db.CollectionEntity
 import com.scantrader.app.data.db.StockKey
 import com.scantrader.app.data.db.StockMerge
 import com.scantrader.app.data.db.stamped
+import com.scantrader.app.data.export.CollectionBackup
+import com.scantrader.app.data.export.CollectionImportMode
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
@@ -16,6 +18,8 @@ import com.scantrader.app.data.model.IdentifiedCard
 import com.scantrader.app.scan.CardFinish
 
 enum class RenameCollection { Saved, Empty, Duplicate }
+
+data class CollectionImportResult(val collections: Int, val cards: Int)
 
 class CardRepository(private val db: AppDatabase) {
     fun collections() = db.collections().observeCollections()
@@ -206,6 +210,57 @@ class CardRepository(private val db: AppDatabase) {
 
     suspend fun deleteCard(entry: CardEntryEntity) {
         db.cards().delete(entry)
+    }
+
+    /** Full ScanTrader backup of user collections (exclude mirror / other ids). */
+    suspend fun exportBackup(excludeCollectionIds: Set<Long> = emptySet()): CollectionBackup {
+        val collections = db.collections().getAll().filter { it.id !in excludeCollectionIds }
+        val cardsByCollection = collections.associate { collection ->
+            collection.id to db.cards().listByCollection(collection.id)
+        }
+        return CollectionBackup.fromEntities(collections, cardsByCollection)
+    }
+
+    /**
+     * Restores a backup. [Add] creates new collections beside the current ones.
+     * [Replace] deletes every collection except [excludeFromReplaceIds], then inserts.
+     */
+    suspend fun importBackup(
+        backup: CollectionBackup,
+        mode: CollectionImportMode,
+        excludeFromReplaceIds: Set<Long> = emptySet(),
+    ): CollectionImportResult = db.withTransaction {
+        if (mode == CollectionImportMode.Replace) {
+            for (collection in db.collections().getAll()) {
+                if (collection.id !in excludeFromReplaceIds) {
+                    db.collections().deleteById(collection.id)
+                }
+            }
+        }
+        var collectionCount = 0
+        var cardCount = 0
+        val taken = db.collections().getAll().map { it.name }.toMutableSet()
+        for (item in backup.collections) {
+            // Always uniquify against leftovers (e.g. Cardtrader mirror after Replace).
+            val name = CollectionBackup.uniqueImportName(
+                item.name.trim().ifBlank { "Collezione" },
+                taken,
+            )
+            taken += name
+            val collectionId = db.collections().insert(
+                CollectionEntity(
+                    name = name,
+                    createdAt = item.createdAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
+                ),
+            )
+            collectionCount++
+            for (card in item.cards) {
+                db.cards().insert(card.toEntity(collectionId))
+                cardCount++
+            }
+        }
+        ensureDefaultCollection()
+        CollectionImportResult(collections = collectionCount, cards = cardCount)
     }
 
     /**

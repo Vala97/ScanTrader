@@ -28,6 +28,9 @@ interface CollectionDao {
     @Query("SELECT * FROM collections ORDER BY createdAt DESC")
     fun observeAll(): Flow<List<CollectionEntity>>
 
+    @Query("SELECT * FROM collections ORDER BY createdAt DESC")
+    suspend fun getAll(): List<CollectionEntity>
+
     @Query("SELECT COUNT(*) FROM collections")
     suspend fun count(): Int
 
@@ -48,6 +51,9 @@ interface CollectionDao {
 interface CardEntryDao {
     @Query("SELECT * FROM card_entries WHERE collectionId = :collectionId ORDER BY createdAt DESC")
     fun observeByCollection(collectionId: Long): Flow<List<CardEntryEntity>>
+
+    @Query("SELECT * FROM card_entries WHERE collectionId = :collectionId ORDER BY createdAt DESC")
+    suspend fun listByCollection(collectionId: Long): List<CardEntryEntity>
 
     @Query(
         """
