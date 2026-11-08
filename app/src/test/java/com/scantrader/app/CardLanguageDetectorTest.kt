@@ -281,6 +281,17 @@ class CardLanguageDetectorTest {
     }
 
     @Test
+    fun inventoryLanguageAbbr() {
+        assertEquals("ENG", CardLanguage.ENGLISH.abbr())
+        assertEquals("ITA", CardLanguage.ITALIAN.abbr())
+        assertEquals("FRA", CardLanguage.FRENCH.abbr())
+        assertEquals("ITA", CardLanguage.abbrOf("Italian"))
+        assertEquals("ENG", CardLanguage.abbrOf("English"))
+        assertEquals("JAP", CardLanguage.abbrOf("ja"))
+        assertEquals("CHS", CardLanguage.abbrOf("zh-cn"))
+    }
+
+    @Test
     fun supporterAiutoIsItalianWhenTheTitleDoesNotMatch() {
         val detection = CardLanguageDetector.explain(
             ocrName = "AIUtO",

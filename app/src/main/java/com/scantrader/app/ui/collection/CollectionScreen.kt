@@ -1,7 +1,10 @@
 package com.scantrader.app.ui.collection
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,10 +69,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.db.CardPrice
@@ -98,6 +104,7 @@ fun CollectionScreen(
     val context = LocalContext.current
     val title = collection?.name ?: "Collezione"
     var editingId by remember { mutableStateOf<Long?>(null) }
+    var previewId by remember { mutableStateOf<Long?>(null) }
     // giochi ed espansioni chiusi a mano (restano chiusi girando il telefono)
     var collapsed by rememberSaveable { mutableStateOf(setOf<String>()) }
     // "Manda al tracker": copie non ancora mandate (le carte salvate dopo il collegamento partono gia' da sole)
@@ -130,6 +137,7 @@ fun CollectionScreen(
     var renaming by rememberSaveable { mutableStateOf(false) }
     var renameError by remember { mutableStateOf<String?>(null) }
     val editing = cards.firstOrNull { it.id == editingId }
+    val preview = cards.firstOrNull { it.id == previewId }
     val sections = browser.result.sections
 
     Scaffold(
@@ -250,7 +258,11 @@ fun CollectionScreen(
                                 if ("s:${section.key}" in collapsed) return@forEach
                             }
                             items(section.cards, key = { it.id }, contentType = { _ -> "card" }) { card ->
-                                GalleryTile(card = card, onClick = { editingId = card.id })
+                                GalleryTile(
+                                    card = card,
+                                    onClick = { previewId = card.id },
+                                    onLongClick = { editingId = card.id },
+                                )
                             }
                         }
                     }
@@ -266,6 +278,7 @@ fun CollectionScreen(
         ) {
             CardEditSheet(
                 card = editing,
+                onPreview = { previewId = editing.id },
                 onQuantity = { next ->
                     viewModel.setQuantity(editing, next)
                     if (next <= 0) editingId = null
@@ -281,6 +294,18 @@ fun CollectionScreen(
                 },
             )
         }
+    }
+
+    // Sopra lo sheet di modifica: tap sulla miniatura o sulla tile apre l'anteprima a tutto schermo.
+    if (preview != null) {
+        CardPreviewDialog(
+            card = preview,
+            onDismiss = { previewId = null },
+            onEdit = {
+                editingId = preview.id
+                previewId = null
+            },
+        )
     }
 
     if (renaming && collection != null) {
@@ -562,18 +587,22 @@ private fun SectionHeader(section: CollectionSection, open: Boolean = true, onTo
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GalleryTile(
     card: CardEntryEntity,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     val price = tilePrice(card)
     val setCode = card.setCode.trim().uppercase()
+    val number = card.collectorNumber.trim()
+    val langAbbr = CardLanguage.abbrOf(card.language)
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         CardImage(
             url = card.imageUrl,
@@ -613,6 +642,36 @@ private fun GalleryTile(
                     maxLines = 1,
                 )
             }
+            if (number.isNotEmpty() || langAbbr.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (number.isNotEmpty()) {
+                        Text(
+                            text = number,
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    if (langAbbr.isNotEmpty()) {
+                        Text(
+                            text = langAbbr,
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                        )
+                    }
+                }
+            }
             if (price != null) {
                 Text(
                     text = price,
@@ -621,6 +680,95 @@ private fun GalleryTile(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardPreviewDialog(
+    card: CardEntryEntity,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    val number = card.collectorNumber.trim()
+    val langAbbr = CardLanguage.abbrOf(card.language)
+    val meta = buildList {
+        val set = card.setCode.trim().uppercase()
+        if (set.isNotEmpty()) add(set)
+        if (number.isNotEmpty()) add(number)
+        if (langAbbr.isNotEmpty()) add(langAbbr)
+    }.joinToString(" · ")
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.94f))
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onDismiss,
+                ),
+        ) {
+            CardImage(
+                url = card.imageUrl,
+                contentDescription = card.name,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 72.dp)
+                    .aspectRatio(63f / 88f)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = {},
+                    ),
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "Modifica", tint = Color.White)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Chiudi", tint = Color.White)
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
+                        ),
+                    )
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
+            ) {
+                Text(
+                    text = card.name,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (meta.isNotEmpty()) {
+                    Text(
+                        text = meta,
+                        color = Color.White.copy(alpha = 0.85f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
@@ -643,6 +791,7 @@ private fun tilePrice(card: CardEntryEntity): String? {
 @Composable
 private fun CardEditSheet(
     card: CardEntryEntity,
+    onPreview: () -> Unit,
     onQuantity: (Int) -> Unit,
     onCondition: (CardCondition) -> Unit,
     onLanguage: (CardLanguage) -> Unit,
@@ -653,8 +802,7 @@ private fun CardEditSheet(
 ) {
     val condition = CardCondition.entries.firstOrNull { it.csvValue == card.condition }
         ?: CardCondition.NEAR_MINT
-    val language = CardLanguage.entries.firstOrNull { it.csvValue == card.language }
-        ?: CardLanguage.ENGLISH
+    val language = CardLanguage.fromCsvValue(card.language) ?: CardLanguage.ENGLISH
     val automatic = CardPrice.automaticRaw(card)
     var priceText by remember(card.id, card.manualPriceEur, automatic) {
         mutableStateOf(card.manualPriceEur ?: automatic.orEmpty())
@@ -671,8 +819,10 @@ private fun CardEditSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             CardImage(
                 url = card.imageUrl,
-                contentDescription = null,
-                modifier = Modifier.size(84.dp, 118.dp),
+                contentDescription = "Apri a schermo intero",
+                modifier = Modifier
+                    .size(84.dp, 118.dp)
+                    .clickable(onClick = onPreview),
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
@@ -681,7 +831,7 @@ private fun CardEditSheet(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "${card.setCode.uppercase()} · ${card.collectorNumber}",
+                    text = "${card.setCode.uppercase()} · ${card.collectorNumber} · ${language.abbr()}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
