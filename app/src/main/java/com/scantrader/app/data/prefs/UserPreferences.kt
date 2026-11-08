@@ -31,7 +31,7 @@ class UserPreferences(private val context: Context) {
                 ?: prefs[CAMERA_ID]?.takeIf { it.isNotBlank() }?.let { "cam:$it" },
             zoomRatio = prefs[ZOOM_RATIO]?.takeIf { it.isFinite() && it > 0f } ?: 1f,
             autoSaveWaitSeconds = prefs[AUTO_SAVE_WAIT_SECONDS]
-                ?.takeIf { it in AUTO_SAVE_WAIT_OPTIONS }
+                ?.takeIf { it in AUTO_SAVE_WAIT_RANGE }
                 ?: 0,
             detectCardLanguage = prefs[DETECT_LANGUAGE] ?: true,
             autoSaveConfidencePercent = prefs[AUTO_SAVE_CONFIDENCE]
@@ -70,7 +70,7 @@ class UserPreferences(private val context: Context) {
     }
 
     suspend fun setAutoSaveWaitSeconds(seconds: Int) {
-        val safe = seconds.takeIf { it in AUTO_SAVE_WAIT_OPTIONS } ?: 0
+        val safe = seconds.coerceIn(AUTO_SAVE_WAIT_RANGE)
         context.dataStore.edit { it[AUTO_SAVE_WAIT_SECONDS] = safe }
     }
 
@@ -170,8 +170,8 @@ class UserPreferences(private val context: Context) {
     }
 }
 
-/** Allowed auto-save wait values (0 = disabled). */
-val AUTO_SAVE_WAIT_OPTIONS = listOf(0, 2, 3, 5, 8, 10)
+/** Inclusive seconds for auto-save wait (0 = disabled). */
+val AUTO_SAVE_WAIT_RANGE = 0..60
 
 /** Inclusive percent range for the autosave confidence slider. */
 val AUTO_SAVE_CONFIDENCE_RANGE = 50..99

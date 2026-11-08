@@ -35,8 +35,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,7 +47,6 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import com.scantrader.app.R
 import com.scantrader.app.data.model.CardCondition
-import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensOption
 import com.scantrader.app.ui.NeuralPackPrompt
@@ -112,35 +113,20 @@ fun SettingsScreen(
             SettingsSection(title = "Impostazioni generali") {
                 TextButton(onClick = onReviewIntro) { Text("Rivedi introduzione") }
                 SimpleDropdown(
-                    label = "Lingua",
-                    options = CardLanguage.entries.toList(),
-                    selected = defaults.language,
-                    onSelect = viewModel::setLanguage,
-                    labelOf = { it.label },
-                )
-                SimpleDropdown(
                     label = "Condizione",
                     options = CardCondition.entries.toList(),
                     selected = defaults.condition,
                     onSelect = viewModel::setCondition,
                     labelOf = { it.label },
                 )
-                val waitOptions = com.scantrader.app.data.prefs.AUTO_SAVE_WAIT_OPTIONS
-                val waitSelected = defaults.autoSaveWaitSeconds
-                    .takeIf { it in waitOptions } ?: 0
-                SimpleDropdown(
-                    label = "Auto-Scan · attesa salvataggio",
-                    options = waitOptions,
-                    selected = waitSelected,
-                    onSelect = viewModel::setAutoSaveWaitSeconds,
-                    labelOf = { seconds ->
-                        if (seconds == 0) "Disattivato" else "Attivo · circa 0,8 s"
-                    },
+                AutoSaveWaitField(
+                    seconds = defaults.autoSaveWaitSeconds,
+                    onSeconds = viewModel::setAutoSaveWaitSeconds,
                 )
                 Text(
                     "In auto-scan, se il riconoscimento supera la soglia scelta in Impostazioni scan " +
-                        "e non tocchi la carta, salva in collezione circa 0,8 secondi dopo la conferma. " +
-                        "Sotto la soglia resta in conferma. Zero disattiva il salvataggio automatico.",
+                        "e non tocchi la carta, salva in collezione dopo i secondi indicati. " +
+                        "Sotto la soglia resta in conferma. 0 disattiva il salvataggio automatico.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -394,6 +380,36 @@ fun SettingsScreen(
         onLater = viewModel::dismissAppUpdate,
         onInstall = viewModel::installAppUpdate,
         onOpenSettings = viewModel::openAppUpdateSettings,
+    )
+}
+
+@Composable
+private fun AutoSaveWaitField(
+    seconds: Int,
+    onSeconds: (Int) -> Unit,
+) {
+    val range = com.scantrader.app.data.prefs.AUTO_SAVE_WAIT_RANGE
+    var draft by remember(seconds) { mutableStateOf(seconds.toString()) }
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { raw ->
+            val digits = raw.filter { it.isDigit() }.take(2)
+            draft = digits
+            if (digits.isEmpty()) {
+                onSeconds(0)
+            } else {
+                digits.toIntOrNull()?.let { onSeconds(it.coerceIn(range)) }
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Auto-Scan · attesa salvataggio (secondi)") },
+        supportingText = {
+            Text(
+                if (seconds == 0) "Disattivato" else "Attivo · $seconds s",
+            )
+        },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
     )
 }
 

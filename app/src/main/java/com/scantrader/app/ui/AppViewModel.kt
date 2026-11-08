@@ -273,10 +273,6 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         lensOptions.value = fresh
     }
 
-    fun setLanguage(language: CardLanguage) {
-        viewModelScope.launch { app.prefs.setLanguage(language) }
-    }
-
     fun setCondition(condition: CardCondition) {
         viewModelScope.launch { app.prefs.setCondition(condition) }
     }

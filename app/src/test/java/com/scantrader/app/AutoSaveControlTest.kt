@@ -21,8 +21,7 @@ class AutoSaveControlTest {
             )
             assertFalse(ui.armed)
             assertFalse(ui.countdownVisible)
-            assertEquals(AutoSaveControl.CANCELLED_LABEL, ui.statusLabel)
-            assertEquals("Salvataggio automatico annullato", ui.statusLabel)
+            assertNull(ui.statusLabel)
             assertEquals(AutoSaveControl.MANUAL_SAVE_LABEL, ui.saveButtonLabel)
             assertEquals("Salva in collezione", ui.saveButtonLabel)
         }

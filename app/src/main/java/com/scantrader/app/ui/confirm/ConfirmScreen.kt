@@ -200,16 +200,17 @@ fun ConfirmScreen(
             language = viewModel.sessionLanguage ?: defaults.language
         }
     }
-    val languageReadyKey = remember { mutableStateOf<String?>(null) }
+    val languageDetectUi = remember { mutableStateOf<LanguageDetectUi?>(null) }
     val shownKey = selected?.identityKey()
-    val languageReady = languageTouched ||
-        !defaults.detectCardLanguage ||
-        (shownKey != null && languageReadyKey.value == shownKey)
     LaunchedEffect(selected?.identityKey(), defaults.detectCardLanguage) {
-        if (languageTouched || !defaults.detectCardLanguage) return@LaunchedEffect
+        if (languageTouched || !defaults.detectCardLanguage) {
+            languageDetectUi.value = null
+            return@LaunchedEffect
+        }
         val card = selected ?: return@LaunchedEffect
         val locked = viewModel.autoMatchCardKey
         if (locked != null && card.identityKey() != locked) return@LaunchedEffect
+        languageDetectUi.value = LanguageDetectUi(LanguageDetectStatus.Analyzing)
         val detected = viewModel.detectCardLanguage(card)
         autoSaveCancelledState.value = AutoSaveControl.onProgrammaticUpdate(
             autoSaveCancelledState.value,
@@ -220,18 +221,21 @@ fun ConfirmScreen(
             detected = detected,
             lastChosen = viewModel.sessionLanguage ?: defaults.language,
         )
-        languageReadyKey.value = card.identityKey()
+        languageDetectUi.value = LanguageDetectUi.fromDetection(detected)
     }
     val liveLanguage by viewModel.liveLanguage.collectAsStateWithLifecycle()
     LaunchedEffect(liveLanguage, shownKey) {
         if (languageTouched || !defaults.detectCardLanguage) return@LaunchedEffect
         val late = liveLanguage ?: return@LaunchedEffect
-        if (language == late) return@LaunchedEffect
+        if (language == late && languageDetectUi.value?.status == LanguageDetectStatus.Recognized) {
+            return@LaunchedEffect
+        }
         autoSaveCancelledState.value = AutoSaveControl.onProgrammaticUpdate(
             autoSaveCancelledState.value,
             AutoSaveControl.Program.DETECTED_LANGUAGE,
         )
         language = late
+        languageDetectUi.value = LanguageDetectUi(LanguageDetectStatus.Recognized, late)
     }
     LaunchedEffect(selected?.identityKey(), language, condition, foil) {
         val card = selected ?: return@LaunchedEffect
@@ -274,8 +278,6 @@ fun ConfirmScreen(
     val autoSaveJob = remember { mutableStateOf<Job?>(null) }
     val scheduledMatch = remember { mutableStateOf<String?>(null) }
     val snapshotState = remember { mutableStateOf<IdentifiedCard?>(null) }
-    val languageWaitStart = remember { mutableStateOf(0L) }
-    val languageWaitKey = remember { mutableStateOf<String?>(null) }
     SideEffect {
         val current = selectedState.value ?: viewModel.pendingAutoSave
         if (current != null && autoSaveArmed) {
@@ -284,15 +286,8 @@ fun ConfirmScreen(
         val card = snapshotState.value
         val wait = defaults.autoSaveWaitSeconds
         val key = card?.identityKey()
-        if (key != languageWaitKey.value) {
-            languageWaitKey.value = key
-            languageWaitStart.value = System.currentTimeMillis()
-        }
-        val waited = System.currentTimeMillis() - languageWaitStart.value
-        if (!AutoSaveSchedule.readyToCount(defaults.detectCardLanguage, languageReady, waited)) {
-            return@SideEffect
-        }
         // Armed once is enough. A later frame may clear the gate; the timeout still saves.
+        // Language detection runs in parallel and does not delay the countdown.
         if (autoSaveCancelled) return@SideEffect
         if (card == null || key == null || collectionId == null || wait <= 0) return@SideEffect
         if (snapshotState.value?.identityKey() != key) return@SideEffect
@@ -301,14 +296,14 @@ fun ConfirmScreen(
         scheduledMatch.value = claim.activeKey
         autoSaveJob.value?.cancel()
         autoSaveJob.value = autoSaveScope.launch {
-            val pause = AutoSaveSchedule.POST_CONFIRM_DELAY_MS
+            val pause = AutoSaveSchedule.postConfirmDelayMs(wait)
             ScanDebug.d("autosave: scheduled ${pause}ms")
-            secondsLeftState.intValue = 1
             var leftMs = pause
             while (leftMs > 0) {
                 if (autoSaveCancelledState.value) return@launch
                 val shownNow = selectedState.value?.identityKey()
                 if (shownNow != null && shownNow != key) return@launch
+                secondsLeftState.intValue = ((leftMs + 999L) / 1000L).toInt().coerceAtLeast(1)
                 val slice = minOf(100L, leftMs)
                 delay(slice)
                 leftMs -= slice
@@ -428,6 +423,15 @@ fun ConfirmScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
+                        if (!languageTouched) {
+                            languageDetectUi.value?.let { detect ->
+                                Text(
+                                    detect.label(),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                         CardImage(
                             url = current.imageUrl,
                             contentDescription = current.name,
@@ -496,6 +500,7 @@ fun ConfirmScreen(
                         onSelect = {
                             cancelAutoSave(AutoSaveControl.Gesture.LANGUAGE)
                             languageTouched = true
+                            languageDetectUi.value = null
                             language = it
                             viewModel.setLanguage(it)
                         },

@@ -8,10 +8,11 @@ object AutoSaveSchedule {
     /** Detection may run longer than this; the countdown starts anyway. */
     const val LANGUAGE_WAIT_CAP_MS = 2_500L
 
-    /** How long auto-save waits after the card is confirmed and the language wait ended. */
-    const val POST_CONFIRM_DELAY_MS = 800L
-
     data class Claim(val activeKey: String, val start: Boolean)
+
+    /** Delay after confirm/language wait. [waitSeconds] ≤ 0 means auto-save is off. */
+    fun postConfirmDelayMs(waitSeconds: Int): Long =
+        waitSeconds.coerceAtLeast(0) * 1_000L
 
     /**
      * The countdown waits until language detection has finished for this card.
