@@ -260,8 +260,8 @@ fun CollectionScreen(
                             items(section.cards, key = { it.id }, contentType = { _ -> "card" }) { card ->
                                 GalleryTile(
                                     card = card,
-                                    onClick = { previewId = card.id },
-                                    onLongClick = { editingId = card.id },
+                                    onClick = { editingId = card.id },
+                                    onLongClick = { previewId = card.id },
                                 )
                             }
                         }
@@ -287,6 +287,7 @@ fun CollectionScreen(
                 onLanguage = { viewModel.setLanguage(editing, it) },
                 onFoil = { viewModel.setFoil(editing, it) },
                 onManualPrice = { raw, onDone -> viewModel.setManualPrice(editing, raw, onDone) },
+                onRefreshPrice = { onDone -> viewModel.refreshAutomaticPrice(editing, onDone) },
                 onRestorePrice = { viewModel.setManualPrice(editing, null) },
                 onDelete = {
                     viewModel.delete(editing)
@@ -797,6 +798,7 @@ private fun CardEditSheet(
     onLanguage: (CardLanguage) -> Unit,
     onFoil: (Boolean) -> Unit,
     onManualPrice: (String, (Boolean) -> Unit) -> Unit,
+    onRefreshPrice: ((Boolean) -> Unit) -> Unit,
     onRestorePrice: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -804,10 +806,12 @@ private fun CardEditSheet(
         ?: CardCondition.NEAR_MINT
     val language = CardLanguage.fromCsvValue(card.language) ?: CardLanguage.ENGLISH
     val automatic = CardPrice.automaticRaw(card)
+    val automaticRef = CardPrice.automaticReference(card)
     var priceText by remember(card.id, card.manualPriceEur, automatic) {
         mutableStateOf(card.manualPriceEur ?: automatic.orEmpty())
     }
     var priceError by remember(card.id) { mutableStateOf<String?>(null) }
+    var refreshingPrice by remember(card.id) { mutableStateOf(false) }
     val pokemon = card.game == Game.POKEMON
     Column(
         modifier = Modifier
@@ -891,22 +895,48 @@ private fun CardEditSheet(
             supportingText = {
                 val hint = when {
                     priceError != null -> priceError
-                    card.manualPriceEur != null -> "Prezzo manuale. L’automatico resta ${automatic ?: "n/d"}."
-                    else -> "Prezzo automatico. Un valore qui lo sostituisce anche nell’export."
+                    card.manualPriceEur != null ->
+                        "Prezzo manuale. L’automatico resta ${automaticRef ?: "n/d"}."
+                    automaticRef != null ->
+                        "Prezzo automatico: $automaticRef. Un valore qui lo sostituisce anche nell’export."
+                    else ->
+                        "Nessun prezzo automatico. Un valore qui vale anche per l’export."
                 }
                 Text(hint.orEmpty())
             },
             modifier = Modifier.fillMaxWidth(),
         )
-        TextButton(
-            onClick = {
-                onManualPrice(priceText) { saved ->
-                    priceError = if (saved) null else "Inserisci un prezzo maggiore di zero."
-                }
-            },
+        Row(
             modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Salva prezzo")
+            TextButton(
+                onClick = {
+                    onManualPrice(priceText) { saved ->
+                        priceError = if (saved) null else "Inserisci un prezzo maggiore di zero."
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Salva prezzo")
+            }
+            TextButton(
+                onClick = {
+                    if (refreshingPrice) return@TextButton
+                    refreshingPrice = true
+                    priceError = null
+                    onRefreshPrice { ok ->
+                        refreshingPrice = false
+                        if (!ok) {
+                            priceError = "Prezzo di mercato non trovato."
+                        }
+                    }
+                },
+                enabled = !refreshingPrice,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (refreshingPrice) "Aggiorno…" else "Aggiorna prezzo")
+            }
         }
         if (card.manualPriceEur != null) {
             TextButton(onClick = onRestorePrice, modifier = Modifier.fillMaxWidth()) {

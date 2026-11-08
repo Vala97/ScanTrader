@@ -249,10 +249,72 @@ class CollectionViewModel(
         viewModelScope.launch { onDone(app.repository.setManualPrice(entry, raw)) }
     }
 
+    /**
+     * Re-quotes the automatic EUR for this row (language / condition / foil as stored)
+     * and writes it back. Manual override is left untouched.
+     */
+    fun refreshAutomaticPrice(entry: CardEntryEntity, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val language = CardLanguage.fromCsvValue(entry.language) ?: CardLanguage.ENGLISH
+            val condition = CardCondition.entries.firstOrNull { it.csvValue == entry.condition }
+                ?: CardCondition.NEAR_MINT
+            val priced = com.scantrader.app.data.catalog.MarketPrice.propose(
+                card = entry.toIdentifiedForPrice(),
+                language = language,
+                condition = condition,
+                foil = entry.foil,
+                hasCardTraderToken = app.secrets.hasCardTraderToken(),
+                cardTraderPrices = app.cardTraderPrices,
+                scryfallEur = app.scryfallEur,
+                englishScryfallId = { set, number ->
+                    runCatching { app.scryfall.cardBySetAndNumber(set, number).id }.getOrNull()
+                },
+            )
+            val pokemon = entry.game == Game.POKEMON
+            val updated = entry.copy(
+                priceEur = priced.priceEur,
+                priceEurFoil = if (pokemon) null else priced.priceEurFoil,
+                priceUsd = priced.priceUsd,
+                priceUsdFoil = if (pokemon) null else priced.priceUsdFoil,
+                priceCurrency = priced.priceCurrency,
+                priceSource = priced.priceSource,
+            )
+            val wiped = com.scantrader.app.data.db.CardPrice.automaticRaw(updated) == null &&
+                com.scantrader.app.data.db.CardPrice.automaticRaw(entry) != null &&
+                priced.priceSource == null
+            if (wiped) {
+                onDone(false)
+                return@launch
+            }
+            app.repository.updateCard(updated)
+            onDone(com.scantrader.app.data.db.CardPrice.automaticRaw(updated) != null)
+        }
+    }
+
     companion object {
         fun factory(app: ScanTraderApp, id: Long) = factoryOf { CollectionViewModel(app, id) }
     }
 }
+
+private fun CardEntryEntity.toIdentifiedForPrice(): IdentifiedCard = IdentifiedCard(
+    game = game,
+    name = name,
+    setCode = setCode,
+    setName = setName,
+    collectorNumber = collectorNumber,
+    scryfallId = scryfallId,
+    tcgdexId = tcgdexId,
+    tcgplayerId = tcgplayerId,
+    imageUrl = imageUrl,
+    priceEur = priceEur,
+    priceEurFoil = priceEurFoil,
+    priceUsd = priceUsd,
+    priceUsdFoil = priceUsdFoil,
+    priceCurrency = priceCurrency,
+    priceSource = priceSource,
+    catalogName = catalogName,
+    catalogScryfallId = catalogScryfallId,
+)
 
 class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
     val defaults: StateFlow<ScanDefaults> =
@@ -2427,44 +2489,18 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         language: CardLanguage,
         condition: CardCondition,
         foil: Boolean,
-    ): IdentifiedCard {
-        if (card.game == Game.RIFTBOUND || card.ctBlueprintId != null) {
-            val market = runCatching { app.cardTraderPrices.quote(card, language, condition, foil) }.getOrNull()
-            return if (market != null) {
-                com.scantrader.app.data.catalog.ListingAverage.apply(card, market, foil)
-            } else {
-                com.scantrader.app.data.catalog.ListingAverage.unavailable(card)
-            }
-        }
-        if (card.game != Game.MTG) return card
-        if (app.secrets.hasCardTraderToken()) {
-            val englishId = if (card.setCode.isNotBlank() && card.collectorNumber.isNotBlank()) {
-                runCatching {
-                    app.scryfall.cardBySetAndNumber(card.setCode, card.collectorNumber).id
-                }.getOrNull()
-            } else {
-                null
-            }
-            val market = runCatching {
-                app.cardTraderPrices.quote(
-                    card,
-                    language,
-                    condition,
-                    foil,
-                    listOfNotNull(englishId),
-                )
-            }.getOrNull()
-            if (market != null) {
-                return com.scantrader.app.data.catalog.ListingAverage.apply(card, market, foil)
-            }
-        }
-        val quote = runCatching { app.scryfallEur.quote(card, foil) }.getOrNull()
-        return if (quote == null) {
-            card
-        } else {
-            com.scantrader.app.data.catalog.ListingAverage.apply(card, quote, foil)
-        }
-    }
+    ): IdentifiedCard = com.scantrader.app.data.catalog.MarketPrice.propose(
+        card = card,
+        language = language,
+        condition = condition,
+        foil = foil,
+        hasCardTraderToken = app.secrets.hasCardTraderToken(),
+        cardTraderPrices = app.cardTraderPrices,
+        scryfallEur = app.scryfallEur,
+        englishScryfallId = { set, number ->
+            runCatching { app.scryfall.cardBySetAndNumber(set, number).id }.getOrNull()
+        },
+    )
 
     fun setCondition(condition: CardCondition) {
         app.scanSession.condition = condition
