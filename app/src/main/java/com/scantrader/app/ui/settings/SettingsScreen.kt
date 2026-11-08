@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -29,14 +30,17 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import com.scantrader.app.data.export.CollectionImportMode
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,7 +49,6 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import com.scantrader.app.R
 import com.scantrader.app.data.model.CardCondition
-import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensOption
 import com.scantrader.app.ui.NeuralPackPrompt
@@ -74,11 +77,20 @@ fun SettingsScreen(
     val pokemonCatalogs by viewModel.pokemonCatalogs.collectAsStateWithLifecycle()
     val lensOptions by viewModel.lensOptions.collectAsStateWithLifecycle()
     val appUpdate by viewModel.appUpdate.collectAsStateWithLifecycle()
+    val backupMessage by viewModel.backupMessage.collectAsStateWithLifecycle()
+    val pendingBackup by viewModel.pendingBackup.collectAsStateWithLifecycle()
+    val backupBusy by viewModel.backupBusy.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     val importPokemon = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) viewModel.importPokemonPack(uri)
+    }
+    val importBackup = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) viewModel.prepareCollectionsImport(context, uri)
     }
 
     LaunchedEffect(Unit) {
@@ -112,35 +124,20 @@ fun SettingsScreen(
             SettingsSection(title = "Impostazioni generali") {
                 TextButton(onClick = onReviewIntro) { Text("Rivedi introduzione") }
                 SimpleDropdown(
-                    label = "Lingua",
-                    options = CardLanguage.entries.toList(),
-                    selected = defaults.language,
-                    onSelect = viewModel::setLanguage,
-                    labelOf = { it.label },
-                )
-                SimpleDropdown(
                     label = "Condizione",
                     options = CardCondition.entries.toList(),
                     selected = defaults.condition,
                     onSelect = viewModel::setCondition,
                     labelOf = { it.label },
                 )
-                val waitOptions = com.scantrader.app.data.prefs.AUTO_SAVE_WAIT_OPTIONS
-                val waitSelected = defaults.autoSaveWaitSeconds
-                    .takeIf { it in waitOptions } ?: 0
-                SimpleDropdown(
-                    label = "Auto-Scan · attesa salvataggio",
-                    options = waitOptions,
-                    selected = waitSelected,
-                    onSelect = viewModel::setAutoSaveWaitSeconds,
-                    labelOf = { seconds ->
-                        if (seconds == 0) "Disattivato" else "Attivo · circa 0,8 s"
-                    },
+                AutoSaveWaitField(
+                    seconds = defaults.autoSaveWaitSeconds,
+                    onSeconds = viewModel::setAutoSaveWaitSeconds,
                 )
                 Text(
                     "In auto-scan, se il riconoscimento supera la soglia scelta in Impostazioni scan " +
-                        "e non tocchi la carta, salva in collezione circa 0,8 secondi dopo la conferma. " +
-                        "Sotto la soglia resta in conferma. Zero disattiva il salvataggio automatico.",
+                        "e non tocchi la carta, salva in collezione dopo i secondi indicati. " +
+                        "Sotto la soglia resta in conferma. 0 disattiva il salvataggio automatico.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -382,6 +379,41 @@ fun SettingsScreen(
                 }
             }
 
+            SettingsSection(title = "Backup collezioni") {
+                Text(
+                    "Salva o ripristina le collezioni sul telefono in un file JSON ScanTrader. " +
+                        "Il CSV dalla collezione resta per Caricare su CardTrader.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.exportCollectionsBackup(context) },
+                        enabled = !backupBusy,
+                    ) {
+                        Text("Esporta backup")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            importBackup.launch(arrayOf("application/json", "text/*", "*/*"))
+                        },
+                        enabled = !backupBusy,
+                    ) {
+                        Text("Importa backup")
+                    }
+                }
+                backupMessage?.let { message ->
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = viewModel::clearBackupMessage) {
+                        Text("Nascondi")
+                    }
+                }
+            }
+
             Text(
                 "Il CSV include il prezzo in centesimi (price_cents). Su CardTrader carica un file per gioco e scegli aggiungi allo stock.",
                 style = MaterialTheme.typography.bodySmall,
@@ -389,11 +421,76 @@ fun SettingsScreen(
             )
         }
     }
+    pendingBackup?.let { backup ->
+        val cards = backup.collections.sumOf { it.cards.size }
+        AlertDialog(
+            onDismissRequest = viewModel::dismissPendingBackup,
+            title = { Text("Importa backup") },
+            text = {
+                Text(
+                    "Il file ha ${backup.collections.size} collezioni ($cards carte).\n\n" +
+                        "Aggiungi: crea collezioni nuove (nomi già presenti diventano «… (import)»).\n" +
+                        "Sostituisci: cancella le collezioni attuali (tranne Cardtrader dal tracker) e ripristina dal file.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.confirmCollectionsImport(CollectionImportMode.Add) },
+                    enabled = !backupBusy,
+                ) {
+                    Text("Aggiungi")
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = { viewModel.confirmCollectionsImport(CollectionImportMode.Replace) },
+                        enabled = !backupBusy,
+                    ) {
+                        Text("Sostituisci")
+                    }
+                    TextButton(onClick = viewModel::dismissPendingBackup) {
+                        Text("Annulla")
+                    }
+                }
+            },
+        )
+    }
     AppUpdateDialog(
         state = appUpdate,
         onLater = viewModel::dismissAppUpdate,
         onInstall = viewModel::installAppUpdate,
         onOpenSettings = viewModel::openAppUpdateSettings,
+    )
+}
+
+@Composable
+private fun AutoSaveWaitField(
+    seconds: Int,
+    onSeconds: (Int) -> Unit,
+) {
+    val range = com.scantrader.app.data.prefs.AUTO_SAVE_WAIT_RANGE
+    var draft by remember(seconds) { mutableStateOf(seconds.toString()) }
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { raw ->
+            val digits = raw.filter { it.isDigit() }.take(2)
+            draft = digits
+            if (digits.isEmpty()) {
+                onSeconds(0)
+            } else {
+                digits.toIntOrNull()?.let { onSeconds(it.coerceIn(range)) }
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Auto-Scan · attesa salvataggio (secondi)") },
+        supportingText = {
+            Text(
+                if (seconds == 0) "Disattivato" else "Attivo · $seconds s",
+            )
+        },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
     )
 }
 

@@ -654,6 +654,9 @@ class MatchFusionTest {
         )
         assertEquals(MatchFusion.ConfirmMatchTone.AUTO_SAVE, note.tone)
         assertEquals("Salvataggio automatico", note.title)
+        assertTrue(note.debugOnly)
+        assertNull(MatchFusion.confirmNoteForDisplay(note, showDebug = false))
+        assertEquals(note, MatchFusion.confirmNoteForDisplay(note, showDebug = true))
         assertTrue(note.body.contains("Riconoscimento forte"))
         assertTrue(note.body.contains("da sola"))
     }
@@ -741,6 +744,8 @@ class MatchFusionTest {
         )
         assertEquals(MatchFusion.ConfirmMatchTone.CONFIRM, note.tone)
         assertEquals("Salvataggio automatico annullato", note.title)
+        assertTrue(note.debugOnly)
+        assertNull(MatchFusion.confirmNoteForDisplay(note, showDebug = false))
         assertTrue(note.body.contains("Hai modificato la scheda"))
         assertTrue(note.body.contains("Salva in collezione"))
         assertFalse(note.body.contains("da sola"))
@@ -924,7 +929,9 @@ class MatchFusionTest {
             autoSaveWaitSeconds = 5,
         )
         assertEquals("Salvataggio automatico", autoNote.title)
-        assertEquals(autoNote, MatchFusion.confirmNoteForDisplay(autoNote, showDebug = false))
+        assertTrue(autoNote.debugOnly)
+        assertNull(MatchFusion.confirmNoteForDisplay(autoNote, showDebug = false))
+        assertEquals(autoNote, MatchFusion.confirmNoteForDisplay(autoNote, showDebug = true))
     }
 
     @Test

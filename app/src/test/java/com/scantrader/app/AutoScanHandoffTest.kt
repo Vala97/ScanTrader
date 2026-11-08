@@ -131,6 +131,14 @@ class AutoScanHandoffTest {
         assertTrue(AutoSaveSchedule.readyToCount(detectEnabled = false, languageReady = false, waitedMs = 0))
     }
 
+    @Test
+    fun autosavePostConfirmDelayUsesConfiguredSeconds() {
+        assertEquals(0L, AutoSaveSchedule.postConfirmDelayMs(0))
+        assertEquals(1_000L, AutoSaveSchedule.postConfirmDelayMs(1))
+        assertEquals(5_000L, AutoSaveSchedule.postConfirmDelayMs(5))
+        assertEquals(0L, AutoSaveSchedule.postConfirmDelayMs(-3))
+    }
+
     private fun pokemon(name: String, id: String, cn: String) = IdentifiedCard(
         game = Game.POKEMON,
         name = name,

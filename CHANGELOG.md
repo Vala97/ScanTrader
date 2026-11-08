@@ -5,13 +5,20 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+## [1.3] - 2026-11-08
+
 ### Aggiunto
+- In Impostazioni, backup e ripristino delle collezioni in JSON ScanTrader (Aggiungi o Sostituisci all’import; la collezione mirror Cardtrader del tracker resta fuori).
+- In conferma, con «Rileva lingua dalla carta» acceso, sopra l’immagine compare lo stato della lingua: in analisi, riconosciuta o non trovata.
 - In auto-scan, appena sopra Impostazioni scan e dentro l’area della fotocamera, un’etichetta mostra l’ultima carta salvata (nome, set, numero, lingua, ora) e lo stato di quella inquadrata: «Già salvata», «Nuova: …» o «Analisi in corso…».
 - Al primo avvio l’app misura Milo con NNAPI e con la CPU e tiene il più veloce. Sul Pixel 9 Pro ha vinto la CPU (circa 0,5 s contro 3,3 s a embed; NNAPI spezzava il grafo in 90 partizioni).
 
 ### Modificato
+- L’attesa auto-save in Impostazioni è un campo numerico in secondi (0 = disattivato). Il countdown parte subito al riconoscimento, senza aspettare la detection della lingua.
+- Tolto il dropdown Lingua dalle Impostazioni generali: vale il rilevamento dalla carta o l’ultima lingua usata al salvataggio.
+- I banner «Salvataggio automatico» / «Salvataggio automatico annullato» restano solo con le informazioni di debug; il pulsante mostra ancora «Salva tra Ns…».
 - Milo riceve la carta raddrizzata sui quattro angoli della guida, a piena risoluzione (CardDewarp), non più il ritaglio quadrato con lo sfondo, e parte insieme all’OCR.
-- Il primo frame con nome e numero sicuri va subito al catalogo, senza debounce. La rete del catalogo si ferma dopo 3 secondi e si usano i dati locali. L’autosave parte circa 0,8 secondi dopo la conferma.
+- Il primo frame con nome e numero sicuri va subito al catalogo, senza debounce. La rete del catalogo si ferma dopo 3 secondi e si usano i dati locali.
 - La conferma automatica accetta Milo da 0,60 se il numero di collezione coincide, anche senza nome. Se nome e numero coincidono, basta una confidenza da 0,62.
 - Se la lettura non è ancora stabile, il frame non aspetta Milo. Con set e numero la stabilità usa quelli; un nome quasi uguale conta come la stessa carta.
 

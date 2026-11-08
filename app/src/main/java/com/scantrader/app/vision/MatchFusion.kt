@@ -112,9 +112,12 @@ object MatchFusion {
         val body: String,
         val tone: ConfirmMatchTone,
     ) {
-        /** Recognition explanation. Hidden unless debug info is on. Autosave status stays. */
+        /** Recognition / autosave explanation. Hidden unless debug info is on. */
         val debugOnly: Boolean
-            get() = title == "Conferma a mano" || title == "Riconoscimento forte"
+            get() = title == "Conferma a mano" ||
+                title == "Riconoscimento forte" ||
+                title == "Salvataggio automatico" ||
+                title == "Salvataggio automatico annullato"
     }
 
     /**

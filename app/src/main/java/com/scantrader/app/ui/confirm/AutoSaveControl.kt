@@ -7,7 +7,6 @@ package com.scantrader.app.ui.confirm
  * A new confirm session starts uncancelled, so the next scan can auto-save again.
  */
 object AutoSaveControl {
-    const val CANCELLED_LABEL = "Salvataggio automatico annullato"
     const val MANUAL_SAVE_LABEL = "Salva in collezione"
 
     enum class Gesture {
@@ -78,7 +77,7 @@ object AutoSaveControl {
         return Labels(
             armed = eligible,
             countdownVisible = counting,
-            statusLabel = if (paused) CANCELLED_LABEL else null,
+            statusLabel = null,
             saveButtonLabel = button,
         )
     }
