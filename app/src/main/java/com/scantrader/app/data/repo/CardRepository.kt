@@ -83,7 +83,7 @@ class CardRepository(private val db: AppDatabase) {
         requests: List<CollectionMove.Request>,
         mirrorId: Long?,
     ): MoveCardsResult {
-        if (sourceId == mirrorId || destinationId == mirrorId) {
+        if (mirrorId != null && (sourceId == mirrorId || destinationId == mirrorId)) {
             return MoveCardsResult(MoveCardsKind.MirrorBlocked)
         }
         if (destinationId != null && destinationId == sourceId) {
