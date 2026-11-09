@@ -4,4 +4,5 @@
     <string name="scan_framed_saved">Already saved</string>
     <string name="scan_framed_new">New: %1$s</string>
     <string name="scan_framed_analyzing">Analyzing…</string>
+    <string name="scan_open_last_card">Open last card</string>
 </resources>

@@ -103,8 +103,8 @@ class ScanSession {
         framedCard.value = AutoScanLive.framed(sameAsSaved = true, recognizedName = card.name)
     }
 
-    fun noteFramed(sameAsSaved: Boolean, recognizedName: String?) {
-        framedCard.value = AutoScanLive.framed(sameAsSaved, recognizedName)
+    fun noteFramed(sameAsSaved: Boolean, recognizedName: String?, sameIdentity: Boolean = sameAsSaved) {
+        framedCard.value = AutoScanLive.framed(sameAsSaved, recognizedName, sameIdentity)
     }
 
     fun resetResults() {

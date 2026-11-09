@@ -18,4 +18,5 @@
     <string name="scan_framed_saved">Già salvata</string>
     <string name="scan_framed_new">Nuova: %1$s</string>
     <string name="scan_framed_analyzing">Analisi in corso…</string>
+    <string name="scan_open_last_card">Apri ultima carta</string>
 </resources>

@@ -59,13 +59,22 @@ fun AppNav() {
             )
         }
         composable(
-            "collection/{id}",
-            arguments = listOf(navArgument("id") { type = NavType.LongType }),
+            "collection/{id}?edit={editId}",
+            arguments = listOf(
+                navArgument("id") { type = NavType.LongType },
+                navArgument("editId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
         ) { entry ->
             val id = entry.arguments?.getLong("id") ?: return@composable
+            val editId = entry.arguments?.getString("editId")?.toLongOrNull()
             val vm: CollectionViewModel = viewModel(factory = CollectionViewModel.factory(app, id))
             CollectionScreen(
                 viewModel = vm,
+                initialEditId = editId,
                 onBack = { nav.popBackStack() },
                 onScan = {
                     app.scanSession.targetCollectionId = id
@@ -103,6 +112,20 @@ fun AppNav() {
                     onManualSearch = {
                         app.scanSession.resetResults()
                         showConfirm = true
+                    },
+                    onOpenLastSaved = {
+                        val saved = app.scanSession.lastSaved.value
+                        val framed = app.scanSession.framedCard.value
+                        val entryId = saved?.entryId
+                        val collection = saved?.collectionId
+                        if (
+                            collection != null &&
+                            com.scantrader.app.scan.AutoScanLive.showOpenLast(framed, entryId)
+                        ) {
+                            nav.navigate("collection/$collection?edit=$entryId") {
+                                launchSingleTop = true
+                            }
+                        }
                     },
                 )
                 if (showConfirm) {

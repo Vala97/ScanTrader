@@ -2131,13 +2131,19 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         "finish=${repeatCard.finish ?: "standard"})",
                 )
             }
-            if (duplicateBlocked || repeatCard != null) {
-                armPrintingHold(croppedFull)
-                markHeldFrame(copyTop?.name ?: parsed.nameGuess)
+            val savedNow = app.scanSession.lastSaved.value
+            val recognized = copyTop ?: top
+            val identitySame = savedNow?.entryId != null &&
+                recognized != null &&
+                recognized.identityKey() == savedNow.identityKey
+            if (duplicateBlocked || repeatCard != null || identitySame) {
+                if (duplicateBlocked || repeatCard != null) armPrintingHold(croppedFull)
+                markHeldFrame(copyTop?.name ?: parsed.nameGuess, recognized?.identityKey())
             } else if (parsed.nameGuess != null || top != null) {
                 app.scanSession.noteFramed(
                     sameAsSaved = false,
                     recognizedName = top?.name ?: parsed.nameGuess,
+                    sameIdentity = false,
                 )
             }
             val publishAuto = synchronized(manualCapture) {
@@ -2307,11 +2313,19 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     /** «Già salvata» only when this frame is the card already written. */
-    private fun markHeldFrame(name: String?) {
+    private fun markHeldFrame(name: String?, recognizedKey: String? = null) {
         val saved = app.scanSession.lastSaved.value
         val pending = app.scanSession.pendingAutoSave
-        val same = saved != null && (pending == null || pending.identityKey() == saved.identityKey)
-        app.scanSession.noteFramed(sameAsSaved = same, recognizedName = name ?: saved?.name)
+        val held = saved != null && (pending == null || pending.identityKey() == saved.identityKey)
+        val identitySame = saved?.entryId != null && when {
+            recognizedKey != null -> recognizedKey == saved.identityKey
+            else -> held
+        }
+        app.scanSession.noteFramed(
+            sameAsSaved = held || identitySame,
+            recognizedName = name ?: saved?.name,
+            sameIdentity = identitySame,
+        )
     }
 
     private fun skipUnstableFrame(bitmap: android.graphics.Bitmap, startedAt: Long): Boolean {
@@ -2649,6 +2663,8 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
                         language = language,
                         savedAtMs = System.currentTimeMillis(),
                         identityKey = card.identityKey(),
+                        entryId = rowId,
+                        collectionId = collectionId,
                     ),
                 )
                 app.scanSession.targetCollectionId = collectionId

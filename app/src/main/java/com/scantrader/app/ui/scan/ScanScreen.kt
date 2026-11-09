@@ -151,6 +151,7 @@ fun ScanScreen(
     onBack: () -> Unit,
     onCaptured: () -> Unit,
     onManualSearch: () -> Unit,
+    onOpenLastSaved: () -> Unit = {},
     confirmVisible: Boolean = false,
 ) {
     // Before the camera effects: keep the session lens and zoom, and ignore the
@@ -696,6 +697,7 @@ fun ScanScreen(
                 AutoScanBanner(
                     lastSaved = lastSaved,
                     framed = framedCard,
+                    onOpenLastSaved = onOpenLastSaved,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

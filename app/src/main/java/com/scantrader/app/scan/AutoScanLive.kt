@@ -11,17 +11,44 @@ data class LastSavedCard(
     val language: CardLanguage,
     val savedAtMs: Long,
     val identityKey: String,
+    /** Room row of that save. Null when the insert did not return an id. */
+    val entryId: Long? = null,
+    val collectionId: Long? = null,
 )
 
 enum class FramedKind { SAVED, NEW, ANALYZING }
 
 /** What the camera is holding, next to the last saved line. */
-data class FramedCard(val kind: FramedKind, val name: String?)
+data class FramedCard(
+    val kind: FramedKind,
+    val name: String?,
+    /**
+     * True only when this frame's catalog identity is the last saved card.
+     * A blank analysis, or a different card, is false.
+     */
+    val sameIdentity: Boolean = false,
+)
 
 object AutoScanLive {
-    fun framed(sameAsSaved: Boolean, recognizedName: String?): FramedCard = when {
-        sameAsSaved -> FramedCard(FramedKind.SAVED, recognizedName?.trim()?.takeIf { it.isNotEmpty() })
-        recognizedName.isNullOrBlank() -> FramedCard(FramedKind.ANALYZING, null)
-        else -> FramedCard(FramedKind.NEW, recognizedName.trim())
+    fun framed(
+        sameAsSaved: Boolean,
+        recognizedName: String?,
+        sameIdentity: Boolean = sameAsSaved,
+    ): FramedCard {
+        val name = recognizedName?.trim()?.takeIf { it.isNotEmpty() }
+        val kind = when {
+            sameAsSaved -> FramedKind.SAVED
+            name == null -> FramedKind.ANALYZING
+            else -> FramedKind.NEW
+        }
+        return FramedCard(
+            kind = kind,
+            name = if (kind == FramedKind.ANALYZING) null else name,
+            sameIdentity = sameIdentity && kind != FramedKind.NEW,
+        )
     }
+
+    /** Edit link for the saved row. Hidden for a new card or an unknown frame. */
+    fun showOpenLast(framed: FramedCard, entryId: Long?): Boolean =
+        entryId != null && entryId > 0L && framed.sameIdentity && framed.kind != FramedKind.NEW
 }

@@ -100,6 +100,7 @@ fun CollectionScreen(
     viewModel: CollectionViewModel,
     onBack: () -> Unit,
     onScan: () -> Unit,
+    initialEditId: Long? = null,
 ) {
     val collection by viewModel.collection.collectAsStateWithLifecycle()
     val cards by viewModel.cards.collectAsStateWithLifecycle()
@@ -116,6 +117,12 @@ fun CollectionScreen(
     val title = collection?.name ?: "Collezione"
     var editingId by remember { mutableStateOf<Long?>(null) }
     var previewId by remember { mutableStateOf<Long?>(null) }
+    var openedInitialEdit by rememberSaveable { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(cards, initialEditId) {
+        if (openedInitialEdit || initialEditId == null || cards.isEmpty()) return@LaunchedEffect
+        openedInitialEdit = true
+        if (cards.any { it.id == initialEditId }) editingId = initialEditId
+    }
     // giochi ed espansioni chiusi a mano (restano chiusi girando il telefono)
     var collapsed by rememberSaveable { mutableStateOf(setOf<String>()) }
     // "Manda al tracker": copie non ancora mandate (le carte salvate dopo il collegamento partono gia' da sole)
