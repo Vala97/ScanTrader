@@ -5,10 +5,13 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+## [0.4] - 2026-11-09
+
 ### Aggiunto
 - Accanto al valore della collezione, «Aggiorna prezzi» rilegge il prezzo di mercato di tutte le carte di quella collezione, non solo di quelle filtrate. Un prezzo scritto a mano resta quello effettivo. Se la richiesta fallisce resta il prezzo precedente.
 
 ### Modificato
+- Numerazione visibile 0.4, codice interno 5. Le versioni 1.0–1.3 restano nello storico.
 - «Aggiorna prezzi» e «Aggiorna prezzo» rileggono anche Pokémon (Cardmarket, senza importo holo) e One Piece (listino CardTrader della stampa salvata, comprese le DON!!). Senza token CardTrader, One Piece non si aggiorna e il prezzo già salvato resta.
 
 ### Corretto
