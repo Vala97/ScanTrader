@@ -101,6 +101,7 @@ fun CollectionScreen(
     val cards by viewModel.cards.collectAsStateWithLifecycle()
     val exporting by viewModel.exporting.collectAsStateWithLifecycle()
     val browser by viewModel.browser.collectAsStateWithLifecycle()
+    val priceRefresh by viewModel.priceRefresh.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val title = collection?.name ?: "Collezione"
     var editingId by remember { mutableStateOf<Long?>(null) }
@@ -212,6 +213,8 @@ fun CollectionScreen(
                     onToggleFoil = viewModel::toggleFoil,
                     onSort = viewModel::setSort,
                     onClear = viewModel::clearBrowse,
+                    priceRefresh = priceRefresh,
+                    onRefreshPrices = viewModel::refreshCollectionPrices,
                 )
                 if (browser.result.copies == 0) {
                     Column(Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
@@ -345,6 +348,8 @@ private fun CollectionBrowseBar(
     onToggleFoil: (Boolean) -> Unit,
     onSort: (CollectionSort) -> Unit,
     onClear: () -> Unit,
+    priceRefresh: com.scantrader.app.ui.PriceRefreshState,
+    onRefreshPrices: () -> Unit,
 ) {
     val controls = browser.controls
     Column(
@@ -447,10 +452,30 @@ private fun CollectionBrowseBar(
                 collectionSummary(browser.result.copies, browser.result.total),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
             )
-            if (controls.active) {
-                TextButton(onClick = onClear) { Text("Azzera") }
+            TextButton(
+                onClick = onRefreshPrices,
+                enabled = !priceRefresh.running,
+            ) {
+                Text(
+                    if (priceRefresh.running && priceRefresh.total > 0) {
+                        "Aggiorno ${priceRefresh.done}/${priceRefresh.total}"
+                    } else {
+                        "Aggiorna prezzi"
+                    },
+                )
             }
+            if (controls.active) {
+                TextButton(onClick = onClear) { Text("Rimuovi filtri") }
+            }
+        }
+        priceRefresh.message?.takeIf { !priceRefresh.running }?.let { message ->
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

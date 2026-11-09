@@ -5,6 +5,13 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Aggiunto
+- Accanto al valore della collezione, «Aggiorna prezzi» rilegge il prezzo di mercato di tutte le carte di quella collezione, non solo di quelle filtrate. Un prezzo scritto a mano resta quello effettivo. Se la richiesta fallisce resta il prezzo precedente.
+
+### Modificato
+- Nei filtri della collezione il pulsante si chiama «Rimuovi filtri».
+- Tolto il campo Condizione dalle Impostazioni. In conferma e sulla carta resta il selettore, e l’ultima condizione scelta al salvataggio resta quella proposta.
+
 ## [1.3] - 2026-11-08
 
 ### Aggiunto

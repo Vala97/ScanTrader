@@ -48,7 +48,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import com.scantrader.app.R
-import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensOption
 import com.scantrader.app.ui.NeuralPackPrompt
@@ -123,13 +122,6 @@ fun SettingsScreen(
         ) {
             SettingsSection(title = "Impostazioni generali") {
                 TextButton(onClick = onReviewIntro) { Text("Rivedi introduzione") }
-                SimpleDropdown(
-                    label = "Condizione",
-                    options = CardCondition.entries.toList(),
-                    selected = defaults.condition,
-                    onSelect = viewModel::setCondition,
-                    labelOf = { it.label },
-                )
                 AutoSaveWaitField(
                     seconds = defaults.autoSaveWaitSeconds,
                     onSeconds = viewModel::setAutoSaveWaitSeconds,

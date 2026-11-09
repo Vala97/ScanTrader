@@ -132,6 +132,8 @@ class CollectionViewModel(
     val cards: StateFlow<List<CardEntryEntity>> =
         app.repository.cards(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val exporting = MutableStateFlow(false)
+    val priceRefresh = MutableStateFlow(PriceRefreshState())
+    private val priceRefreshRunning = AtomicBoolean(false)
     private val controls = MutableStateFlow(CollectionBrowseState())
     private val touched = AtomicBoolean(false)
     private val restored = MutableStateFlow(false)
@@ -291,6 +293,76 @@ class CollectionViewModel(
         }
     }
 
+    /** Re-quotes every row in this collection, not the filtered list. */
+    fun refreshCollectionPrices() {
+        if (!priceRefreshRunning.compareAndSet(false, true)) return
+        val snapshot = cards.value.toList()
+        viewModelScope.launch {
+            try {
+                priceRefresh.value = PriceRefreshState(running = true, total = snapshot.size)
+                val englishIds = HashMap<String, String?>()
+                val outcome = withContext(Dispatchers.IO) {
+                    com.scantrader.app.data.catalog.CollectionPriceRefresh.run(
+                        cards = snapshot,
+                        quote = { entry -> quoteCollectionCard(entry, englishIds) },
+                        save = { updated -> app.repository.updateCard(updated) },
+                        onProgress = { done, total ->
+                            priceRefresh.value = priceRefresh.value.copy(
+                                running = true,
+                                done = done,
+                                total = total,
+                            )
+                        },
+                    )
+                }
+                priceRefresh.value = PriceRefreshState(
+                    running = false,
+                    done = outcome.total,
+                    total = outcome.total,
+                    message = outcome.message,
+                )
+            } finally {
+                priceRefreshRunning.set(false)
+            }
+        }
+    }
+
+    private suspend fun quoteCollectionCard(
+        entry: CardEntryEntity,
+        englishIds: MutableMap<String, String?>,
+    ): IdentifiedCard {
+        val language = CardLanguage.fromCsvValue(entry.language) ?: CardLanguage.ENGLISH
+        val condition = CardCondition.entries.firstOrNull { it.csvValue == entry.condition }
+            ?: CardCondition.NEAR_MINT
+        val blank = entry.toIdentifiedForPrice().copy(
+            priceEur = null,
+            priceEurFoil = null,
+            priceUsd = null,
+            priceUsdFoil = null,
+            priceCurrency = null,
+            priceSource = null,
+        )
+        return com.scantrader.app.data.catalog.MarketPrice.propose(
+            card = blank,
+            language = language,
+            condition = condition,
+            foil = entry.foil && entry.game != Game.POKEMON,
+            hasCardTraderToken = app.secrets.hasCardTraderToken(),
+            cardTraderPrices = app.cardTraderPrices,
+            scryfallEur = app.scryfallEur,
+            englishScryfallId = { set, number ->
+                val key = "${set.trim().lowercase()}|${number.trim().lowercase()}"
+                if (englishIds.containsKey(key)) {
+                    englishIds[key]
+                } else {
+                    val id = runCatching { app.scryfall.cardBySetAndNumber(set, number).id }.getOrNull()
+                    englishIds[key] = id
+                    id
+                }
+            },
+        )
+    }
+
     companion object {
         fun factory(app: ScanTraderApp, id: Long) = factoryOf { CollectionViewModel(app, id) }
     }
@@ -314,6 +386,13 @@ private fun CardEntryEntity.toIdentifiedForPrice(): IdentifiedCard = IdentifiedC
     priceSource = priceSource,
     catalogName = catalogName,
     catalogScryfallId = catalogScryfallId,
+)
+
+data class PriceRefreshState(
+    val running: Boolean = false,
+    val done: Int = 0,
+    val total: Int = 0,
+    val message: String? = null,
 )
 
 class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
