@@ -1,6 +1,7 @@
 package com.scantrader.app
 
 import com.scantrader.app.data.catalog.CollectionPriceRefresh
+import com.scantrader.app.data.catalog.InventoryMarket
 import com.scantrader.app.data.db.CardEntryEntity
 import com.scantrader.app.data.db.CardPrice
 import com.scantrader.app.data.db.MarketRefresh
@@ -20,11 +21,17 @@ class MarketRefreshTest {
         val etched = normal.copy(variant = "etched")
         val played = normal.copy(condition = "Played")
         val pokemon = normal.copy(game = Game.POKEMON, foil = true)
+        val gold = normal.copy(game = Game.ONE_PIECE, name = "DON!! (Gold)", collectorNumber = "EB-03-NAMI-G")
+        val nami = gold.copy(name = "DON!! (Nami)", collectorNumber = "EB-03-NAMI")
         assertTrue(MarketRefresh.quoteKey(normal) != MarketRefresh.quoteKey(foil))
         assertTrue(MarketRefresh.quoteKey(normal) != MarketRefresh.quoteKey(etched))
         assertTrue(MarketRefresh.quoteKey(normal) != MarketRefresh.quoteKey(played))
         assertTrue(MarketRefresh.quoteKey(normal) != MarketRefresh.quoteKey(pokemon))
+        assertTrue(MarketRefresh.quoteKey(gold) != MarketRefresh.quoteKey(nami))
         assertEquals(MarketRefresh.quoteKey(normal), MarketRefresh.quoteKey(normal.copy(id = 9L, quantity = 4)))
+        assertTrue(MarketRefresh.canQuote(Game.POKEMON))
+        assertTrue(MarketRefresh.canQuote(Game.ONE_PIECE))
+        assertFalse(MarketRefresh.canQuote(Game.YUGIOH))
     }
 
     @Test
@@ -69,14 +76,14 @@ class MarketRefreshTest {
     fun oneFetchCoversDuplicatePrintsAndSkipsOtherGames() = runBlocking {
         val first = row(id = 1L, priceEur = "1.00", priceSource = "Scryfall")
         val twin = first.copy(id = 2L, quantity = 3)
-        val pokemon = row(id = 3L, game = Game.POKEMON, priceEur = "0.40", priceSource = "Cardmarket")
+        val yugioh = row(id = 3L, game = Game.YUGIOH, priceEur = "0.40", priceSource = "CardTrader")
         val seen = mutableListOf<Long>()
         val saved = mutableListOf<Long>()
         val outcome = CollectionPriceRefresh.run(
-            cards = listOf(first, twin, pokemon),
+            cards = listOf(first, twin, yugioh),
             quote = { card ->
                 seen += card.id
-                quote(eur = "2.00", source = "Scryfall")
+                InventoryMarket.Result.Priced(quote(eur = "2.00", source = "Scryfall"))
             },
             save = { saved += it.id },
         )
@@ -84,8 +91,119 @@ class MarketRefreshTest {
         assertEquals(listOf(1L, 2L), saved)
         assertEquals(2, outcome.stored)
         assertEquals(0, outcome.failed)
+        assertEquals(1, outcome.unsupported)
         assertEquals(3, outcome.total)
+        assertEquals("Prezzi aggiornati. 1 senza listino.", outcome.message)
+    }
+
+    @Test
+    fun pokemonAndOnePieceRefreshTheWholeCollection() = runBlocking {
+        val pokemon = row(
+            id = 10L,
+            game = Game.POKEMON,
+            priceEur = "0.40",
+            priceSource = "Cardmarket",
+            manualPriceEur = "8.00",
+        ).copy(tcgdexId = "sv3-1", name = "Pikachu", collectorNumber = "1", setCode = "sv3")
+        val hiddenTwin = pokemon.copy(id = 11L, quantity = 2)
+        val don = row(
+            id = 12L,
+            game = Game.ONE_PIECE,
+            priceEur = "1.00",
+            priceSource = "CardTrader",
+        ).copy(name = "DON!! (Nami)", setCode = "eb03", collectorNumber = "EB-03-NAMI")
+        val gold = don.copy(id = 13L, name = "DON!! (Gold)", collectorNumber = "EB-03-NAMI-G", priceEur = "4.00")
+        val seen = mutableListOf<String>()
+        val saved = mutableListOf<CardEntryEntity>()
+        val outcome = CollectionPriceRefresh.run(
+            cards = listOf(pokemon, hiddenTwin, don, gold),
+            quote = { card ->
+                seen += card.collectorNumber
+                when (card.game) {
+                    Game.POKEMON -> InventoryMarket.Result.Priced(
+                        quote(eur = "0.90", source = "Cardmarket").copy(game = Game.POKEMON, priceEurFoil = "9.99"),
+                    )
+                    Game.ONE_PIECE -> InventoryMarket.Result.Priced(
+                        quote(eur = "2.50", source = "CardTrader").copy(
+                            game = Game.ONE_PIECE,
+                            collectorNumber = card.collectorNumber,
+                        ),
+                    )
+                    else -> InventoryMarket.Result.Unavailable
+                }
+            },
+            save = { saved += it },
+        )
+        assertEquals(listOf("1", "EB-03-NAMI", "EB-03-NAMI-G"), seen)
+        assertEquals(4, saved.size)
+        val pricedPokemon = saved.first { it.id == 10L }
+        assertEquals("0.90", pricedPokemon.priceEur)
+        assertEquals(null, pricedPokemon.priceEurFoil)
+        assertEquals("8.00", pricedPokemon.manualPriceEur)
+        assertEquals("8.00", CardPrice.effectiveRaw(pricedPokemon))
+        assertEquals("2.50", saved.first { it.id == 12L }.priceEur)
+        assertEquals("2.50", saved.first { it.id == 13L }.priceEur)
+        assertEquals(null, saved.first { it.id == 12L }.priceEurFoil)
+        assertEquals(4, outcome.stored)
+        assertEquals(0, outcome.failed)
         assertEquals("Prezzi aggiornati", outcome.message)
+    }
+
+    @Test
+    fun missingTokenDoesNotReplaceOnePiecePrices() = runBlocking {
+        val card = row(id = 20L, game = Game.ONE_PIECE, priceEur = "3.00", priceSource = "CardTrader")
+        val saved = mutableListOf<CardEntryEntity>()
+        val outcome = CollectionPriceRefresh.run(
+            cards = listOf(card),
+            quote = { InventoryMarket.Result.NeedsToken },
+            save = { saved += it },
+        )
+        assertTrue(saved.isEmpty())
+        assertEquals("3.00", card.priceEur)
+        assertTrue(outcome.needsToken)
+        assertEquals(1, outcome.failed)
+        assertEquals("Serve il token CardTrader in Impostazioni. I prezzi precedenti restano.", outcome.message)
+    }
+
+    @Test
+    fun pokemonUpdatesWhileOnePieceWaitsForTheToken() = runBlocking {
+        val pokemon = row(id = 30L, game = Game.POKEMON, priceEur = "0.20", priceSource = "Cardmarket")
+        val piece = row(id = 31L, game = Game.ONE_PIECE, priceEur = "1.00", priceSource = "CardTrader")
+        val saved = mutableListOf<Long>()
+        val outcome = CollectionPriceRefresh.run(
+            cards = listOf(pokemon, piece),
+            quote = { card ->
+                if (card.game == Game.POKEMON) {
+                    InventoryMarket.Result.Priced(quote(eur = "0.30", source = "Cardmarket").copy(game = Game.POKEMON))
+                } else {
+                    InventoryMarket.Result.NeedsToken
+                }
+            },
+            save = { saved += it.id },
+        )
+        assertEquals(listOf(30L), saved)
+        assertEquals(1, outcome.stored)
+        assertEquals(1, outcome.failed)
+        assertTrue(outcome.needsToken)
+        assertEquals(
+            "Aggiornati 1. One Piece e Riftbound richiedono il token CardTrader.",
+            outcome.message,
+        )
+    }
+
+    @Test
+    fun aMissingPokemonQuoteKeepsTheOldPrice() = runBlocking {
+        val card = row(id = 21L, game = Game.POKEMON, priceEur = "0.40", priceSource = "Cardmarket")
+        val saved = mutableListOf<CardEntryEntity>()
+        val outcome = CollectionPriceRefresh.run(
+            cards = listOf(card),
+            quote = { InventoryMarket.Result.Unavailable },
+            save = { saved += it },
+        )
+        assertTrue(saved.isEmpty())
+        assertEquals(1, outcome.failed)
+        assertEquals(0, outcome.stored)
+        assertEquals("Nessun prezzo di mercato trovato. I prezzi precedenti restano.", outcome.message)
     }
 
     @Test

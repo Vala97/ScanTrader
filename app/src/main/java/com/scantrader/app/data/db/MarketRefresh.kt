@@ -17,10 +17,11 @@ object MarketRefresh {
         val priced: Boolean,
     )
 
-    fun canQuote(game: Game): Boolean = game == Game.MTG || game == Game.RIFTBOUND
+    fun canQuote(game: Game): Boolean =
+        game == Game.MTG || game == Game.RIFTBOUND || game == Game.POKEMON || game == Game.ONE_PIECE
 
     fun quoteKey(entry: CardEntryEntity): String {
-        val foil = entry.foil && entry.game != Game.POKEMON
+        val foil = entry.foil && entry.game.foilChoice
         return listOf(
             entry.game.name,
             entry.setCode.trim().lowercase(),
@@ -32,8 +33,13 @@ object MarketRefresh {
             entry.condition.trim().lowercase(),
             if (foil) "foil" else "normal",
             entry.variant.orEmpty().trim().lowercase(),
+            versionToken(entry.name),
         ).joinToString("|")
     }
+
+    /** Parenthetical finish on a saved title (`DON!! (Gold)`). Empty when the print has none. */
+    fun versionToken(name: String): String =
+        Regex("""\(([^)]+)\)\s*$""").find(name)?.groupValues?.get(1)?.trim()?.lowercase().orEmpty()
 
     /**
      * Copy a market result onto [entry]. [priced] must be the quote alone:
@@ -44,12 +50,11 @@ object MarketRefresh {
         if (priced.priceSource.isNullOrBlank()) {
             return Decision(entry, save = false, priced = false)
         }
-        val pokemon = entry.game == Game.POKEMON
-        val foil = entry.foil && !pokemon
+        val foil = entry.foil && entry.game.foilChoice
         val updated = entry.copy(
             priceEur = if (foil) entry.priceEur else priced.priceEur ?: entry.priceEur,
             priceEurFoil = when {
-                pokemon -> null
+                !entry.game.foilChoice -> null
                 foil -> priced.priceEurFoil ?: entry.priceEurFoil
                 else -> entry.priceEurFoil
             },

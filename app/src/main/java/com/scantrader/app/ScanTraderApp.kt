@@ -75,6 +75,8 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         private set
     lateinit var scryfall: ScryfallClient
         private set
+    lateinit var tcgdexLive: CachingTcgdexApi
+        private set
     lateinit var scryfallEur: ScryfallEurPrices
         private set
     lateinit var secrets: SecretStore
@@ -107,6 +109,7 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
             tcgdexRetrofit.create(TcgdexApi::class.java),
             TcgdexResponseCache(File(cacheDir, "tcgdex")),
         )
+        tcgdexLive = tcgdex
         localSets = LocalSetCatalog(
             dir = File(cacheDir, "set-catalog"),
             mtgSource = ScryfallSetDownloader(

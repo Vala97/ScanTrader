@@ -931,12 +931,12 @@ private fun tilePrice(card: CardEntryEntity): String? {
     if (manual != null) {
         return ListingAverage.display(eur = manual, eurFoil = null, source = "Manuale", foil = false)
     }
-    val pokemon = card.game == Game.POKEMON
+    val pricedFoil = card.game.foilChoice && card.foil
     return ListingAverage.display(
         eur = card.priceEur,
-        eurFoil = if (pokemon) null else card.priceEurFoil,
+        eurFoil = if (card.game.foilChoice) card.priceEurFoil else null,
         source = card.priceSource,
-        foil = card.foil && !pokemon,
+        foil = pricedFoil,
     )
 }
 
@@ -949,7 +949,7 @@ private fun CardEditSheet(
     onLanguage: (CardLanguage) -> Unit,
     onFoil: (Boolean) -> Unit,
     onManualPrice: (String, (Boolean) -> Unit) -> Unit,
-    onRefreshPrice: ((Boolean) -> Unit) -> Unit,
+    onRefreshPrice: ((String?) -> Unit) -> Unit,
     onRestorePrice: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -1040,7 +1040,7 @@ private fun CardEditSheet(
                 priceText = it
                 priceError = null
             },
-            label = { Text(if (!pokemon && card.foil) "Prezzo foil (EUR)" else "Prezzo (EUR)") },
+            label = { Text(if (card.game.foilChoice && card.foil) "Prezzo foil (EUR)" else "Prezzo (EUR)") },
             singleLine = true,
             isError = priceError != null,
             supportingText = {
@@ -1076,11 +1076,9 @@ private fun CardEditSheet(
                     if (refreshingPrice) return@TextButton
                     refreshingPrice = true
                     priceError = null
-                    onRefreshPrice { ok ->
+                    onRefreshPrice { error ->
                         refreshingPrice = false
-                        if (!ok) {
-                            priceError = "Prezzo di mercato non trovato."
-                        }
+                        priceError = error
                     }
                 },
                 enabled = !refreshingPrice,

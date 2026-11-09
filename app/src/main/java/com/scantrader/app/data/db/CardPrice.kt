@@ -13,7 +13,7 @@ import java.math.RoundingMode
 object CardPrice {
     /** Amount shown on the card. A foil Magic card without a foil price uses the normal EUR. */
     fun automaticRaw(card: CardEntryEntity): String? {
-        if (card.game != Game.POKEMON && card.foil) {
+        if (card.game.foilChoice && card.foil) {
             card.priceEurFoil?.takeIf { it.isNotBlank() }?.let { return it }
         }
         return card.priceEur?.takeIf { it.isNotBlank() }
@@ -25,7 +25,7 @@ object CardPrice {
      */
     fun automaticReference(card: CardEntryEntity): String? {
         val amount = automaticRaw(card) ?: return null
-        val finish = if (card.game != Game.POKEMON && card.foil) " foil" else ""
+        val finish = if (card.game.foilChoice && card.foil) " foil" else ""
         val source = card.priceSource?.trim().orEmpty()
         val detail = when {
             source.equals("CardTrader", ignoreCase = true) -> {
@@ -56,7 +56,7 @@ object CardPrice {
      */
     fun exportRaw(card: CardEntryEntity): String? {
         card.manualPriceEur?.takeIf { it.isNotBlank() }?.let { return it }
-        if (card.game == Game.POKEMON || !card.foil) return card.priceEur
+        if (!card.game.foilChoice || !card.foil) return card.priceEur
         return card.priceEurFoil
     }
 

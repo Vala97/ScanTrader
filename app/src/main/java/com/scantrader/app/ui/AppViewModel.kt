@@ -262,41 +262,26 @@ class CollectionViewModel(
      * Re-quotes the automatic EUR for this row (language / condition / foil as stored)
      * and writes it back. Manual override is left untouched.
      */
-    fun refreshAutomaticPrice(entry: CardEntryEntity, onDone: (Boolean) -> Unit = {}) {
+    fun refreshAutomaticPrice(entry: CardEntryEntity, onDone: (String?) -> Unit = {}) {
         viewModelScope.launch {
-            val language = CardLanguage.fromCsvValue(entry.language) ?: CardLanguage.ENGLISH
-            val condition = CardCondition.entries.firstOrNull { it.csvValue == entry.condition }
-                ?: CardCondition.NEAR_MINT
-            val priced = com.scantrader.app.data.catalog.MarketPrice.propose(
-                card = entry.toIdentifiedForPrice(),
-                language = language,
-                condition = condition,
-                foil = entry.foil,
-                hasCardTraderToken = app.secrets.hasCardTraderToken(),
-                cardTraderPrices = app.cardTraderPrices,
-                scryfallEur = app.scryfallEur,
-                englishScryfallId = { set, number ->
-                    runCatching { app.scryfall.cardBySetAndNumber(set, number).id }.getOrNull()
-                },
-            )
-            val pokemon = entry.game == Game.POKEMON
-            val updated = entry.copy(
-                priceEur = priced.priceEur,
-                priceEurFoil = if (pokemon) null else priced.priceEurFoil,
-                priceUsd = priced.priceUsd,
-                priceUsdFoil = if (pokemon) null else priced.priceUsdFoil,
-                priceCurrency = priced.priceCurrency,
-                priceSource = priced.priceSource,
-            )
-            val wiped = com.scantrader.app.data.db.CardPrice.automaticRaw(updated) == null &&
-                com.scantrader.app.data.db.CardPrice.automaticRaw(entry) != null &&
-                priced.priceSource == null
-            if (wiped) {
-                onDone(false)
-                return@launch
+            val result = withContext(Dispatchers.IO) {
+                quoteCollectionCard(entry, HashMap())
             }
-            app.repository.updateCard(updated)
-            onDone(com.scantrader.app.data.db.CardPrice.automaticRaw(updated) != null)
+            when (result) {
+                com.scantrader.app.data.catalog.InventoryMarket.Result.NeedsToken ->
+                    onDone("Serve il token CardTrader in Impostazioni.")
+                com.scantrader.app.data.catalog.InventoryMarket.Result.Unavailable ->
+                    onDone("Prezzo di mercato non trovato.")
+                is com.scantrader.app.data.catalog.InventoryMarket.Result.Priced -> {
+                    val decision = com.scantrader.app.data.db.MarketRefresh.applyQuote(entry, result.card)
+                    if (!decision.priced) {
+                        onDone("Prezzo di mercato non trovato.")
+                        return@launch
+                    }
+                    if (decision.save) app.repository.updateCard(decision.entry)
+                    onDone(null)
+                }
+            }
         }
     }
 
@@ -372,7 +357,7 @@ class CollectionViewModel(
     private suspend fun quoteCollectionCard(
         entry: CardEntryEntity,
         englishIds: MutableMap<String, String?>,
-    ): IdentifiedCard {
+    ): com.scantrader.app.data.catalog.InventoryMarket.Result {
         val language = CardLanguage.fromCsvValue(entry.language) ?: CardLanguage.ENGLISH
         val condition = CardCondition.entries.firstOrNull { it.csvValue == entry.condition }
             ?: CardCondition.NEAR_MINT
@@ -384,11 +369,11 @@ class CollectionViewModel(
             priceCurrency = null,
             priceSource = null,
         )
-        return com.scantrader.app.data.catalog.MarketPrice.propose(
+        return com.scantrader.app.data.catalog.InventoryMarket.quote(
             card = blank,
             language = language,
             condition = condition,
-            foil = entry.foil && entry.game != Game.POKEMON,
+            foil = entry.foil,
             hasCardTraderToken = app.secrets.hasCardTraderToken(),
             cardTraderPrices = app.cardTraderPrices,
             scryfallEur = app.scryfallEur,
@@ -402,6 +387,16 @@ class CollectionViewModel(
                     id
                 }
             },
+            pokemon = { card, lang ->
+                com.scantrader.app.data.catalog.PokemonMarket.quote(
+                    tcgdexId = card.tcgdexId,
+                    setCode = card.setCode,
+                    collectorNumber = card.collectorNumber,
+                    language = lang,
+                    load = { code, id -> app.tcgdexLive.freshCard(code, id) },
+                )
+            },
+            onePieceBlueprint = { card -> app.cardTraderPrices.onePieceBlueprintId(card) },
         )
     }
 
