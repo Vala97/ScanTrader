@@ -52,6 +52,20 @@ enum class CardLanguage(val csvValue: String, val label: String) {
     CHINESE_T("Chinese Traditional", "繁體中文"),
     ;
 
+    /** Abbreviazione UI inventario (`ITA`, `ENG`, …). */
+    fun abbr(): String = when (this) {
+        ENGLISH -> "ENG"
+        ITALIAN -> "ITA"
+        FRENCH -> "FRA"
+        GERMAN -> "GER"
+        SPANISH -> "SPA"
+        PORTUGUESE -> "POR"
+        JAPANESE -> "JAP"
+        KOREAN -> "KOR"
+        CHINESE_S -> "CHS"
+        CHINESE_T -> "CHT"
+    }
+
     /** Scryfall language code (`it`, `zhs`, …). */
     fun scryfallLang(): String = when (this) {
         ENGLISH -> "en"
@@ -88,6 +102,18 @@ enum class CardLanguage(val csvValue: String, val label: String) {
             "zhs", "zh", "zh-cn", "zh_cn", "chinese" -> CHINESE_S
             "zht", "zh-tw", "zh_tw", "traditional" -> CHINESE_T
             else -> null
+        }
+
+        fun fromCsvValue(raw: String): CardLanguage? =
+            entries.firstOrNull { it.csvValue.equals(raw.trim(), ignoreCase = true) }
+
+        /** Abbreviazione da valore DB (`Italian` → `ITA`); stringa grezza se sconosciuta. */
+        fun abbrOf(raw: String): String {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) return ""
+            return fromCsvValue(trimmed)?.abbr()
+                ?: fromCatalogCode(trimmed)?.abbr()
+                ?: trimmed.take(3).uppercase()
         }
     }
 }

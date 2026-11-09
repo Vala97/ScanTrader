@@ -131,7 +131,16 @@ class CollectionViewModel(
         app.repository.collection(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val cards: StateFlow<List<CardEntryEntity>> =
         app.repository.cards(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val moveTargets: StateFlow<List<CollectionEntity>> =
+        app.repository.collectionList()
+            .map { rows ->
+                val mirror = app.tracker.mirrorId
+                rows.filter { it.id != collectionId && it.id != mirror }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val exporting = MutableStateFlow(false)
+    val priceRefresh = MutableStateFlow(PriceRefreshState())
+    private val priceRefreshRunning = AtomicBoolean(false)
     private val controls = MutableStateFlow(CollectionBrowseState())
     private val touched = AtomicBoolean(false)
     private val restored = MutableStateFlow(false)
@@ -249,10 +258,179 @@ class CollectionViewModel(
         viewModelScope.launch { onDone(app.repository.setManualPrice(entry, raw)) }
     }
 
+    /**
+     * Re-quotes the automatic EUR for this row (language / condition / foil as stored)
+     * and writes it back. Manual override is left untouched.
+     */
+    fun refreshAutomaticPrice(entry: CardEntryEntity, onDone: (String?) -> Unit = {}) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                quoteCollectionCard(entry, HashMap())
+            }
+            when (result) {
+                com.scantrader.app.data.catalog.InventoryMarket.Result.NeedsToken ->
+                    onDone("Serve il token CardTrader in Impostazioni.")
+                com.scantrader.app.data.catalog.InventoryMarket.Result.Unavailable ->
+                    onDone("Prezzo di mercato non trovato.")
+                is com.scantrader.app.data.catalog.InventoryMarket.Result.Priced -> {
+                    val decision = com.scantrader.app.data.db.MarketRefresh.applyQuote(entry, result.card)
+                    if (!decision.priced) {
+                        onDone("Prezzo di mercato non trovato.")
+                        return@launch
+                    }
+                    if (decision.save) app.repository.updateCard(decision.entry)
+                    onDone(null)
+                }
+            }
+        }
+    }
+
+    /** Re-quotes every row in this collection, not the filtered list. */
+    fun refreshCollectionPrices() {
+        if (!priceRefreshRunning.compareAndSet(false, true)) return
+        val snapshot = cards.value.toList()
+        viewModelScope.launch {
+            try {
+                priceRefresh.value = PriceRefreshState(running = true, total = snapshot.size)
+                val englishIds = HashMap<String, String?>()
+                val outcome = withContext(Dispatchers.IO) {
+                    com.scantrader.app.data.catalog.CollectionPriceRefresh.run(
+                        cards = snapshot,
+                        quote = { entry -> quoteCollectionCard(entry, englishIds) },
+                        save = { updated -> app.repository.updateCard(updated) },
+                        onProgress = { done, total ->
+                            priceRefresh.value = priceRefresh.value.copy(
+                                running = true,
+                                done = done,
+                                total = total,
+                            )
+                        },
+                    )
+                }
+                priceRefresh.value = PriceRefreshState(
+                    running = false,
+                    done = outcome.total,
+                    total = outcome.total,
+                    message = outcome.message,
+                )
+            } finally {
+                priceRefreshRunning.set(false)
+            }
+        }
+    }
+
+    /**
+     * Moves the chosen copies into another local collection.
+     * The tracker queue is not touched. Sent-copy counts are only retargeted
+     * so a later «Manda al tracker» does not send the same copy twice.
+     */
+    fun moveSelected(
+        destinationId: Long?,
+        newCollectionName: String?,
+        quantities: Map<Long, Int>,
+        onDone: (com.scantrader.app.data.repo.MoveCardsResult) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = app.repository.moveCards(
+                sourceId = collectionId,
+                destinationId = destinationId,
+                newCollectionName = newCollectionName,
+                requests = quantities.map { (id, qty) ->
+                    com.scantrader.app.data.db.CollectionMove.Request(id, qty)
+                },
+                mirrorId = app.tracker.mirrorId,
+            )
+            if (result.kind == com.scantrader.app.data.repo.MoveCardsKind.Moved) {
+                for (sent in result.sent) {
+                    app.tracker.noteCopiesMoved(
+                        sent.sourceId,
+                        sent.destinationId,
+                        sent.movedCopies,
+                        sent.sourceQuantityBefore,
+                    )
+                }
+            }
+            onDone(result)
+        }
+    }
+
+    private suspend fun quoteCollectionCard(
+        entry: CardEntryEntity,
+        englishIds: MutableMap<String, String?>,
+    ): com.scantrader.app.data.catalog.InventoryMarket.Result {
+        val language = CardLanguage.fromCsvValue(entry.language) ?: CardLanguage.ENGLISH
+        val condition = CardCondition.entries.firstOrNull { it.csvValue == entry.condition }
+            ?: CardCondition.NEAR_MINT
+        val blank = entry.toIdentifiedForPrice().copy(
+            priceEur = null,
+            priceEurFoil = null,
+            priceUsd = null,
+            priceUsdFoil = null,
+            priceCurrency = null,
+            priceSource = null,
+        )
+        return com.scantrader.app.data.catalog.InventoryMarket.quote(
+            card = blank,
+            language = language,
+            condition = condition,
+            foil = entry.foil,
+            hasCardTraderToken = app.secrets.hasCardTraderToken(),
+            cardTraderPrices = app.cardTraderPrices,
+            scryfallEur = app.scryfallEur,
+            englishScryfallId = { set, number ->
+                val key = "${set.trim().lowercase()}|${number.trim().lowercase()}"
+                if (englishIds.containsKey(key)) {
+                    englishIds[key]
+                } else {
+                    val id = runCatching { app.scryfall.cardBySetAndNumber(set, number).id }.getOrNull()
+                    englishIds[key] = id
+                    id
+                }
+            },
+            pokemon = { card, lang ->
+                com.scantrader.app.data.catalog.PokemonMarket.quote(
+                    tcgdexId = card.tcgdexId,
+                    setCode = card.setCode,
+                    collectorNumber = card.collectorNumber,
+                    language = lang,
+                    load = { code, id -> app.tcgdexLive.freshCard(code, id) },
+                )
+            },
+            onePieceBlueprint = { card -> app.cardTraderPrices.onePieceBlueprintId(card) },
+        )
+    }
+
     companion object {
         fun factory(app: ScanTraderApp, id: Long) = factoryOf { CollectionViewModel(app, id) }
     }
 }
+
+private fun CardEntryEntity.toIdentifiedForPrice(): IdentifiedCard = IdentifiedCard(
+    game = game,
+    name = name,
+    setCode = setCode,
+    setName = setName,
+    collectorNumber = collectorNumber,
+    scryfallId = scryfallId,
+    tcgdexId = tcgdexId,
+    tcgplayerId = tcgplayerId,
+    imageUrl = imageUrl,
+    priceEur = priceEur,
+    priceEurFoil = priceEurFoil,
+    priceUsd = priceUsd,
+    priceUsdFoil = priceUsdFoil,
+    priceCurrency = priceCurrency,
+    priceSource = priceSource,
+    catalogName = catalogName,
+    catalogScryfallId = catalogScryfallId,
+)
+
+data class PriceRefreshState(
+    val running: Boolean = false,
+    val done: Int = 0,
+    val total: Int = 0,
+    val message: String? = null,
+)
 
 class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
     val defaults: StateFlow<ScanDefaults> =
@@ -2427,44 +2605,18 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         language: CardLanguage,
         condition: CardCondition,
         foil: Boolean,
-    ): IdentifiedCard {
-        if (card.game == Game.RIFTBOUND || card.ctBlueprintId != null) {
-            val market = runCatching { app.cardTraderPrices.quote(card, language, condition, foil) }.getOrNull()
-            return if (market != null) {
-                com.scantrader.app.data.catalog.ListingAverage.apply(card, market, foil)
-            } else {
-                com.scantrader.app.data.catalog.ListingAverage.unavailable(card)
-            }
-        }
-        if (card.game != Game.MTG) return card
-        if (app.secrets.hasCardTraderToken()) {
-            val englishId = if (card.setCode.isNotBlank() && card.collectorNumber.isNotBlank()) {
-                runCatching {
-                    app.scryfall.cardBySetAndNumber(card.setCode, card.collectorNumber).id
-                }.getOrNull()
-            } else {
-                null
-            }
-            val market = runCatching {
-                app.cardTraderPrices.quote(
-                    card,
-                    language,
-                    condition,
-                    foil,
-                    listOfNotNull(englishId),
-                )
-            }.getOrNull()
-            if (market != null) {
-                return com.scantrader.app.data.catalog.ListingAverage.apply(card, market, foil)
-            }
-        }
-        val quote = runCatching { app.scryfallEur.quote(card, foil) }.getOrNull()
-        return if (quote == null) {
-            card
-        } else {
-            com.scantrader.app.data.catalog.ListingAverage.apply(card, quote, foil)
-        }
-    }
+    ): IdentifiedCard = com.scantrader.app.data.catalog.MarketPrice.propose(
+        card = card,
+        language = language,
+        condition = condition,
+        foil = foil,
+        hasCardTraderToken = app.secrets.hasCardTraderToken(),
+        cardTraderPrices = app.cardTraderPrices,
+        scryfallEur = app.scryfallEur,
+        englishScryfallId = { set, number ->
+            runCatching { app.scryfall.cardBySetAndNumber(set, number).id }.getOrNull()
+        },
+    )
 
     fun setCondition(condition: CardCondition) {
         app.scanSession.condition = condition

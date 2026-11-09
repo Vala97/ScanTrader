@@ -1,7 +1,10 @@
 package com.scantrader.app.ui.collection
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +18,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -37,6 +42,7 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ButtonDefaults
@@ -66,14 +72,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.db.CardPrice
 import com.scantrader.app.data.db.CardEntryEntity
+import com.scantrader.app.data.db.CollectionEntity
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
@@ -84,7 +94,7 @@ import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CollectionScreen(
     viewModel: CollectionViewModel,
@@ -95,13 +105,22 @@ fun CollectionScreen(
     val cards by viewModel.cards.collectAsStateWithLifecycle()
     val exporting by viewModel.exporting.collectAsStateWithLifecycle()
     val browser by viewModel.browser.collectAsStateWithLifecycle()
+    val priceRefresh by viewModel.priceRefresh.collectAsStateWithLifecycle()
+    val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
+    var selecting by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<Long>()) }
+    var moveMessage by remember { mutableStateOf<String?>(null) }
+    var pickingMove by remember { mutableStateOf(false) }
+    var confirmingMove by remember { mutableStateOf<MoveConfirm?>(null) }
     val context = LocalContext.current
     val title = collection?.name ?: "Collezione"
     var editingId by remember { mutableStateOf<Long?>(null) }
+    var previewId by remember { mutableStateOf<Long?>(null) }
     // giochi ed espansioni chiusi a mano (restano chiusi girando il telefono)
     var collapsed by rememberSaveable { mutableStateOf(setOf<String>()) }
     // "Manda al tracker": copie non ancora mandate (le carte salvate dopo il collegamento partono gia' da sole)
     val tracker = (androidx.compose.ui.platform.LocalContext.current.applicationContext as com.scantrader.app.ScanTraderApp).tracker
+    val mirrorCollection = tracker.mirrorId != null && tracker.mirrorId == collection?.id
     val trackerScope = androidx.compose.runtime.rememberCoroutineScope()
     var askSend by remember { mutableStateOf(false) }
     var toSend by remember { mutableStateOf(0) }
@@ -130,13 +149,28 @@ fun CollectionScreen(
     var renaming by rememberSaveable { mutableStateOf(false) }
     var renameError by remember { mutableStateOf<String?>(null) }
     val editing = cards.firstOrNull { it.id == editingId }
+    val preview = cards.firstOrNull { it.id == previewId }
     val sections = browser.result.sections
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(title, fontWeight = FontWeight.SemiBold) },
+                title = {
+                    Text(
+                        title,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.combinedClickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {},
+                            onLongClick = {
+                                renameError = null
+                                renaming = true
+                            },
+                        ),
+                    )
+                },
                 colors = scanTraderAppBarColors(),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -152,11 +186,19 @@ fun CollectionScreen(
                             Icon(Icons.Default.ShoppingCart, contentDescription = "Manda al DLS Tracker")
                         }
                     }
-                    IconButton(onClick = {
-                        renameError = null
-                        renaming = true
-                    }, enabled = collection != null) {
-                        Icon(Icons.Default.Edit, contentDescription = "Rinomina")
+                    if (!mirrorCollection) {
+                        TextButton(onClick = {
+                            if (selecting) {
+                                selecting = false
+                                selected = emptySet()
+                                pickingMove = false
+                                confirmingMove = null
+                            } else {
+                                selecting = true
+                            }
+                        }) {
+                            Text(if (selecting) "Annulla" else "Seleziona")
+                        }
                     }
                     IconButton(
                         onClick = { viewModel.share(context) },
@@ -204,7 +246,27 @@ fun CollectionScreen(
                     onToggleFoil = viewModel::toggleFoil,
                     onSort = viewModel::setSort,
                     onClear = viewModel::clearBrowse,
+                    priceRefresh = priceRefresh,
+                    onRefreshPrices = viewModel::refreshCollectionPrices,
                 )
+                if (selecting) {
+                    SelectionBar(
+                        selected = selected,
+                        cards = cards,
+                        visibleIds = sections.flatMap { it.cards }.map { it.id }.toSet(),
+                        onSelectVisible = { ids -> selected = CollectionSelection.selectVisible(selected, ids) },
+                        onDeselectVisible = { ids -> selected = CollectionSelection.deselectVisible(selected, ids) },
+                        onMove = { pickingMove = true },
+                    )
+                }
+                moveMessage?.let { message ->
+                    Text(
+                        message,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (browser.result.copies == 0) {
                     Column(Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
                         Text("Nessuna carta", style = MaterialTheme.typography.titleLarge)
@@ -250,7 +312,24 @@ fun CollectionScreen(
                                 if ("s:${section.key}" in collapsed) return@forEach
                             }
                             items(section.cards, key = { it.id }, contentType = { _ -> "card" }) { card ->
-                                GalleryTile(card = card, onClick = { editingId = card.id })
+                                GalleryTile(
+                                    card = card,
+                                    selected = if (selecting) card.id in selected else null,
+                                    onClick = {
+                                        if (selecting) {
+                                            selected = CollectionSelection.toggle(selected, card.id)
+                                        } else {
+                                            editingId = card.id
+                                        }
+                                    },
+                                    onLongClick = {
+                                        if (selecting) {
+                                            selected = CollectionSelection.toggle(selected, card.id)
+                                        } else {
+                                            previewId = card.id
+                                        }
+                                    },
+                                )
                             }
                         }
                     }
@@ -266,6 +345,7 @@ fun CollectionScreen(
         ) {
             CardEditSheet(
                 card = editing,
+                onPreview = { previewId = editing.id },
                 onQuantity = { next ->
                     viewModel.setQuantity(editing, next)
                     if (next <= 0) editingId = null
@@ -274,6 +354,7 @@ fun CollectionScreen(
                 onLanguage = { viewModel.setLanguage(editing, it) },
                 onFoil = { viewModel.setFoil(editing, it) },
                 onManualPrice = { raw, onDone -> viewModel.setManualPrice(editing, raw, onDone) },
+                onRefreshPrice = { onDone -> viewModel.refreshAutomaticPrice(editing, onDone) },
                 onRestorePrice = { viewModel.setManualPrice(editing, null) },
                 onDelete = {
                     viewModel.delete(editing)
@@ -281,6 +362,18 @@ fun CollectionScreen(
                 },
             )
         }
+    }
+
+    // Sopra lo sheet di modifica: tap sulla miniatura o sulla tile apre l'anteprima a tutto schermo.
+    if (preview != null) {
+        CardPreviewDialog(
+            card = preview,
+            onDismiss = { previewId = null },
+            onEdit = {
+                editingId = preview.id
+                previewId = null
+            },
+        )
     }
 
     if (renaming && collection != null) {
@@ -306,6 +399,55 @@ fun CollectionScreen(
             },
         )
     }
+
+    if (pickingMove) {
+        MoveDestinationDialog(
+            targets = moveTargets,
+            onDismiss = { pickingMove = false },
+            onPick = { id, name ->
+                pickingMove = false
+                confirmingMove = MoveConfirm(
+                    destinationId = id,
+                    destinationName = name,
+                    quantities = CollectionSelection.defaultQuantities(selected, cards),
+                )
+            },
+        )
+    }
+    confirmingMove?.let { draft ->
+        MoveQuantityDialog(
+            draft = draft,
+            cards = cards,
+            onDismiss = { confirmingMove = null },
+            onConfirm = { quantities ->
+                confirmingMove = null
+                viewModel.moveSelected(
+                    destinationId = draft.destinationId,
+                    newCollectionName = if (draft.destinationId == null) draft.destinationName else null,
+                    quantities = quantities,
+                ) { result ->
+                    moveMessage = when (result.kind) {
+                        com.scantrader.app.data.repo.MoveCardsKind.Moved ->
+                            "Spostate ${result.copies} copie."
+                        com.scantrader.app.data.repo.MoveCardsKind.NothingToMove ->
+                            "Nessuna carta spostata."
+                        com.scantrader.app.data.repo.MoveCardsKind.MissingDestination ->
+                            "Collezione non trovata. Nessuna carta è stata spostata."
+                        com.scantrader.app.data.repo.MoveCardsKind.EmptyName ->
+                            "Inserisci un nome. Nessuna carta è stata spostata."
+                        com.scantrader.app.data.repo.MoveCardsKind.MirrorBlocked ->
+                            "La collezione Cardtrader segue il tracker e non si può spostare."
+                        com.scantrader.app.data.repo.MoveCardsKind.SameCollection ->
+                            "Scegli un'altra collezione. Nessuna carta è stata spostata."
+                    }
+                    if (result.kind == com.scantrader.app.data.repo.MoveCardsKind.Moved) {
+                        selecting = false
+                        selected = emptySet()
+                    }
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -319,6 +461,8 @@ private fun CollectionBrowseBar(
     onToggleFoil: (Boolean) -> Unit,
     onSort: (CollectionSort) -> Unit,
     onClear: () -> Unit,
+    priceRefresh: com.scantrader.app.ui.PriceRefreshState,
+    onRefreshPrices: () -> Unit,
 ) {
     val controls = browser.controls
     Column(
@@ -421,10 +565,30 @@ private fun CollectionBrowseBar(
                 collectionSummary(browser.result.copies, browser.result.total),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
             )
-            if (controls.active) {
-                TextButton(onClick = onClear) { Text("Azzera") }
+            TextButton(
+                onClick = onRefreshPrices,
+                enabled = !priceRefresh.running,
+            ) {
+                Text(
+                    if (priceRefresh.running && priceRefresh.total > 0) {
+                        "Aggiorno ${priceRefresh.done}/${priceRefresh.total}"
+                    } else {
+                        "Aggiorna prezzi"
+                    },
+                )
             }
+            if (controls.active) {
+                TextButton(onClick = onClear) { Text("Rimuovi filtri") }
+            }
+        }
+        priceRefresh.message?.takeIf { !priceRefresh.running }?.let { message ->
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -562,18 +726,23 @@ private fun SectionHeader(section: CollectionSection, open: Boolean = true, onTo
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GalleryTile(
     card: CardEntryEntity,
+    selected: Boolean?,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     val price = tilePrice(card)
     val setCode = card.setCode.trim().uppercase()
+    val number = card.collectorNumber.trim()
+    val langAbbr = CardLanguage.abbrOf(card.language)
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         CardImage(
             url = card.imageUrl,
@@ -582,6 +751,18 @@ private fun GalleryTile(
                 .fillMaxWidth()
                 .aspectRatio(63f / 88f),
         )
+        if (selected == true) {
+            Text(
+                text = "✓",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
         Text(
             text = card.quantity.toString(),
             color = Color.White,
@@ -613,6 +794,36 @@ private fun GalleryTile(
                     maxLines = 1,
                 )
             }
+            if (number.isNotEmpty() || langAbbr.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (number.isNotEmpty()) {
+                        Text(
+                            text = number,
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    if (langAbbr.isNotEmpty()) {
+                        Text(
+                            text = langAbbr,
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                        )
+                    }
+                }
+            }
             if (price != null) {
                 Text(
                     text = price,
@@ -626,40 +837,132 @@ private fun GalleryTile(
     }
 }
 
+@Composable
+private fun CardPreviewDialog(
+    card: CardEntryEntity,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    val number = card.collectorNumber.trim()
+    val langAbbr = CardLanguage.abbrOf(card.language)
+    val meta = buildList {
+        val set = card.setCode.trim().uppercase()
+        if (set.isNotEmpty()) add(set)
+        if (number.isNotEmpty()) add(number)
+        if (langAbbr.isNotEmpty()) add(langAbbr)
+    }.joinToString(" · ")
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.94f))
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onDismiss,
+                ),
+        ) {
+            CardImage(
+                url = card.imageUrl,
+                contentDescription = card.name,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 72.dp)
+                    .aspectRatio(63f / 88f)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = {},
+                    ),
+            )
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, contentDescription = "Modifica", tint = Color.White)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Chiudi", tint = Color.White)
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
+                        ),
+                    )
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
+            ) {
+                Text(
+                    text = card.name,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (meta.isNotEmpty()) {
+                    Text(
+                        text = meta,
+                        color = Color.White.copy(alpha = 0.85f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
 private fun tilePrice(card: CardEntryEntity): String? {
     val manual = card.manualPriceEur?.takeIf { it.isNotBlank() }
     if (manual != null) {
         return ListingAverage.display(eur = manual, eurFoil = null, source = "Manuale", foil = false)
     }
-    val pokemon = card.game == Game.POKEMON
+    val pricedFoil = card.game.foilChoice && card.foil
     return ListingAverage.display(
         eur = card.priceEur,
-        eurFoil = if (pokemon) null else card.priceEurFoil,
+        eurFoil = if (card.game.foilChoice) card.priceEurFoil else null,
         source = card.priceSource,
-        foil = card.foil && !pokemon,
+        foil = pricedFoil,
     )
 }
 
 @Composable
 private fun CardEditSheet(
     card: CardEntryEntity,
+    onPreview: () -> Unit,
     onQuantity: (Int) -> Unit,
     onCondition: (CardCondition) -> Unit,
     onLanguage: (CardLanguage) -> Unit,
     onFoil: (Boolean) -> Unit,
     onManualPrice: (String, (Boolean) -> Unit) -> Unit,
+    onRefreshPrice: ((String?) -> Unit) -> Unit,
     onRestorePrice: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val condition = CardCondition.entries.firstOrNull { it.csvValue == card.condition }
         ?: CardCondition.NEAR_MINT
-    val language = CardLanguage.entries.firstOrNull { it.csvValue == card.language }
-        ?: CardLanguage.ENGLISH
+    val language = CardLanguage.fromCsvValue(card.language) ?: CardLanguage.ENGLISH
     val automatic = CardPrice.automaticRaw(card)
+    val automaticRef = CardPrice.automaticReference(card)
     var priceText by remember(card.id, card.manualPriceEur, automatic) {
         mutableStateOf(card.manualPriceEur ?: automatic.orEmpty())
     }
     var priceError by remember(card.id) { mutableStateOf<String?>(null) }
+    var refreshingPrice by remember(card.id) { mutableStateOf(false) }
     val pokemon = card.game == Game.POKEMON
     Column(
         modifier = Modifier
@@ -671,8 +974,10 @@ private fun CardEditSheet(
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             CardImage(
                 url = card.imageUrl,
-                contentDescription = null,
-                modifier = Modifier.size(84.dp, 118.dp),
+                contentDescription = "Apri a schermo intero",
+                modifier = Modifier
+                    .size(84.dp, 118.dp)
+                    .clickable(onClick = onPreview),
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
@@ -681,7 +986,7 @@ private fun CardEditSheet(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "${card.setCode.uppercase()} · ${card.collectorNumber}",
+                    text = "${card.setCode.uppercase()} · ${card.collectorNumber} · ${language.abbr()}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -735,28 +1040,52 @@ private fun CardEditSheet(
                 priceText = it
                 priceError = null
             },
-            label = { Text(if (!pokemon && card.foil) "Prezzo foil (EUR)" else "Prezzo (EUR)") },
+            label = { Text(if (card.game.foilChoice && card.foil) "Prezzo foil (EUR)" else "Prezzo (EUR)") },
             singleLine = true,
             isError = priceError != null,
             supportingText = {
                 val hint = when {
                     priceError != null -> priceError
-                    card.manualPriceEur != null -> "Prezzo manuale. L’automatico resta ${automatic ?: "n/d"}."
-                    else -> "Prezzo automatico. Un valore qui lo sostituisce anche nell’export."
+                    card.manualPriceEur != null ->
+                        "Prezzo manuale. L’automatico resta ${automaticRef ?: "n/d"}."
+                    automaticRef != null ->
+                        "Prezzo automatico: $automaticRef. Un valore qui lo sostituisce anche nell’export."
+                    else ->
+                        "Nessun prezzo automatico. Un valore qui vale anche per l’export."
                 }
                 Text(hint.orEmpty())
             },
             modifier = Modifier.fillMaxWidth(),
         )
-        TextButton(
-            onClick = {
-                onManualPrice(priceText) { saved ->
-                    priceError = if (saved) null else "Inserisci un prezzo maggiore di zero."
-                }
-            },
+        Row(
             modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Salva prezzo")
+            TextButton(
+                onClick = {
+                    onManualPrice(priceText) { saved ->
+                        priceError = if (saved) null else "Inserisci un prezzo maggiore di zero."
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Salva prezzo")
+            }
+            TextButton(
+                onClick = {
+                    if (refreshingPrice) return@TextButton
+                    refreshingPrice = true
+                    priceError = null
+                    onRefreshPrice { error ->
+                        refreshingPrice = false
+                        priceError = error
+                    }
+                },
+                enabled = !refreshingPrice,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (refreshingPrice) "Aggiorno…" else "Aggiorna prezzo")
+            }
         }
         if (card.manualPriceEur != null) {
             TextButton(onClick = onRestorePrice, modifier = Modifier.fillMaxWidth()) {
@@ -773,4 +1102,130 @@ private fun CardEditSheet(
             Text("Elimina")
         }
     }
+}
+
+private data class MoveConfirm(
+    val destinationId: Long?,
+    val destinationName: String,
+    val quantities: Map<Long, Int>,
+)
+
+@Composable
+private fun SelectionBar(
+    selected: Set<Long>,
+    cards: List<CardEntryEntity>,
+    visibleIds: Set<Long>,
+    onSelectVisible: (Set<Long>) -> Unit,
+    onDeselectVisible: (Set<Long>) -> Unit,
+    onMove: () -> Unit,
+) {
+    val count = CollectionSelection.count(selected, cards, visibleIds)
+    val allVisible = CollectionSelection.allVisibleSelected(selected, visibleIds)
+    Column(Modifier.padding(horizontal = 12.dp)) {
+        Text(
+            CollectionSelection.label(count),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(
+                onClick = {
+                    if (allVisible) onDeselectVisible(visibleIds) else onSelectVisible(visibleIds)
+                },
+                enabled = visibleIds.isNotEmpty(),
+            ) {
+                Text(if (allVisible) "Deseleziona visibili" else "Seleziona visibili")
+            }
+            TextButton(onClick = onMove, enabled = count.rows > 0) { Text("Sposta") }
+        }
+    }
+}
+
+@Composable
+private fun MoveDestinationDialog(
+    targets: List<CollectionEntity>,
+    onDismiss: () -> Unit,
+    onPick: (destinationId: Long?, name: String) -> Unit,
+) {
+    var newName by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sposta in") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (targets.isEmpty()) {
+                    Text("Nessun'altra collezione. Creane una nuova.")
+                }
+                targets.forEach { dest ->
+                    TextButton(
+                        onClick = { onPick(dest.id, dest.name) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(dest.name) }
+                }
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("Nuova collezione") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val name = newName.trim()
+                if (name.isNotEmpty()) onPick(null, name)
+            }) { Text("Nuova collezione") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } },
+    )
+}
+
+@Composable
+private fun MoveQuantityDialog(
+    draft: MoveConfirm,
+    cards: List<CardEntryEntity>,
+    onDismiss: () -> Unit,
+    onConfirm: (Map<Long, Int>) -> Unit,
+) {
+    var quantities by remember(draft) { mutableStateOf(draft.quantities) }
+    val chosen = cards.filter { it.id in quantities && it.quantity > 0 }
+    val copies = chosen.sumOf { card ->
+        (quantities[card.id] ?: card.quantity).coerceIn(1, card.quantity)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Conferma spostamento") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Sposta ${chosen.size} carte ($copies copie) in «${draft.destinationName}». " +
+                        "Annulla non sposta nulla.",
+                )
+                chosen.filter { it.quantity > 1 }.forEach { card ->
+                    val qty = (quantities[card.id] ?: card.quantity).coerceIn(1, card.quantity)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(card.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        IconButton(onClick = {
+                            quantities = quantities + (card.id to (qty - 1).coerceAtLeast(1))
+                        }) { Icon(Icons.Default.Remove, contentDescription = "Meno copie") }
+                        Text(qty.toString())
+                        IconButton(onClick = {
+                            quantities = quantities + (card.id to (qty + 1).coerceAtMost(card.quantity))
+                        }) { Icon(Icons.Default.Add, contentDescription = "Più copie") }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(chosen.associate { it.id to (quantities[it.id] ?: it.quantity).coerceIn(1, it.quantity) }) },
+                enabled = chosen.isNotEmpty(),
+            ) { Text("Sposta") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } },
+    )
 }

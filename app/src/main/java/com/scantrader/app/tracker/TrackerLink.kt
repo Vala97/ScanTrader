@@ -159,6 +159,19 @@ class TrackerLink(
     fun sentFor(rowId: Long): Int = sentPrefs.getInt(rowId.toString(), 0)
     private fun markSent(rowId: Long, total: Int) { sentPrefs.edit().putInt(rowId.toString(), total).apply() }
 
+    /**
+     * A local move. Copies not yet sent travel first.
+     * Does not write the tracker queue and does not talk to CardTrader.
+     */
+    fun noteCopiesMoved(sourceRowId: Long, destinationRowId: Long, movedCopies: Int, sourceQuantityBefore: Int) {
+        if (sourceRowId == destinationRowId || movedCopies <= 0 || sourceQuantityBefore <= 0) return
+        val sent = sentFor(sourceRowId).coerceIn(0, sourceQuantityBefore)
+        val unsent = sourceQuantityBefore - sent
+        val sentMoved = (movedCopies.coerceAtMost(sourceQuantityBefore) - unsent).coerceAtLeast(0)
+        markSent(sourceRowId, sent - sentMoved)
+        markSent(destinationRowId, sentFor(destinationRowId) + sentMoved)
+    }
+
     /** Chiamato quando una carta viene salvata in collezione (automatico o a mano). */
     fun cardSaved(card: IdentifiedCard, quantity: Int, language: CardLanguage, condition: CardCondition, foil: Boolean, rowId: Long? = null) {
         if (!linked || !sending) return

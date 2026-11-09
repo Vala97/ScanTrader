@@ -88,6 +88,16 @@ class CachingTcgdexApi(
         }
     }
 
+    /**
+     * Current card payload, including Cardmarket. Does not read the 14-day cache.
+     * A success replaces that cache entry. A failure leaves the previous entry in place.
+     */
+    suspend fun freshCard(lang: String, id: String): TcgdexCard {
+        val card = delegate.card(lang, id)
+        cache.put("card|$lang|$id", gson.toJson(card))
+        return card
+    }
+
     private fun cachedMiss(): HttpException {
         val body = "miss".toResponseBody("text/plain".toMediaType())
         return HttpException(retrofit2.Response.error<TcgdexCard>(404, body))

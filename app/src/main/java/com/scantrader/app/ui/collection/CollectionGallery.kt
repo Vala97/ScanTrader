@@ -43,7 +43,7 @@ data class CollectionBrowseState(
     /** The chip and sort panel. Collapsed until the user opens it. */
     val filtersOpen: Boolean = false,
 ) {
-    /** Search, a chip, foil, or a non-default sort. «Azzera» uses this. */
+    /** Search, a chip, foil, or a non-default sort. «Rimuovi filtri» uses this. */
     val active: Boolean
         get() = query.isNotBlank() || filtersActive
 

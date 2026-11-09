@@ -44,6 +44,30 @@ class CardTraderPrices(
         }.getOrNull()
     }
 
+    /**
+     * Blueprint of the saved One Piece print. Listings are still read by [quote].
+     * No unique print means no id, so another version is not priced in its place.
+     */
+    suspend fun onePieceBlueprintId(card: IdentifiedCard): Int? {
+        if (token()?.isBlank() != false) return null
+        if (card.game != Game.ONE_PIECE) return null
+        return runCatching {
+            val gameId = CtGameCatalog.GAME_IDS[Game.ONE_PIECE] ?: return@runCatching null
+            val expansions = loadExpansions().filter { it.gameId == gameId }
+            CtBlueprintMatch.uniqueId(
+                setCode = card.setCode,
+                collectorNumber = card.collectorNumber,
+                savedName = card.name,
+                expansions = expansions,
+                printsOf = { expansion ->
+                    blueprints.getOrPut(expansion.id) { api.blueprints(expansion.id) }
+                },
+            )
+        }.onFailure {
+            com.scantrader.app.scan.ScanDebug.w("One Piece blueprint lookup failed", it)
+        }.getOrNull()
+    }
+
     private suspend fun findMtgBlueprintId(setCode: String, scryfallIds: List<String>): Int? {
         val candidates = expansionResolver?.mtgExpansionCandidates(setCode).orEmpty()
         val expansionIds = if (candidates.isNotEmpty()) {
