@@ -5,6 +5,9 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Aggiunto
+- Nella collezione, accanto alla sigla della lingua, le carte salvate come foil mostrano «Foil». Le altre non hanno quel badge.
+
 ## [0.4] - 2026-11-09
 
 ### Aggiunto

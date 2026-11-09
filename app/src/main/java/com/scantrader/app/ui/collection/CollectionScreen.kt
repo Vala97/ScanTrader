@@ -737,7 +737,7 @@ private fun GalleryTile(
     val price = tilePrice(card)
     val setCode = card.setCode.trim().uppercase()
     val number = card.collectorNumber.trim()
-    val langAbbr = CardLanguage.abbrOf(card.language)
+    val badges = collectionTileBadges(card.language, card.foil)
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -794,7 +794,7 @@ private fun GalleryTile(
                     maxLines = 1,
                 )
             }
-            if (number.isNotEmpty() || langAbbr.isNotEmpty()) {
+            if (number.isNotEmpty() || badges.isNotEmpty()) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -810,18 +810,7 @@ private fun GalleryTile(
                             modifier = Modifier.weight(1f, fill = false),
                         )
                     }
-                    if (langAbbr.isNotEmpty()) {
-                        Text(
-                            text = langAbbr,
-                            color = Color.White,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            modifier = Modifier
-                                .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(4.dp))
-                                .padding(horizontal = 4.dp, vertical = 1.dp),
-                        )
-                    }
+                    badges.forEach { TileBadge(it) }
                 }
             }
             if (price != null) {
@@ -834,6 +823,29 @@ private fun GalleryTile(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun TileBadge(text: String) {
+    Text(
+        text = text,
+        color = Color.White,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        modifier = Modifier
+            .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 4.dp, vertical = 1.dp),
+    )
+}
+
+/** Language abbreviation, then «Foil» only when the saved row is foil. */
+internal fun collectionTileBadges(language: String, foil: Boolean): List<String> {
+    val lang = CardLanguage.abbrOf(language)
+    return buildList {
+        if (lang.isNotEmpty()) add(lang)
+        if (foil) add("Foil")
     }
 }
 

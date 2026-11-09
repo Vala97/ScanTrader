@@ -2,6 +2,7 @@ package com.scantrader.app
 
 import com.scantrader.app.data.catalog.CardLanguageDetector
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.ui.collection.collectionTileBadges
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -289,6 +290,16 @@ class CardLanguageDetectorTest {
         assertEquals("ENG", CardLanguage.abbrOf("English"))
         assertEquals("JAP", CardLanguage.abbrOf("ja"))
         assertEquals("CHS", CardLanguage.abbrOf("zh-cn"))
+    }
+
+    @Test
+    fun foilBadgeSitsBesideTheLanguageAndIsAbsentOtherwise() {
+        assertEquals(listOf("ITA", "Foil"), collectionTileBadges("Italian", foil = true))
+        assertEquals(listOf("ENG"), collectionTileBadges("English", foil = false))
+        assertEquals(listOf("JAP", "Foil"), collectionTileBadges("ja", foil = true))
+        assertEquals(listOf("Foil"), collectionTileBadges("", foil = true))
+        assertEquals(emptyList<String>(), collectionTileBadges("", foil = false))
+        assertFalse(collectionTileBadges("Italian", foil = false).contains("Foil"))
     }
 
     @Test
