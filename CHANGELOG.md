@@ -9,6 +9,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Accanto al valore della collezione, «Aggiorna prezzi» rilegge il prezzo di mercato di tutte le carte di quella collezione, non solo di quelle filtrate. Un prezzo scritto a mano resta quello effettivo. Se la richiesta fallisce resta il prezzo precedente.
 
 ### Modificato
+- Dentro una collezione, «Seleziona» sostituisce l’icona rinomina. Il nome della collezione si rinomina tenendolo premuto; dalla lista delle collezioni la rinomina resta com’è. Si possono selezionare le carte visibili con i filtri attivi, anche se poi i filtri cambiano. «Sposta» le porta in un’altra collezione locale, o in una nuova, tutte le copie o solo una parte. Le righe compatibili si uniscono; lingua, condizione, foil e variante restano separate. Annullare non sposta nulla. La collezione Cardtrader del tracker non si sposta e non riceve carte. Non parte nessun invio al tracker.
 - Nei filtri della collezione il pulsante si chiama «Rimuovi filtri».
 - Tolto il campo Condizione dalle Impostazioni. In conferma e sulla carta resta il selettore, e l’ultima condizione scelta al salvataggio resta quella proposta.
 

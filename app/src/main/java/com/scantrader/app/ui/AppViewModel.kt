@@ -131,6 +131,13 @@ class CollectionViewModel(
         app.repository.collection(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val cards: StateFlow<List<CardEntryEntity>> =
         app.repository.cards(collectionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val moveTargets: StateFlow<List<CollectionEntity>> =
+        app.repository.collectionList()
+            .map { rows ->
+                val mirror = app.tracker.mirrorId
+                rows.filter { it.id != collectionId && it.id != mirror }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val exporting = MutableStateFlow(false)
     val priceRefresh = MutableStateFlow(PriceRefreshState())
     private val priceRefreshRunning = AtomicBoolean(false)
@@ -324,6 +331,41 @@ class CollectionViewModel(
             } finally {
                 priceRefreshRunning.set(false)
             }
+        }
+    }
+
+    /**
+     * Moves the chosen copies into another local collection.
+     * The tracker queue is not touched. Sent-copy counts are only retargeted
+     * so a later «Manda al tracker» does not send the same copy twice.
+     */
+    fun moveSelected(
+        destinationId: Long?,
+        newCollectionName: String?,
+        quantities: Map<Long, Int>,
+        onDone: (com.scantrader.app.data.repo.MoveCardsResult) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = app.repository.moveCards(
+                sourceId = collectionId,
+                destinationId = destinationId,
+                newCollectionName = newCollectionName,
+                requests = quantities.map { (id, qty) ->
+                    com.scantrader.app.data.db.CollectionMove.Request(id, qty)
+                },
+                mirrorId = app.tracker.mirrorId,
+            )
+            if (result.kind == com.scantrader.app.data.repo.MoveCardsKind.Moved) {
+                for (sent in result.sent) {
+                    app.tracker.noteCopiesMoved(
+                        sent.sourceId,
+                        sent.destinationId,
+                        sent.movedCopies,
+                        sent.sourceQuantityBefore,
+                    )
+                }
+            }
+            onDone(result)
         }
     }
 

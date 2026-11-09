@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ButtonDefaults
@@ -80,6 +83,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.db.CardPrice
 import com.scantrader.app.data.db.CardEntryEntity
+import com.scantrader.app.data.db.CollectionEntity
 import com.scantrader.app.data.model.CardCondition
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
@@ -90,7 +94,7 @@ import com.scantrader.app.ui.components.CardImage
 import com.scantrader.app.ui.components.SimpleDropdown
 import com.scantrader.app.ui.theme.scanTraderAppBarColors
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CollectionScreen(
     viewModel: CollectionViewModel,
@@ -102,6 +106,12 @@ fun CollectionScreen(
     val exporting by viewModel.exporting.collectAsStateWithLifecycle()
     val browser by viewModel.browser.collectAsStateWithLifecycle()
     val priceRefresh by viewModel.priceRefresh.collectAsStateWithLifecycle()
+    val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
+    var selecting by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<Long>()) }
+    var moveMessage by remember { mutableStateOf<String?>(null) }
+    var pickingMove by remember { mutableStateOf(false) }
+    var confirmingMove by remember { mutableStateOf<MoveConfirm?>(null) }
     val context = LocalContext.current
     val title = collection?.name ?: "Collezione"
     var editingId by remember { mutableStateOf<Long?>(null) }
@@ -110,6 +120,7 @@ fun CollectionScreen(
     var collapsed by rememberSaveable { mutableStateOf(setOf<String>()) }
     // "Manda al tracker": copie non ancora mandate (le carte salvate dopo il collegamento partono gia' da sole)
     val tracker = (androidx.compose.ui.platform.LocalContext.current.applicationContext as com.scantrader.app.ScanTraderApp).tracker
+    val mirrorCollection = tracker.mirrorId != null && tracker.mirrorId == collection?.id
     val trackerScope = androidx.compose.runtime.rememberCoroutineScope()
     var askSend by remember { mutableStateOf(false) }
     var toSend by remember { mutableStateOf(0) }
@@ -145,7 +156,21 @@ fun CollectionScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(title, fontWeight = FontWeight.SemiBold) },
+                title = {
+                    Text(
+                        title,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.combinedClickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {},
+                            onLongClick = {
+                                renameError = null
+                                renaming = true
+                            },
+                        ),
+                    )
+                },
                 colors = scanTraderAppBarColors(),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -161,11 +186,19 @@ fun CollectionScreen(
                             Icon(Icons.Default.ShoppingCart, contentDescription = "Manda al DLS Tracker")
                         }
                     }
-                    IconButton(onClick = {
-                        renameError = null
-                        renaming = true
-                    }, enabled = collection != null) {
-                        Icon(Icons.Default.Edit, contentDescription = "Rinomina")
+                    if (!mirrorCollection) {
+                        TextButton(onClick = {
+                            if (selecting) {
+                                selecting = false
+                                selected = emptySet()
+                                pickingMove = false
+                                confirmingMove = null
+                            } else {
+                                selecting = true
+                            }
+                        }) {
+                            Text(if (selecting) "Annulla" else "Seleziona")
+                        }
                     }
                     IconButton(
                         onClick = { viewModel.share(context) },
@@ -216,6 +249,24 @@ fun CollectionScreen(
                     priceRefresh = priceRefresh,
                     onRefreshPrices = viewModel::refreshCollectionPrices,
                 )
+                if (selecting) {
+                    SelectionBar(
+                        selected = selected,
+                        cards = cards,
+                        visibleIds = sections.flatMap { it.cards }.map { it.id }.toSet(),
+                        onSelectVisible = { ids -> selected = CollectionSelection.selectVisible(selected, ids) },
+                        onDeselectVisible = { ids -> selected = CollectionSelection.deselectVisible(selected, ids) },
+                        onMove = { pickingMove = true },
+                    )
+                }
+                moveMessage?.let { message ->
+                    Text(
+                        message,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (browser.result.copies == 0) {
                     Column(Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
                         Text("Nessuna carta", style = MaterialTheme.typography.titleLarge)
@@ -263,8 +314,21 @@ fun CollectionScreen(
                             items(section.cards, key = { it.id }, contentType = { _ -> "card" }) { card ->
                                 GalleryTile(
                                     card = card,
-                                    onClick = { editingId = card.id },
-                                    onLongClick = { previewId = card.id },
+                                    selected = if (selecting) card.id in selected else null,
+                                    onClick = {
+                                        if (selecting) {
+                                            selected = CollectionSelection.toggle(selected, card.id)
+                                        } else {
+                                            editingId = card.id
+                                        }
+                                    },
+                                    onLongClick = {
+                                        if (selecting) {
+                                            selected = CollectionSelection.toggle(selected, card.id)
+                                        } else {
+                                            previewId = card.id
+                                        }
+                                    },
                                 )
                             }
                         }
@@ -330,6 +394,55 @@ fun CollectionScreen(
                         RenameCollection.Empty -> renameError = "Inserisci un nome."
                         RenameCollection.Duplicate ->
                             renameError = "Esiste già una collezione con questo nome."
+                    }
+                }
+            },
+        )
+    }
+
+    if (pickingMove) {
+        MoveDestinationDialog(
+            targets = moveTargets,
+            onDismiss = { pickingMove = false },
+            onPick = { id, name ->
+                pickingMove = false
+                confirmingMove = MoveConfirm(
+                    destinationId = id,
+                    destinationName = name,
+                    quantities = CollectionSelection.defaultQuantities(selected, cards),
+                )
+            },
+        )
+    }
+    confirmingMove?.let { draft ->
+        MoveQuantityDialog(
+            draft = draft,
+            cards = cards,
+            onDismiss = { confirmingMove = null },
+            onConfirm = { quantities ->
+                confirmingMove = null
+                viewModel.moveSelected(
+                    destinationId = draft.destinationId,
+                    newCollectionName = if (draft.destinationId == null) draft.destinationName else null,
+                    quantities = quantities,
+                ) { result ->
+                    moveMessage = when (result.kind) {
+                        com.scantrader.app.data.repo.MoveCardsKind.Moved ->
+                            "Spostate ${result.copies} copie."
+                        com.scantrader.app.data.repo.MoveCardsKind.NothingToMove ->
+                            "Nessuna carta spostata."
+                        com.scantrader.app.data.repo.MoveCardsKind.MissingDestination ->
+                            "Collezione non trovata. Nessuna carta è stata spostata."
+                        com.scantrader.app.data.repo.MoveCardsKind.EmptyName ->
+                            "Inserisci un nome. Nessuna carta è stata spostata."
+                        com.scantrader.app.data.repo.MoveCardsKind.MirrorBlocked ->
+                            "La collezione Cardtrader segue il tracker e non si può spostare."
+                        com.scantrader.app.data.repo.MoveCardsKind.SameCollection ->
+                            "Scegli un'altra collezione. Nessuna carta è stata spostata."
+                    }
+                    if (result.kind == com.scantrader.app.data.repo.MoveCardsKind.Moved) {
+                        selecting = false
+                        selected = emptySet()
                     }
                 }
             },
@@ -617,6 +730,7 @@ private fun SectionHeader(section: CollectionSection, open: Boolean = true, onTo
 @Composable
 private fun GalleryTile(
     card: CardEntryEntity,
+    selected: Boolean?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -637,6 +751,18 @@ private fun GalleryTile(
                 .fillMaxWidth()
                 .aspectRatio(63f / 88f),
         )
+        if (selected == true) {
+            Text(
+                text = "✓",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
         Text(
             text = card.quantity.toString(),
             color = Color.White,
@@ -978,4 +1104,130 @@ private fun CardEditSheet(
             Text("Elimina")
         }
     }
+}
+
+private data class MoveConfirm(
+    val destinationId: Long?,
+    val destinationName: String,
+    val quantities: Map<Long, Int>,
+)
+
+@Composable
+private fun SelectionBar(
+    selected: Set<Long>,
+    cards: List<CardEntryEntity>,
+    visibleIds: Set<Long>,
+    onSelectVisible: (Set<Long>) -> Unit,
+    onDeselectVisible: (Set<Long>) -> Unit,
+    onMove: () -> Unit,
+) {
+    val count = CollectionSelection.count(selected, cards, visibleIds)
+    val allVisible = CollectionSelection.allVisibleSelected(selected, visibleIds)
+    Column(Modifier.padding(horizontal = 12.dp)) {
+        Text(
+            CollectionSelection.label(count),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(
+                onClick = {
+                    if (allVisible) onDeselectVisible(visibleIds) else onSelectVisible(visibleIds)
+                },
+                enabled = visibleIds.isNotEmpty(),
+            ) {
+                Text(if (allVisible) "Deseleziona visibili" else "Seleziona visibili")
+            }
+            TextButton(onClick = onMove, enabled = count.rows > 0) { Text("Sposta") }
+        }
+    }
+}
+
+@Composable
+private fun MoveDestinationDialog(
+    targets: List<CollectionEntity>,
+    onDismiss: () -> Unit,
+    onPick: (destinationId: Long?, name: String) -> Unit,
+) {
+    var newName by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sposta in") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (targets.isEmpty()) {
+                    Text("Nessun'altra collezione. Creane una nuova.")
+                }
+                targets.forEach { dest ->
+                    TextButton(
+                        onClick = { onPick(dest.id, dest.name) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(dest.name) }
+                }
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("Nuova collezione") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val name = newName.trim()
+                if (name.isNotEmpty()) onPick(null, name)
+            }) { Text("Nuova collezione") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } },
+    )
+}
+
+@Composable
+private fun MoveQuantityDialog(
+    draft: MoveConfirm,
+    cards: List<CardEntryEntity>,
+    onDismiss: () -> Unit,
+    onConfirm: (Map<Long, Int>) -> Unit,
+) {
+    var quantities by remember(draft) { mutableStateOf(draft.quantities) }
+    val chosen = cards.filter { it.id in quantities && it.quantity > 0 }
+    val copies = chosen.sumOf { card ->
+        (quantities[card.id] ?: card.quantity).coerceIn(1, card.quantity)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Conferma spostamento") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Sposta ${chosen.size} carte ($copies copie) in «${draft.destinationName}». " +
+                        "Annulla non sposta nulla.",
+                )
+                chosen.filter { it.quantity > 1 }.forEach { card ->
+                    val qty = (quantities[card.id] ?: card.quantity).coerceIn(1, card.quantity)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(card.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        IconButton(onClick = {
+                            quantities = quantities + (card.id to (qty - 1).coerceAtLeast(1))
+                        }) { Icon(Icons.Default.Remove, contentDescription = "Meno copie") }
+                        Text(qty.toString())
+                        IconButton(onClick = {
+                            quantities = quantities + (card.id to (qty + 1).coerceAtMost(card.quantity))
+                        }) { Icon(Icons.Default.Add, contentDescription = "Più copie") }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(chosen.associate { it.id to (quantities[it.id] ?: it.quantity).coerceIn(1, it.quantity) }) },
+                enabled = chosen.isNotEmpty(),
+            ) { Text("Sposta") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } },
+    )
 }
