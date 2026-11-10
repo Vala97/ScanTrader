@@ -230,8 +230,11 @@ class CollectionViewModel(
         }
     }
 
-    fun setQuantity(entry: CardEntryEntity, quantity: Int) {
-        viewModelScope.launch { app.repository.updateQuantity(entry, quantity) }
+    fun setQuantity(entry: CardEntryEntity, quantity: Int, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            app.repository.updateQuantity(entry, quantity)
+            onDone()
+        }
     }
 
     fun setCondition(entry: CardEntryEntity, condition: CardCondition) {
@@ -246,8 +249,11 @@ class CollectionViewModel(
         viewModelScope.launch { app.repository.updateFoil(entry, foil) }
     }
 
-    fun delete(entry: CardEntryEntity) {
-        viewModelScope.launch { app.repository.deleteCard(entry) }
+    fun delete(entry: CardEntryEntity, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            app.repository.deleteCard(entry)
+            onDone()
+        }
     }
 
     fun rename(name: String, onDone: (RenameCollection) -> Unit) {
@@ -975,6 +981,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun setAutoSaveConfidencePercent(percent: Int) {
         viewModelScope.launch { app.prefs.setAutoSaveConfidencePercent(percent) }
+    }
+
+    fun setLastCardBarCollapsed(collapsed: Boolean) {
+        viewModelScope.launch { app.prefs.setLastCardBarCollapsed(collapsed) }
     }
 
     /**

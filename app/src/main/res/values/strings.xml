@@ -15,8 +15,13 @@
     <string name="lens_field">Lente</string>
     <string name="lens_hint">La lente scelta resta salvata. Torcia e auto-scan continuano a funzionare.</string>
     <string name="scan_last_saved">Ultima salvata: %1$s · %2$s %3$s · %4$s · %5$s</string>
+    <string name="scan_last_saved_meta">%1$s · %2$s · %3$s · %4$s</string>
+    <string name="scan_last_saved_collapsed">Ultima salvata · %1$s</string>
+    <string name="scan_last_bar_expand">Espandi ultima carta</string>
+    <string name="scan_last_bar_collapse">Comprimi ultima carta</string>
     <string name="scan_framed_saved">Già salvata</string>
     <string name="scan_framed_new">Nuova: %1$s</string>
     <string name="scan_framed_analyzing">Analisi in corso…</string>
+    <string name="scan_open_saved">Apri</string>
     <string name="scan_open_last_card">Apri ultima carta</string>
 </resources>

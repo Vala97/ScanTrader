@@ -101,6 +101,7 @@ fun CollectionScreen(
     onBack: () -> Unit,
     onScan: () -> Unit,
     initialEditId: Long? = null,
+    returnToScan: Boolean = false,
 ) {
     val collection by viewModel.collection.collectAsStateWithLifecycle()
     val cards by viewModel.cards.collectAsStateWithLifecycle()
@@ -118,10 +119,20 @@ fun CollectionScreen(
     var editingId by remember { mutableStateOf<Long?>(null) }
     var previewId by remember { mutableStateOf<Long?>(null) }
     var openedInitialEdit by rememberSaveable { mutableStateOf(false) }
+    var leaveScanEditor by rememberSaveable(returnToScan, initialEditId) {
+        mutableStateOf(returnToScan && initialEditId != null)
+    }
+    fun closeEditor() {
+        val leave = leaveScanEditor
+        leaveScanEditor = false
+        editingId = null
+        if (leave) onBack()
+    }
     androidx.compose.runtime.LaunchedEffect(cards, initialEditId) {
         if (openedInitialEdit || initialEditId == null || cards.isEmpty()) return@LaunchedEffect
         openedInitialEdit = true
         if (cards.any { it.id == initialEditId }) editingId = initialEditId
+        else if (returnToScan) onBack()
     }
     // giochi ed espansioni chiusi a mano (restano chiusi girando il telefono)
     var collapsed by rememberSaveable { mutableStateOf(setOf<String>()) }
@@ -347,26 +358,29 @@ fun CollectionScreen(
 
     if (editing != null) {
         ModalBottomSheet(
-            onDismissRequest = { editingId = null },
+            onDismissRequest = { closeEditor() },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
             CardEditSheet(
                 card = editing,
                 onPreview = { previewId = editing.id },
                 onQuantity = { next ->
-                    viewModel.setQuantity(editing, next)
-                    if (next <= 0) editingId = null
+                    viewModel.setQuantity(editing, next) {
+                        if (next <= 0) closeEditor()
+                    }
                 },
                 onCondition = { viewModel.setCondition(editing, it) },
                 onLanguage = { viewModel.setLanguage(editing, it) },
                 onFoil = { viewModel.setFoil(editing, it) },
-                onManualPrice = { raw, onDone -> viewModel.setManualPrice(editing, raw, onDone) },
+                onManualPrice = { raw, onDone ->
+                    viewModel.setManualPrice(editing, raw) { saved ->
+                        onDone(saved)
+                        if (saved && returnToScan) closeEditor()
+                    }
+                },
                 onRefreshPrice = { onDone -> viewModel.refreshAutomaticPrice(editing, onDone) },
                 onRestorePrice = { viewModel.setManualPrice(editing, null) },
-                onDelete = {
-                    viewModel.delete(editing)
-                    editingId = null
-                },
+                onDelete = { viewModel.delete(editing) { closeEditor() } },
             )
         }
     }

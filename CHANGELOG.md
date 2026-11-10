@@ -7,8 +7,8 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ### Aggiunto
 - Nella collezione, accanto alla sigla della lingua, le carte salvate come foil mostrano «Foil». Le altre non hanno quel badge.
-- In auto-scan, se la carta inquadrata è la stessa appena salvata, compare «Apri ultima carta». Apre la scheda di modifica di quella riga. Una carta nuova non la mostra.
-- La barra sopra i controlli tiene solo l’ultima carta salvata, se è la stessa o una nuova, e «Apri ultima carta». Lo stato dell’analisi resta solo al centro dello schermo. Se non c’è nulla da mostrare, la barra non compare.
+- In auto-scan, «Apri» è sempre sulla barra dell’ultima carta salvata e apre la scheda di modifica di quella riga. Chiudendo la scheda, o dopo «Salva prezzo», si torna allo scan e la fotocamera riparte. Una carta nuova non sostituisce quel tasto.
+- La barra sopra i controlli tiene il nome, il set, il numero, la lingua, l’ora e, se serve, «Già salvata» o «Nuova: …». Il chevron a sinistra la riduce a «Ultima salvata · ora» e la scelta resta salvata. Lo stato dell’analisi resta solo al centro dello schermo. Se non c’è nulla da mostrare, la barra non compare.
 - Gli angoli del riquadro sono bianchi durante la ricerca, azzurri durante l’analisi e verdi quando la carta è riconosciuta.
 - Le impostazioni di scan si aprono dall’icona ingranaggio. Il tasto Auto sta accanto allo scatto.
 

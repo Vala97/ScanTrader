@@ -48,20 +48,30 @@ object AutoScanLive {
         )
     }
 
-    /** Edit link for the saved row. Hidden for a new card or an unknown frame. */
-    fun showOpenLast(framed: FramedCard, entryId: Long?): Boolean =
-        entryId != null && entryId > 0L && framed.sameIdentity && framed.kind != FramedKind.NEW
+    /**
+     * «Apri» is on the bar for the whole visit after a save, including while
+     * another card is in the frame or the frame is still being read.
+     */
+    fun showApri(hasLastSaved: Boolean): Boolean = hasLastSaved
+
+    /** Room row the button opens. Missing when the save did not return an id. */
+    fun savedEntryId(entryId: Long?, collectionId: Long?): Long? =
+        if (collectionId != null && entryId != null && entryId > 0L) entryId else null
 
     /**
      * The bar above the scan controls. The analysis sentence stays on the
      * centered overlay, so this bar only keeps the last saved card, whether
-     * the frame is the same or a new card, and the open action.
+     * the frame is the same or a new card, and «Apri».
      */
-    fun showLastCardBar(hasLastSaved: Boolean, framed: FramedCard, entryId: Long?): Boolean {
+    fun showLastCardBar(hasLastSaved: Boolean, framed: FramedCard): Boolean {
         if (hasLastSaved) return true
-        if (framed.kind != FramedKind.ANALYZING) return true
-        return showOpenLast(framed, entryId)
+        return framed.kind != FramedKind.ANALYZING
     }
+
+    /** Missing preference stays expanded. */
+    fun lastCardBarCollapsed(stored: Boolean?): Boolean = stored == true
+
+    fun toggleLastCardBar(collapsed: Boolean): Boolean = !collapsed
 
     fun showFrameStatus(kind: FramedKind): Boolean = kind != FramedKind.ANALYZING
 

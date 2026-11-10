@@ -20,47 +20,51 @@ class AutoScanLiveTest {
         val named = AutoScanLive.framed(sameAsSaved = false, recognizedName = "Rubacapre")
         assertEquals(FramedKind.NEW, named.kind)
         assertEquals("Rubacapre", named.name)
-        assertFalse(AutoScanLive.showOpenLast(named, 12L))
+        assertFalse(AutoScanLive.showApri(hasLastSaved = false))
         val busy = AutoScanLive.framed(sameAsSaved = false, recognizedName = "  ")
         assertEquals(FramedKind.ANALYZING, busy.kind)
         assertNull(busy.name)
-        assertFalse(AutoScanLive.showOpenLast(busy, 12L))
+        assertFalse(AutoScanLive.showApri(hasLastSaved = false))
     }
 
     @Test
-    fun openLastOnlyForTheKnownSameCard() {
-        val saved = AutoScanLive.framed(sameAsSaved = true, recognizedName = "Boughside Wanderers")
-        assertEquals(FramedKind.SAVED, saved.kind)
-        assertEquals(42L, openId(saved, 42L))
-        val analyzingSame = AutoScanLive.framed(
-            sameAsSaved = false,
-            recognizedName = null,
-            sameIdentity = true,
-        )
-        assertEquals(FramedKind.ANALYZING, analyzingSame.kind)
-        assertEquals(42L, openId(analyzingSame, 42L))
-        val unknown = AutoScanLive.framed(sameAsSaved = false, recognizedName = null, sameIdentity = false)
-        assertNull(openId(unknown, 42L))
-        val other = AutoScanLive.framed(sameAsSaved = false, recognizedName = "Sol Ring", sameIdentity = true)
-        assertEquals(FramedKind.NEW, other.kind)
-        assertNull(openId(other, 42L))
-        assertNull(openId(saved, null))
-        assertNull(openId(saved, 0L))
+    fun apriStaysAvailableForAnyCardInTheFrame() {
+        val different = AutoScanLive.framed(sameAsSaved = false, recognizedName = "Sol Ring")
+        assertEquals(FramedKind.NEW, different.kind)
+        assertEquals(true, AutoScanLive.showApri(hasLastSaved = true))
+        assertEquals(42L, AutoScanLive.savedEntryId(42L, 7L))
+        val busy = AutoScanLive.framed(sameAsSaved = false, recognizedName = null)
+        assertEquals(FramedKind.ANALYZING, busy.kind)
+        assertEquals(true, AutoScanLive.showApri(hasLastSaved = true))
+        assertEquals(true, AutoScanLive.showLastCardBar(hasLastSaved = true, busy))
+        assertNull(AutoScanLive.savedEntryId(null, 7L))
+        assertNull(AutoScanLive.savedEntryId(0L, 7L))
+        assertNull(AutoScanLive.savedEntryId(42L, null))
+        assertFalse(AutoScanLive.showApri(hasLastSaved = false))
     }
 
     @Test
     fun lastCardBarHidesWhenItWouldOnlyRepeatTheAnalysis() {
         val analyzing = AutoScanLive.framed(sameAsSaved = false, recognizedName = null)
         assertFalse(AutoScanLive.showFrameStatus(analyzing.kind))
-        assertFalse(AutoScanLive.showLastCardBar(hasLastSaved = false, analyzing, null))
+        assertFalse(AutoScanLive.showLastCardBar(hasLastSaved = false, analyzing))
 
         val sameWhileBusy = AutoScanLive.framed(sameAsSaved = false, recognizedName = null, sameIdentity = true)
-        assertEquals(true, AutoScanLive.showLastCardBar(hasLastSaved = true, sameWhileBusy, 7L))
-        assertEquals(true, AutoScanLive.showOpenLast(sameWhileBusy, 7L))
+        assertEquals(true, AutoScanLive.showLastCardBar(hasLastSaved = true, sameWhileBusy))
+        assertEquals(true, AutoScanLive.showApri(hasLastSaved = true))
 
         val saved = AutoScanLive.framed(sameAsSaved = true, recognizedName = "Boughside Wanderers")
         assertEquals(true, AutoScanLive.showFrameStatus(saved.kind))
-        assertEquals(true, AutoScanLive.showLastCardBar(hasLastSaved = false, saved, null))
+        assertEquals(true, AutoScanLive.showLastCardBar(hasLastSaved = false, saved))
+    }
+
+    @Test
+    fun collapsedBarStartsOpenAndTheToggleIsRemembered() {
+        assertFalse(AutoScanLive.lastCardBarCollapsed(stored = null))
+        assertFalse(AutoScanLive.lastCardBarCollapsed(stored = false))
+        assertEquals(true, AutoScanLive.lastCardBarCollapsed(stored = true))
+        assertEquals(true, AutoScanLive.toggleLastCardBar(collapsed = false))
+        assertEquals(false, AutoScanLive.toggleLastCardBar(collapsed = true))
     }
 
     @Test
@@ -86,7 +90,4 @@ class AutoScanLiveTest {
             AutoScanLive.framePhase(processing = false, autoStatus = "Inquadra la carta…", framed = FramedKind.ANALYZING),
         )
     }
-
-    private fun openId(framed: com.scantrader.app.scan.FramedCard, entryId: Long?): Long? =
-        if (AutoScanLive.showOpenLast(framed, entryId)) entryId else null
 }

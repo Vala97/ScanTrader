@@ -59,10 +59,15 @@ fun AppNav() {
             )
         }
         composable(
-            "collection/{id}?edit={editId}",
+            "collection/{id}?edit={editId}&returnTo={returnTo}",
             arguments = listOf(
                 navArgument("id") { type = NavType.LongType },
                 navArgument("editId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("returnTo") {
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
@@ -71,10 +76,12 @@ fun AppNav() {
         ) { entry ->
             val id = entry.arguments?.getLong("id") ?: return@composable
             val editId = entry.arguments?.getString("editId")?.toLongOrNull()
+            val returnToScan = entry.arguments?.getString("returnTo") == "scan"
             val vm: CollectionViewModel = viewModel(factory = CollectionViewModel.factory(app, id))
             CollectionScreen(
                 viewModel = vm,
                 initialEditId = editId,
+                returnToScan = returnToScan,
                 onBack = { nav.popBackStack() },
                 onScan = {
                     app.scanSession.targetCollectionId = id
@@ -115,14 +122,20 @@ fun AppNav() {
                     },
                     onOpenLastSaved = {
                         val saved = app.scanSession.lastSaved.value
-                        val framed = app.scanSession.framedCard.value
-                        val entryId = saved?.entryId
                         val collection = saved?.collectionId
+                        val entryId = com.scantrader.app.scan.AutoScanLive.savedEntryId(
+                            saved?.entryId,
+                            collection,
+                        )
                         if (
+                            saved != null &&
                             collection != null &&
-                            com.scantrader.app.scan.AutoScanLive.showOpenLast(framed, entryId)
+                            entryId != null &&
+                            com.scantrader.app.scan.AutoScanLive.showApri(true)
                         ) {
-                            nav.navigate("collection/$collection?edit=$entryId") {
+                            // Scan leaves the composition. Popping this editor
+                            // recomposes it and binds the camera again.
+                            nav.navigate("collection/$collection?edit=$entryId&returnTo=scan") {
                                 launchSingleTop = true
                             }
                         }

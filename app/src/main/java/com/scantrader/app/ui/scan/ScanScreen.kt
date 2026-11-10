@@ -702,6 +702,12 @@ fun ScanScreen(
                 AutoScanBanner(
                     lastSaved = lastSaved,
                     framed = framedCard,
+                    collapsed = defaults.lastCardBarCollapsed,
+                    onToggleCollapsed = {
+                        viewModel.setLastCardBarCollapsed(
+                            com.scantrader.app.scan.AutoScanLive.toggleLastCardBar(defaults.lastCardBarCollapsed),
+                        )
+                    },
                     onOpenLastSaved = onOpenLastSaved,
                     modifier = Modifier.fillMaxWidth(),
                 )
