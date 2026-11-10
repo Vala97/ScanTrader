@@ -12,6 +12,9 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Gli angoli del riquadro sono bianchi durante la ricerca, azzurri durante l’analisi e verdi quando la carta è riconosciuta.
 - Le impostazioni di scan si aprono dall’icona ingranaggio. Il tasto Auto sta accanto allo scatto.
 
+### Modificato
+- L’introduzione al primo avvio parla dei principali TCG, di come inquadrare nome e numero, dell’auto-scan con il riconoscimento della lingua e lo scatto manuale, e dell’export CSV verso CardTrader.
+
 ### Corretto
 - Un titolo Magic più corto non conferma una carta che ha altre parole nel nome, in nessuna delle due direzioni. «Mirkwood» non è «Mirkwood Meditator». Una parola tagliata dall’OCR resta valida. Un titolo troncato resta valido solo se il numero di collezione coincide. Senza numero, lo stem non sceglie la prima carta quando nel set ce ne sono più d’una con lo stesso inizio.
 
