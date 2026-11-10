@@ -102,6 +102,7 @@ fun CollectionScreen(
     onScan: () -> Unit,
     initialEditId: Long? = null,
     returnToScan: Boolean = false,
+    editCopies: Int = 1,
 ) {
     val collection by viewModel.collection.collectAsStateWithLifecycle()
     val cards by viewModel.cards.collectAsStateWithLifecycle()
@@ -122,17 +123,46 @@ fun CollectionScreen(
     var leaveScanEditor by rememberSaveable(returnToScan, initialEditId) {
         mutableStateOf(returnToScan && initialEditId != null)
     }
+    var copySession by remember { mutableStateOf<CopySession?>(null) }
+    var missingCopy by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
     fun closeEditor() {
         val leave = leaveScanEditor
         leaveScanEditor = false
         editingId = null
+        copySession = null
         if (leave) onBack()
     }
+    fun applyCopyEdit(result: com.scantrader.app.data.repo.SingleCopyEditResult) {
+        when (result) {
+            com.scantrader.app.data.repo.SingleCopyEditResult.Missing -> {
+                editingId = null
+                copySession = null
+                missingCopy = true
+            }
+            com.scantrader.app.data.repo.SingleCopyEditResult.Removed -> closeEditor()
+            is com.scantrader.app.data.repo.SingleCopyEditResult.Saved -> {
+                editingId = result.hostId
+                copySession = CopySession(result.hostId, result.ownedQuantity)
+            }
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(initialEditId, returnToScan) {
+        if (openedInitialEdit || initialEditId == null || !returnToScan) return@LaunchedEffect
+        openedInitialEdit = true
+        val row = viewModel.cardInCollection(initialEditId)
+        val owned = editCopies.coerceAtLeast(1)
+        if (row == null || row.quantity <= 0) {
+            missingCopy = true
+        } else {
+            editingId = row.id
+            copySession = CopySession(row.id, owned.coerceAtMost(row.quantity))
+        }
+    }
     androidx.compose.runtime.LaunchedEffect(cards, initialEditId) {
-        if (openedInitialEdit || initialEditId == null || cards.isEmpty()) return@LaunchedEffect
+        if (openedInitialEdit || initialEditId == null || cards.isEmpty() || returnToScan) return@LaunchedEffect
         openedInitialEdit = true
         if (cards.any { it.id == initialEditId }) editingId = initialEditId
-        else if (returnToScan) onBack()
     }
     // giochi ed espansioni chiusi a mano (restano chiusi girando il telefono)
     var collapsed by rememberSaveable { mutableStateOf(setOf<String>()) }
@@ -166,7 +196,11 @@ fun CollectionScreen(
     }
     var renaming by rememberSaveable { mutableStateOf(false) }
     var renameError by remember { mutableStateOf<String?>(null) }
-    val editing = cards.firstOrNull { it.id == editingId }
+    val liveEditing = cards.firstOrNull { it.id == editingId }
+    var heldEditing by remember { mutableStateOf<CardEntryEntity?>(null) }
+    if (liveEditing != null) heldEditing = liveEditing
+    if (editingId == null) heldEditing = null
+    val editing = liveEditing ?: heldEditing?.takeIf { editingId != null }
     val preview = cards.firstOrNull { it.id == previewId }
     val sections = browser.result.sections
 
@@ -275,6 +309,7 @@ fun CollectionScreen(
                         onSelectVisible = { ids -> selected = CollectionSelection.selectVisible(selected, ids) },
                         onDeselectVisible = { ids -> selected = CollectionSelection.deselectVisible(selected, ids) },
                         onMove = { pickingMove = true },
+                        onDelete = { confirmingDelete = true },
                     )
                 }
                 moveMessage?.let { message ->
@@ -357,21 +392,77 @@ fun CollectionScreen(
     }
 
     if (editing != null) {
+        val owned = copySession?.owned
+        val shownQuantity = owned ?: editing.quantity
         ModalBottomSheet(
             onDismissRequest = { closeEditor() },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
             CardEditSheet(
                 card = editing,
+                quantityShown = shownQuantity,
+                showPrice = owned == null || editing.quantity <= owned,
                 onPreview = { previewId = editing.id },
                 onQuantity = { next ->
-                    viewModel.setQuantity(editing, next) {
-                        if (next <= 0) closeEditor()
+                    val session = copySession
+                    if (session == null) {
+                        viewModel.setQuantity(editing, next) {
+                            if (next <= 0) closeEditor()
+                        }
+                    } else {
+                        viewModel.editSingleCopy(
+                            hostId = session.hostId,
+                            ownedQuantity = session.owned,
+                            language = CardLanguage.fromCsvValue(editing.language) ?: CardLanguage.ENGLISH,
+                            condition = CardCondition.entries.firstOrNull { it.csvValue == editing.condition }
+                                ?: CardCondition.NEAR_MINT,
+                            foil = editing.foil,
+                            quantity = next,
+                            onDone = ::applyCopyEdit,
+                        )
                     }
                 },
-                onCondition = { viewModel.setCondition(editing, it) },
-                onLanguage = { viewModel.setLanguage(editing, it) },
-                onFoil = { viewModel.setFoil(editing, it) },
+                onCondition = { condition ->
+                    val session = copySession
+                    if (session == null) viewModel.setCondition(editing, condition)
+                    else viewModel.editSingleCopy(
+                        hostId = session.hostId,
+                        ownedQuantity = session.owned,
+                        language = CardLanguage.fromCsvValue(editing.language) ?: CardLanguage.ENGLISH,
+                        condition = condition,
+                        foil = editing.foil,
+                        quantity = session.owned,
+                        onDone = ::applyCopyEdit,
+                    )
+                },
+                onLanguage = { language ->
+                    val session = copySession
+                    if (session == null) viewModel.setLanguage(editing, language)
+                    else viewModel.editSingleCopy(
+                        hostId = session.hostId,
+                        ownedQuantity = session.owned,
+                        language = language,
+                        condition = CardCondition.entries.firstOrNull { it.csvValue == editing.condition }
+                            ?: CardCondition.NEAR_MINT,
+                        foil = editing.foil,
+                        quantity = session.owned,
+                        onDone = ::applyCopyEdit,
+                    )
+                },
+                onFoil = { foil ->
+                    val session = copySession
+                    if (session == null) viewModel.setFoil(editing, foil)
+                    else viewModel.editSingleCopy(
+                        hostId = session.hostId,
+                        ownedQuantity = session.owned,
+                        language = CardLanguage.fromCsvValue(editing.language) ?: CardLanguage.ENGLISH,
+                        condition = CardCondition.entries.firstOrNull { it.csvValue == editing.condition }
+                            ?: CardCondition.NEAR_MINT,
+                        foil = foil,
+                        quantity = session.owned,
+                        onDone = ::applyCopyEdit,
+                    )
+                },
                 onManualPrice = { raw, onDone ->
                     viewModel.setManualPrice(editing, raw) { saved ->
                         onDone(saved)
@@ -380,7 +471,23 @@ fun CollectionScreen(
                 },
                 onRefreshPrice = { onDone -> viewModel.refreshAutomaticPrice(editing, onDone) },
                 onRestorePrice = { viewModel.setManualPrice(editing, null) },
-                onDelete = { viewModel.delete(editing) { closeEditor() } },
+                onDelete = {
+                    val session = copySession
+                    if (session == null) {
+                        viewModel.delete(editing) { closeEditor() }
+                    } else {
+                        viewModel.editSingleCopy(
+                            hostId = session.hostId,
+                            ownedQuantity = session.owned,
+                            language = CardLanguage.fromCsvValue(editing.language) ?: CardLanguage.ENGLISH,
+                            condition = CardCondition.entries.firstOrNull { it.csvValue == editing.condition }
+                                ?: CardCondition.NEAR_MINT,
+                            foil = editing.foil,
+                            quantity = 0,
+                            onDone = ::applyCopyEdit,
+                        )
+                    }
+                },
             )
         }
     }
@@ -466,6 +573,56 @@ fun CollectionScreen(
                         selected = emptySet()
                     }
                 }
+            },
+        )
+    }
+    if (confirmingDelete) {
+        val count = CollectionSelection.count(
+            selected,
+            cards,
+            sections.flatMap { it.cards }.map { it.id }.toSet(),
+        )
+        AlertDialog(
+            onDismissRequest = { confirmingDelete = false },
+            title = { Text("Elimina") },
+            text = { Text(CollectionSelection.deleteConfirm(count)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingDelete = false
+                        viewModel.deleteSelected(selected) { result ->
+                            if (result.rows > 0) {
+                                selecting = false
+                                selected = emptySet()
+                                moveMessage = if (result.copies == 1) {
+                                    "Eliminata 1 copia."
+                                } else {
+                                    "Eliminate ${result.copies} copie."
+                                }
+                            }
+                        }
+                    },
+                    enabled = count.rows > 0,
+                ) { Text("Elimina") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingDelete = false }) { Text("Annulla") }
+            },
+        )
+    }
+    if (missingCopy) {
+        AlertDialog(
+            onDismissRequest = {
+                missingCopy = false
+                if (returnToScan) onBack()
+            },
+            title = { Text("Copia non trovata") },
+            text = { Text(CollectionSelection.MISSING_COPY) },
+            confirmButton = {
+                TextButton(onClick = {
+                    missingCopy = false
+                    if (returnToScan) onBack()
+                }) { Text("OK") }
             },
         )
     }
@@ -985,6 +1142,8 @@ private fun CardEditSheet(
     onRefreshPrice: ((String?) -> Unit) -> Unit,
     onRestorePrice: () -> Unit,
     onDelete: () -> Unit,
+    quantityShown: Int = card.quantity,
+    showPrice: Boolean = true,
 ) {
     val condition = CardCondition.entries.firstOrNull { it.csvValue == card.condition }
         ?: CardCondition.NEAR_MINT
@@ -1031,15 +1190,15 @@ private fun CardEditSheet(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { onQuantity(card.quantity - 1) }) {
+            IconButton(onClick = { onQuantity(quantityShown - 1) }) {
                 Icon(Icons.Default.Remove, contentDescription = "Meno")
             }
             Text(
-                text = "Quantità ${card.quantity}",
+                text = "Quantità $quantityShown",
                 modifier = Modifier.padding(horizontal = 8.dp),
                 style = MaterialTheme.typography.bodyLarge,
             )
-            IconButton(onClick = { onQuantity(card.quantity + 1) }) {
+            IconButton(onClick = { onQuantity(quantityShown + 1) }) {
                 Icon(Icons.Default.Add, contentDescription = "Più")
             }
         }
@@ -1067,62 +1226,64 @@ private fun CardEditSheet(
                 Switch(checked = card.foil, onCheckedChange = onFoil)
             }
         }
-        OutlinedTextField(
-            value = priceText,
-            onValueChange = {
-                priceText = it
-                priceError = null
-            },
-            label = { Text(if (card.game.foilChoice && card.foil) "Prezzo foil (EUR)" else "Prezzo (EUR)") },
-            singleLine = true,
-            isError = priceError != null,
-            supportingText = {
-                val hint = when {
-                    priceError != null -> priceError
-                    card.manualPriceEur != null ->
-                        "Prezzo manuale. L’automatico resta ${automaticRef ?: "n/d"}."
-                    automaticRef != null ->
-                        "Prezzo automatico: $automaticRef. Un valore qui lo sostituisce anche nell’export."
-                    else ->
-                        "Nessun prezzo automatico. Un valore qui vale anche per l’export."
-                }
-                Text(hint.orEmpty())
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TextButton(
-                onClick = {
-                    onManualPrice(priceText) { saved ->
-                        priceError = if (saved) null else "Inserisci un prezzo maggiore di zero."
-                    }
-                },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Salva prezzo")
-            }
-            TextButton(
-                onClick = {
-                    if (refreshingPrice) return@TextButton
-                    refreshingPrice = true
+        if (showPrice) {
+            OutlinedTextField(
+                value = priceText,
+                onValueChange = {
+                    priceText = it
                     priceError = null
-                    onRefreshPrice { error ->
-                        refreshingPrice = false
-                        priceError = error
-                    }
                 },
-                enabled = !refreshingPrice,
-                modifier = Modifier.weight(1f),
+                label = { Text(if (card.game.foilChoice && card.foil) "Prezzo foil (EUR)" else "Prezzo (EUR)") },
+                singleLine = true,
+                isError = priceError != null,
+                supportingText = {
+                    val hint = when {
+                        priceError != null -> priceError
+                        card.manualPriceEur != null ->
+                            "Prezzo manuale. L’automatico resta ${automaticRef ?: "n/d"}."
+                        automaticRef != null ->
+                            "Prezzo automatico: $automaticRef. Un valore qui lo sostituisce anche nell’export."
+                        else ->
+                            "Nessun prezzo automatico. Un valore qui vale anche per l’export."
+                    }
+                    Text(hint.orEmpty())
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(if (refreshingPrice) "Aggiorno…" else "Aggiorna prezzo")
+                TextButton(
+                    onClick = {
+                        onManualPrice(priceText) { saved ->
+                            priceError = if (saved) null else "Inserisci un prezzo maggiore di zero."
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Salva prezzo")
+                }
+                TextButton(
+                    onClick = {
+                        if (refreshingPrice) return@TextButton
+                        refreshingPrice = true
+                        priceError = null
+                        onRefreshPrice { error ->
+                            refreshingPrice = false
+                            priceError = error
+                        }
+                    },
+                    enabled = !refreshingPrice,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (refreshingPrice) "Aggiorno…" else "Aggiorna prezzo")
+                }
             }
-        }
-        if (card.manualPriceEur != null) {
-            TextButton(onClick = onRestorePrice, modifier = Modifier.fillMaxWidth()) {
-                Text("Ripristina prezzo automatico")
+            if (card.manualPriceEur != null) {
+                TextButton(onClick = onRestorePrice, modifier = Modifier.fillMaxWidth()) {
+                    Text("Ripristina prezzo automatico")
+                }
             }
         }
         TextButton(
@@ -1143,6 +1304,8 @@ private data class MoveConfirm(
     val quantities: Map<Long, Int>,
 )
 
+private data class CopySession(val hostId: Long, val owned: Int)
+
 @Composable
 private fun SelectionBar(
     selected: Set<Long>,
@@ -1151,6 +1314,7 @@ private fun SelectionBar(
     onSelectVisible: (Set<Long>) -> Unit,
     onDeselectVisible: (Set<Long>) -> Unit,
     onMove: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val count = CollectionSelection.count(selected, cards, visibleIds)
     val allVisible = CollectionSelection.allVisibleSelected(selected, visibleIds)
@@ -1170,6 +1334,7 @@ private fun SelectionBar(
                 Text(if (allVisible) "Deseleziona visibili" else "Seleziona visibili")
             }
             TextButton(onClick = onMove, enabled = count.rows > 0) { Text("Sposta") }
+            TextButton(onClick = onDelete, enabled = count.rows > 0) { Text("Elimina") }
         }
     }
 }

@@ -14,6 +14,8 @@ data class LastSavedCard(
     /** Room row of that save. Null when the insert did not return an id. */
     val entryId: Long? = null,
     val collectionId: Long? = null,
+    /** Copies added by this save. Older copies on the same row stay out of «Apri». */
+    val quantity: Int = 1,
 )
 
 enum class FramedKind { SAVED, NEW, ANALYZING }

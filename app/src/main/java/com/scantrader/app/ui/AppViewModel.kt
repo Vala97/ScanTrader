@@ -256,6 +256,39 @@ class CollectionViewModel(
         }
     }
 
+    suspend fun cardInCollection(id: Long): CardEntryEntity? =
+        app.repository.cardInCollection(collectionId, id)
+
+    fun editSingleCopy(
+        hostId: Long,
+        ownedQuantity: Int,
+        language: CardLanguage,
+        condition: CardCondition,
+        foil: Boolean,
+        quantity: Int,
+        onDone: (com.scantrader.app.data.repo.SingleCopyEditResult) -> Unit,
+    ) {
+        viewModelScope.launch {
+            onDone(
+                app.repository.editSingleCopy(
+                    collectionId = collectionId,
+                    hostId = hostId,
+                    ownedQuantity = ownedQuantity,
+                    language = language,
+                    condition = condition,
+                    foil = foil,
+                    quantity = quantity,
+                ),
+            )
+        }
+    }
+
+    fun deleteSelected(ids: Set<Long>, onDone: (com.scantrader.app.data.repo.DeleteCardsResult) -> Unit) {
+        viewModelScope.launch {
+            onDone(app.repository.deleteCards(collectionId, ids))
+        }
+    }
+
     fun rename(name: String, onDone: (RenameCollection) -> Unit) {
         viewModelScope.launch { onDone(app.repository.renameCollection(collectionId, name)) }
     }
@@ -2690,6 +2723,7 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
                         identityKey = card.identityKey(),
                         entryId = rowId,
                         collectionId = collectionId,
+                        quantity = quantity.coerceAtLeast(1),
                     ),
                 )
                 app.scanSession.targetCollectionId = collectionId

@@ -59,7 +59,7 @@ fun AppNav() {
             )
         }
         composable(
-            "collection/{id}?edit={editId}&returnTo={returnTo}",
+            "collection/{id}?edit={editId}&returnTo={returnTo}&copies={copies}",
             arguments = listOf(
                 navArgument("id") { type = NavType.LongType },
                 navArgument("editId") {
@@ -72,16 +72,23 @@ fun AppNav() {
                     nullable = true
                     defaultValue = null
                 },
+                navArgument("copies") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { entry ->
             val id = entry.arguments?.getLong("id") ?: return@composable
             val editId = entry.arguments?.getString("editId")?.toLongOrNull()
             val returnToScan = entry.arguments?.getString("returnTo") == "scan"
+            val editCopies = entry.arguments?.getString("copies")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
             val vm: CollectionViewModel = viewModel(factory = CollectionViewModel.factory(app, id))
             CollectionScreen(
                 viewModel = vm,
                 initialEditId = editId,
                 returnToScan = returnToScan,
+                editCopies = editCopies,
                 onBack = { nav.popBackStack() },
                 onScan = {
                     app.scanSession.targetCollectionId = id
@@ -135,7 +142,9 @@ fun AppNav() {
                         ) {
                             // Scan leaves the composition. Popping this editor
                             // recomposes it and binds the camera again.
-                            nav.navigate("collection/$collection?edit=$entryId&returnTo=scan") {
+                            nav.navigate(
+                                "collection/$collection?edit=$entryId&returnTo=scan&copies=${saved.quantity.coerceAtLeast(1)}",
+                            ) {
                                 launchSingleTop = true
                             }
                         }
