@@ -29,6 +29,8 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -60,8 +62,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CenterFocusStrong
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -556,6 +556,11 @@ fun ScanScreen(
                 )
                 CardFrameOverlay(
                     showBothBottomCorners = game == Game.POKEMON,
+                    phase = com.scantrader.app.scan.AutoScanLive.framePhase(
+                        processing = processing,
+                        autoStatus = autoStatus,
+                        framed = framedCard.kind,
+                    ),
                     lockedWidth = guideViewWidth,
                     lockedHeight = guideViewHeight,
                     onLockViewport = viewModel::lockGuideViewport,
@@ -701,59 +706,21 @@ fun ScanScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = ScanColors.panel,
-                modifier = Modifier.fillMaxWidth(),
+            AnimatedVisibility(
+                visible = panelExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
             ) {
-                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { panelExpanded = !panelExpanded },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = ScanColors.panel,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Settings, null, tint = Gold, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                if (panelExpanded) "Nascondi impostazioni" else "Impostazioni scan",
-                                color = FrameAccent,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 14.sp,
-                            )
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (!panelExpanded) {
-                                if (autoScan) {
-                                    CompactChip(
-                                        icon = Icons.Filled.CenterFocusStrong,
-                                        label = "Auto",
-                                        active = true,
-                                        onClick = { viewModel.setAutoScan(false) },
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                }
-                            }
-                            Icon(
-                                if (panelExpanded) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
-                                contentDescription = null,
-                                tint = FrameAccent,
-                            )
-                        }
-                    }
-
-                    AnimatedVisibility(
-                        visible = panelExpanded,
-                        enter = expandVertically() + fadeIn(),
-                        exit = shrinkVertically() + fadeOut(),
-                    ) {
-                        Column(
-                            Modifier.padding(top = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Text("Illuminazione", color = FrameAccent, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                        Text("Illuminazione", color = FrameAccent, fontWeight = FontWeight.Medium, fontSize = 13.sp)
 
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -846,7 +813,6 @@ fun ScanScreen(
                                 percent = defaults.autoSaveConfidencePercent,
                                 onChange = viewModel::setAutoSaveConfidencePercent,
                             )
-                        }
                     }
                 }
             }
@@ -898,22 +864,30 @@ fun ScanScreen(
                     )
                 }
             }
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                TextButton(onClick = onManualSearch) {
+            Box(Modifier.fillMaxWidth()) {
+                TextButton(
+                    onClick = onManualSearch,
+                    modifier = Modifier.align(Alignment.CenterStart),
+                ) {
                     Icon(Icons.Filled.Search, null, tint = Gold)
                     Spacer(Modifier.width(6.dp))
                     Text("Cerca", color = Gold)
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (ManualShutter.showManualButton(autoScan)) {
-                        Spacer(Modifier.size(ManualShutter.MANUAL_DIAMETER_DP.dp))
-                        Spacer(Modifier.width(12.dp))
-                    }
+                Row(
+                    Modifier.align(Alignment.Center),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CompactChip(
+                        icon = Icons.Filled.CenterFocusStrong,
+                        label = "Auto",
+                        active = autoScan,
+                        onClick = {
+                            navigated.set(false)
+                            viewModel.setAutoScan(!autoScan)
+                        },
+                    )
+                    Spacer(Modifier.width(10.dp))
                     if (ManualShutter.showWaitingRing(autoScan)) {
                         Box(
                             modifier = Modifier
@@ -980,7 +954,16 @@ fun ScanScreen(
                     }
                 }
 
-                Spacer(Modifier.width(72.dp))
+                IconButton(
+                    onClick = { panelExpanded = !panelExpanded },
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                ) {
+                    Icon(
+                        Icons.Filled.Settings,
+                        contentDescription = "Impostazioni scan",
+                        tint = if (panelExpanded) Gold else FrameAccent,
+                    )
+                }
             }
         }
     }
@@ -1153,11 +1136,18 @@ private fun ModeToggleCard(
 @Composable
 private fun CardFrameOverlay(
     showBothBottomCorners: Boolean = false,
+    phase: com.scantrader.app.scan.AutoScanLive.FramePhase,
     lockedWidth: Float,
     lockedHeight: Float,
     onLockViewport: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val target = when (phase) {
+        com.scantrader.app.scan.AutoScanLive.FramePhase.SEARCHING -> Color.White
+        com.scantrader.app.scan.AutoScanLive.FramePhase.ANALYZING -> ScanColors.accent
+        com.scantrader.app.scan.AutoScanLive.FramePhase.RECOGNIZED -> ScanColors.recognized
+    }
+    val accent by animateColorAsState(target, tween(durationMillis = 280), label = "frameCorners")
     Canvas(
         modifier.onSizeChanged { size ->
             onLockViewport(size.width.toFloat(), size.height.toFloat())
@@ -1189,18 +1179,18 @@ private fun CardFrameOverlay(
             lineTo(x3, y3)
         }
 
-        val accent = FrameAccent.copy(alpha = 0.95f)
+        val accentStroke = accent.copy(alpha = 0.95f)
         listOf(
             cornerPath(left, top + corner, left, top, left + corner, top),
             cornerPath(right - corner, top, right, top, right, top + corner),
             cornerPath(left, bottom - corner, left, bottom, left + corner, bottom),
             cornerPath(right - corner, bottom, right, bottom, right, bottom - corner),
         ).forEach { path ->
-            drawPath(path, accent, style = Stroke(width = stroke, cap = StrokeCap.Round))
+            drawPath(path, accentStroke, style = Stroke(width = stroke, cap = StrokeCap.Round))
         }
 
         drawRoundRect(
-            color = accent.copy(alpha = 0.2f),
+            color = FrameAccent.copy(alpha = 0.2f),
             topLeft = Offset(left, top),
             size = Size(frameW, frameH),
             cornerRadius = CornerRadius(18f, 18f),

@@ -51,4 +51,30 @@ object AutoScanLive {
     /** Edit link for the saved row. Hidden for a new card or an unknown frame. */
     fun showOpenLast(framed: FramedCard, entryId: Long?): Boolean =
         entryId != null && entryId > 0L && framed.sameIdentity && framed.kind != FramedKind.NEW
+
+    /**
+     * The bar above the scan controls. The analysis sentence stays on the
+     * centered overlay, so this bar only keeps the last saved card, whether
+     * the frame is the same or a new card, and the open action.
+     */
+    fun showLastCardBar(hasLastSaved: Boolean, framed: FramedCard, entryId: Long?): Boolean {
+        if (hasLastSaved) return true
+        if (framed.kind != FramedKind.ANALYZING) return true
+        return showOpenLast(framed, entryId)
+    }
+
+    fun showFrameStatus(kind: FramedKind): Boolean = kind != FramedKind.ANALYZING
+
+    enum class FramePhase { SEARCHING, ANALYZING, RECOGNIZED }
+
+    /** Corner color: white while searching, accent while analyzing, green once a card is known. */
+    fun framePhase(processing: Boolean, autoStatus: String?, framed: FramedKind): FramePhase {
+        if (processing || autoStatus == "Analisi in corso…" || autoStatus == "Scryfall occupato, riprovo…") {
+            return FramePhase.ANALYZING
+        }
+        if (framed == FramedKind.SAVED || framed == FramedKind.NEW || autoStatus == "Carta trovata") {
+            return FramePhase.RECOGNIZED
+        }
+        return FramePhase.SEARCHING
+    }
 }

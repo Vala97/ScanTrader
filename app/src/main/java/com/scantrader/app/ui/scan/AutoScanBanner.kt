@@ -29,8 +29,9 @@ import com.scantrader.app.ui.theme.ScanColors
 import java.util.Date
 
 /**
- * Always on during auto-scan, including while confirm is open.
- * The last saved line and the card in the guide right now.
+ * Last saved card, same or new card in the frame, and the open action.
+ * The analysis sentence stays on the centered overlay, so this bar is absent
+ * when it would only repeat that sentence.
  */
 @Composable
 fun AutoScanBanner(
@@ -39,12 +40,18 @@ fun AutoScanBanner(
     onOpenLastSaved: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val framedLine = when (framed.kind) {
-        FramedKind.SAVED -> stringResource(R.string.scan_framed_saved)
-        FramedKind.NEW -> stringResource(R.string.scan_framed_new, framed.name.orEmpty())
-        FramedKind.ANALYZING -> stringResource(R.string.scan_framed_analyzing)
-    }
     val openLast = AutoScanLive.showOpenLast(framed, lastSaved?.entryId)
+    val showStatus = AutoScanLive.showFrameStatus(framed.kind)
+    if (!AutoScanLive.showLastCardBar(lastSaved != null, framed, lastSaved?.entryId)) return
+    val framedLine = if (showStatus) {
+        when (framed.kind) {
+            FramedKind.SAVED -> stringResource(R.string.scan_framed_saved)
+            FramedKind.NEW -> stringResource(R.string.scan_framed_new, framed.name.orEmpty())
+            FramedKind.ANALYZING -> ""
+        }
+    } else {
+        ""
+    }
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
@@ -70,35 +77,44 @@ fun AutoScanBanner(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    framedLine,
-                    color = ScanColors.accent,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                if (openLast) {
-                    TextButton(
-                        onClick = onOpenLastSaved,
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) {
-                        Text(
-                            stringResource(R.string.scan_open_last_card),
-                            color = Color(0xFF64B5F6),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                        )
+            if (showStatus) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        framedLine,
+                        color = ScanColors.accent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (openLast) {
+                        OpenLastCardButton(onOpenLastSaved)
                     }
                 }
+            } else if (openLast) {
+                OpenLastCardButton(onOpenLastSaved)
             }
         }
+    }
+}
+
+@Composable
+private fun OpenLastCardButton(onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.heightIn(min = 48.dp),
+    ) {
+        Text(
+            stringResource(R.string.scan_open_last_card),
+            color = Color(0xFF64B5F6),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }

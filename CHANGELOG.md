@@ -7,7 +7,10 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ### Aggiunto
 - Nella collezione, accanto alla sigla della lingua, le carte salvate come foil mostrano «Foil». Le altre non hanno quel badge.
-- In auto-scan, se la carta inquadrata è la stessa appena salvata, a destra di «Già salvata» o di «Analisi in corso…» compare «Apri ultima carta». Apre la scheda di modifica di quella riga. Una carta nuova non la mostra.
+- In auto-scan, se la carta inquadrata è la stessa appena salvata, compare «Apri ultima carta». Apre la scheda di modifica di quella riga. Una carta nuova non la mostra.
+- La barra sopra i controlli tiene solo l’ultima carta salvata, se è la stessa o una nuova, e «Apri ultima carta». Lo stato dell’analisi resta solo al centro dello schermo. Se non c’è nulla da mostrare, la barra non compare.
+- Gli angoli del riquadro sono bianchi durante la ricerca, azzurri durante l’analisi e verdi quando la carta è riconosciuta.
+- Le impostazioni di scan si aprono dall’icona ingranaggio. Il tasto Auto sta accanto allo scatto.
 
 ### Corretto
 - Un titolo Magic più corto non conferma una carta che ha altre parole nel nome, in nessuna delle due direzioni. «Mirkwood» non è «Mirkwood Meditator». Una parola tagliata dall’OCR resta valida. Un titolo troncato resta valido solo se il numero di collezione coincide. Senza numero, lo stem non sceglie la prima carta quando nel set ce ne sono più d’una con lo stesso inizio.

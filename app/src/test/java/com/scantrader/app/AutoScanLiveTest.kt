@@ -48,6 +48,45 @@ class AutoScanLiveTest {
         assertNull(openId(saved, 0L))
     }
 
+    @Test
+    fun lastCardBarHidesWhenItWouldOnlyRepeatTheAnalysis() {
+        val analyzing = AutoScanLive.framed(sameAsSaved = false, recognizedName = null)
+        assertFalse(AutoScanLive.showFrameStatus(analyzing.kind))
+        assertFalse(AutoScanLive.showLastCardBar(hasLastSaved = false, analyzing, null))
+
+        val sameWhileBusy = AutoScanLive.framed(sameAsSaved = false, recognizedName = null, sameIdentity = true)
+        assertEquals(true, AutoScanLive.showLastCardBar(hasLastSaved = true, sameWhileBusy, 7L))
+        assertEquals(true, AutoScanLive.showOpenLast(sameWhileBusy, 7L))
+
+        val saved = AutoScanLive.framed(sameAsSaved = true, recognizedName = "Boughside Wanderers")
+        assertEquals(true, AutoScanLive.showFrameStatus(saved.kind))
+        assertEquals(true, AutoScanLive.showLastCardBar(hasLastSaved = false, saved, null))
+    }
+
+    @Test
+    fun frameCornersFollowSearchAnalysisAndRecognition() {
+        assertEquals(
+            AutoScanLive.FramePhase.ANALYZING,
+            AutoScanLive.framePhase(processing = true, autoStatus = null, framed = FramedKind.ANALYZING),
+        )
+        assertEquals(
+            AutoScanLive.FramePhase.ANALYZING,
+            AutoScanLive.framePhase(processing = false, autoStatus = "Analisi in corso…", framed = FramedKind.ANALYZING),
+        )
+        assertEquals(
+            AutoScanLive.FramePhase.RECOGNIZED,
+            AutoScanLive.framePhase(processing = false, autoStatus = "Carta trovata", framed = FramedKind.SAVED),
+        )
+        assertEquals(
+            AutoScanLive.FramePhase.RECOGNIZED,
+            AutoScanLive.framePhase(processing = false, autoStatus = null, framed = FramedKind.NEW),
+        )
+        assertEquals(
+            AutoScanLive.FramePhase.SEARCHING,
+            AutoScanLive.framePhase(processing = false, autoStatus = "Inquadra la carta…", framed = FramedKind.ANALYZING),
+        )
+    }
+
     private fun openId(framed: com.scantrader.app.scan.FramedCard, entryId: Long?): Long? =
         if (AutoScanLive.showOpenLast(framed, entryId)) entryId else null
 }
