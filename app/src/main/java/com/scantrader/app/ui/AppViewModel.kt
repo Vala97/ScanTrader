@@ -2118,9 +2118,18 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     it,
                     ocrTitle,
                     matched.printedLang,
+                    ocrText = text,
                 )
             }
             val copyTop = resolved?.card
+            val handed = com.scantrader.app.data.catalog.CardLanguageDetector.handedLanguage(
+                resolved?.detection,
+            )
+            app.scanSession.pendingLanguage = if (handed != null) resolved?.detection else null
+            if (handed != null) {
+                app.scanSession.language = handed
+                app.scanSession.languageEvidence = resolved?.detection?.evidence
+            }
             if (resolved != null &&
                 (resolved.detection.language != null || !matched.printedLang.isNullOrBlank())
             ) {
@@ -2537,6 +2546,8 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     val errorMessage get() = app.scanSession.errorMessage
     val preferredCollectionId: Long? get() = app.scanSession.targetCollectionId
     val sessionLanguage: CardLanguage? get() = app.scanSession.language
+    val pendingLanguage: com.scantrader.app.data.catalog.CardLanguageDetector.Detection?
+        get() = app.scanSession.pendingLanguage
     val sessionCondition: CardCondition? get() = app.scanSession.condition
     /** True when the confirm screen was reached via auto-scan hit. */
     val fromAutoScan: Boolean

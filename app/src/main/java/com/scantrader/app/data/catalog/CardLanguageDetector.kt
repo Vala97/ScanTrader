@@ -199,6 +199,7 @@ object CardLanguageDetector {
         card: IdentifiedCard,
         ocrName: String?,
         collectorLang: String? = null,
+        ocrText: String? = null,
     ): CopyLanguage {
         if (card.game != Game.MTG) return CopyLanguage(card, Detection(null, "none"))
         val english = card.catalogName?.takeIf { it.isNotBlank() }
@@ -208,7 +209,7 @@ object CardLanguageDetector {
         if (known != null && known != CardLanguage.ENGLISH && !card.printedName.isNullOrBlank()) {
             printed[known] = card.printedName
         }
-        val detection = explain(ocrName, english, printed, collectorLang = collectorLang)
+        val detection = explain(ocrName, english, printed, ocrText = ocrText, collectorLang = collectorLang)
         val token = CardLanguage.fromCatalogCode(collectorLang.orEmpty())
         val englishTitle = detection.language == CardLanguage.ENGLISH &&
             detection.evidence.contains("name=en")
@@ -265,8 +266,12 @@ object CardLanguageDetector {
         return score(ocr, title) >= MIN_SCORE
     }
 
-    /** `zz` or another strong cue. A lone `di` / `del` is not support for an IT token. */
+    /** `zz` or a real rules word. A lone `di` / `del` is not support for an IT token. */
     private fun italianTextSupport(ocrName: String?, ocrText: String?): Boolean {
+        val blob = listOfNotNull(ocrName, ocrText).filter { it.isNotBlank() }.joinToString("\n")
+        if (blob.isBlank()) return false
+        if (ENGLISH_RULES.containsMatchIn(blob)) return false
+        if (ITALIAN_RULES.containsMatchIn(blob)) return true
         val labels = cueLabels(CardLanguage.ITALIAN, ocrName, ocrText)
         if (labels.isEmpty()) return false
         return labels.any { it != "di" && it != "del" }
@@ -275,7 +280,9 @@ object CardLanguageDetector {
     private fun spanishTextSupport(ocrName: String?, ocrText: String?): Boolean {
         val raw = listOfNotNull(ocrName, ocrText).filter { it.isNotBlank() }.joinToString("\n")
         if (raw.isEmpty()) return false
+        if (ENGLISH_RULES.containsMatchIn(raw)) return false
         if (raw.contains('ñ') || raw.contains('Ñ')) return true
+        if (SPANISH_RULES.containsMatchIn(raw)) return true
         return Regex("""(?i)\b(?:los|las)\b""").containsMatchIn(raw)
     }
 
@@ -503,6 +510,43 @@ object CardLanguageDetector {
         }
         return null
     }
+
+    /**
+     * A language the scan can hand to confirm. A title match, a trusted collector
+     * token, or a rules-title inference counts. An empty or kept result does not.
+     */
+    fun handedLanguage(detection: Detection?): CardLanguage? {
+        val language = detection?.language ?: return null
+        val evidence = detection.evidence
+        if (evidence.isBlank() || evidence == "none" || evidence == "kept") return null
+        val confident = evidence.contains("name=") ||
+            evidence.contains("collector=") ||
+            evidence.contains("title=")
+        return language.takeIf { confident }
+    }
+
+    /** Confident scan result, otherwise the language already on the session. */
+    fun confirmLanguage(
+        detection: Detection?,
+        session: CardLanguage?,
+        fallback: CardLanguage,
+    ): CardLanguage = handedLanguage(detection) ?: session ?: fallback
+
+    private val ITALIAN_RULES = Regex(
+        """(?i)\b(?:creatura|istantaneo|stregoneria|incantesimo|artefatto|terra|""" +
+            """volare|travolgere|cautela|quando|ogniqualvolta|controlli)\b|""" +
+            """tocco letale|fino alla fine del turno""",
+    )
+    private val SPANISH_RULES = Regex(
+        """(?i)\b(?:criatura|instant[aá]neo|conjuro|encantamiento|artefacto|tierra|""" +
+            """volar|arrollar|prisa|vigilancia|cuando|controlas)\b|""" +
+            """toque mortal|hasta el final del turno|siempre que""",
+    )
+    private val ENGLISH_RULES = Regex(
+        """(?i)\b(?:creature|instant|sorcery|enchantment|artifact|land|""" +
+            """flying|trample|haste|vigilance|deathtouch|lifelink|whenever|when|controls?)\b|""" +
+            """until end of turn|you control""",
+    )
 
     private fun fold(raw: String): String {
         val decomposed = Normalizer.normalize(raw, Normalizer.Form.NFD)

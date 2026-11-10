@@ -72,6 +72,12 @@ class ScanSession {
 
     /** Evidence for the last confident [language]. A failed lookup must not replace it. */
     var languageEvidence: String? = null
+
+    /**
+     * Language resolved on the scan that opened confirm. Null when that scan
+     * was not confident, so confirm keeps [language].
+     */
+    var pendingLanguage: com.scantrader.app.data.catalog.CardLanguageDetector.Detection? = null
     var condition: CardCondition? = null
 
     /**

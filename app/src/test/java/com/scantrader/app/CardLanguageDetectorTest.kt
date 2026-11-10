@@ -352,6 +352,67 @@ class CardLanguageDetectorTest {
         assertNull(none.language)
     }
 
+    @Test
+    fun sputavelenoTitleAndTokenOpenConfirmInItalian() {
+        val detection = CardLanguageDetector.explain(
+            ocrName = "Sputaveleno",
+            englishName = "Attercop",
+            printed = mapOf(CardLanguage.ITALIAN to "Sputaveleno"),
+            collectorLang = "it",
+        )
+        assertEquals(CardLanguage.ITALIAN, detection.language)
+        assertTrue(detection.evidence.contains("name=it"))
+        assertEquals(
+            CardLanguage.ITALIAN,
+            CardLanguageDetector.confirmLanguage(
+                detection = detection,
+                session = CardLanguage.ENGLISH,
+                fallback = CardLanguage.ENGLISH,
+            ),
+        )
+        assertEquals(
+            CardLanguage.ENGLISH,
+            CardLanguageDetector.confirmLanguage(
+                detection = null,
+                session = CardLanguage.ENGLISH,
+                fallback = CardLanguage.ENGLISH,
+            ),
+        )
+    }
+
+    @Test
+    fun italianRulesTextSupportsAnItTokenWhenTheTitleIsUnreadable() {
+        val detected = CardLanguageDetector.explain(
+            ocrName = "xyzabc qqq",
+            englishName = "Attercop",
+            printed = mapOf(CardLanguage.ITALIAN to "Sputaveleno"),
+            ocrText = "Creatura — Ragno\nTocco letale\nVolare\nfino alla fine del turno",
+            collectorLang = "it",
+        )
+        assertEquals(CardLanguage.ITALIAN, detected.language)
+        assertTrue(detected.evidence.contains("collector=it"))
+    }
+
+    @Test
+    fun englishRulesTextDoesNotLetAMisreadItTokenWin() {
+        val detected = CardLanguageDetector.explain(
+            ocrName = "xyzabc qqq",
+            englishName = "Attercop",
+            printed = mapOf(CardLanguage.ITALIAN to "Sputaveleno"),
+            ocrText = "Creature — Spider\nDeathtouch\nUntil end of turn",
+            collectorLang = "it",
+        )
+        assertNull(detected.language)
+        assertEquals(
+            CardLanguage.ENGLISH,
+            CardLanguageDetector.confirmLanguage(
+                detection = detected,
+                session = CardLanguage.ENGLISH,
+                fallback = CardLanguage.ENGLISH,
+            ),
+        )
+    }
+
     private fun pokemon(text: String): CardLanguage? = CardLanguageDetector.detect(
         ocrName = null,
         englishName = null,

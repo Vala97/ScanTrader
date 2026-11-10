@@ -18,6 +18,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ### Corretto
 - «Apri» modifica solo le copie appena salvate: lingua, condizione, foil e quantità. Le altre copie della stessa carta restano com’erano. Se la riga è stata eliminata o spostata, compare un messaggio.
+- Se lo scan riconosce la lingua con sicurezza, la conferma si apre già su quella lingua. Un IT o un ES sul bordo vale anche quando il testo ha parole di regole italiane o spagnole; un testo inglese non diventa italiano solo perché il bordo è stato letto IT.
 - Per Magic, la lingua stampata accanto al set (EN) conta come prova. Un IT o un ES da soli no: servono il titolo o il testo. Un «di» isolato non sceglie l’italiano se il bordo dice EN, e l’inglese sostituisce la lingua del catalogo quando il titolo letto è inglese o il bordo dice EN.
 - Un titolo Magic più corto non conferma una carta che ha altre parole nel nome, in nessuna delle due direzioni. «Mirkwood» non è «Mirkwood Meditator». Una parola tagliata dall’OCR resta valida. Un titolo troncato resta valido solo se il numero di collezione coincide. Senza numero, lo stem non sceglie la prima carta quando nel set ce ne sono più d’una con lo stesso inizio.
 
