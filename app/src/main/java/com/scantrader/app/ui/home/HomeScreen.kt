@@ -69,6 +69,7 @@ fun HomeScreen(
     var newName by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<CollectionWithCount?>(null) }
     var renameError by remember { mutableStateOf<String?>(null) }
+    var pendingDelete by remember { mutableStateOf<CollectionWithCount?>(null) }
     LaunchedEffect(showOnboarding) {
         if (viewModel.consumeOnboardingLaunch()) onShowOnboarding()
     }
@@ -154,10 +155,10 @@ fun HomeScreen(
                             }) {
                                 Icon(Icons.Default.Edit, contentDescription = "Rinomina")
                             }
-                            IconButton(onClick = { viewModel.delete(collection.id) }) {
+                            IconButton(onClick = { pendingDelete = collection }) {
                                 Icon(
                                     Icons.Default.Delete,
-                                    contentDescription = "Elimina",
+                                    contentDescription = "Cancella",
                                     tint = MaterialTheme.colorScheme.error,
                                 )
                             }
@@ -216,6 +217,30 @@ fun HomeScreen(
                             renameError = "Esiste già una collezione con questo nome."
                     }
                 }
+            },
+        )
+    }
+
+    pendingDelete?.let { collection ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            shape = RoundedCornerShape(28.dp),
+            title = { Text("Cancella") },
+            text = {
+                Text(CollectionDeletePrompt.message(collection.name, collection.rowCount, collection.cardCount))
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (CollectionDeletePrompt.deletes(CollectionDeletePrompt.Action.Confirm)) {
+                        viewModel.delete(collection.id)
+                    }
+                    pendingDelete = null
+                }) {
+                    Text("Elimina", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Annulla") }
             },
         )
     }
