@@ -78,7 +78,8 @@ object CardLanguageDetector {
         printed: Map<CardLanguage, String>,
         ocrText: String? = null,
         pokemonSignals: Boolean = false,
-    ): CardLanguage? = explain(ocrName, englishName, printed, ocrText, pokemonSignals).language
+        collectorLang: String? = null,
+    ): CardLanguage? = explain(ocrName, englishName, printed, ocrText, pokemonSignals, collectorLang).language
 
     /**
      * Pokémon rules text wins when the printed name is the same in every language
@@ -90,6 +91,7 @@ object CardLanguageDetector {
         printed: Map<CardLanguage, String>,
         ocrText: String? = null,
         pokemonSignals: Boolean = false,
+        collectorLang: String? = null,
     ): Detection {
         val named = pickName(ocrName, englishName, printed)
         val cardText = if (pokemonSignals) {
@@ -106,7 +108,13 @@ object CardLanguageDetector {
             else -> null
         }
         if (language == null && !pokemonSignals) {
-            inferPrintedLanguage(ocrName, englishName)?.let { return it }
+            trustedCollector(collectorLang, ocrName, ocrText, printed)?.let { return it }
+            inferPrintedLanguage(
+                ocrName = ocrName,
+                englishName = englishName,
+                italianTitle = printed[CardLanguage.ITALIAN],
+                collectorLang = collectorLang,
+            )?.let { return it }
         }
         val evidence = buildList {
             val labels = when {
@@ -182,12 +190,16 @@ object CardLanguageDetector {
      * The English catalog name, id, and price stay on the card: Morningtide has
      * no Italian Scryfall object, but the title printed on the card is still Italian.
      */
-    fun applyCopyLanguage(card: IdentifiedCard, ocrName: String?): IdentifiedCard =
-        resolveCopyLanguage(card, ocrName).card
+    fun applyCopyLanguage(card: IdentifiedCard, ocrName: String?, collectorLang: String? = null): IdentifiedCard =
+        resolveCopyLanguage(card, ocrName, collectorLang).card
 
     data class CopyLanguage(val card: IdentifiedCard, val detection: Detection)
 
-    fun resolveCopyLanguage(card: IdentifiedCard, ocrName: String?): CopyLanguage {
+    fun resolveCopyLanguage(
+        card: IdentifiedCard,
+        ocrName: String?,
+        collectorLang: String? = null,
+    ): CopyLanguage {
         if (card.game != Game.MTG) return CopyLanguage(card, Detection(null, "none"))
         val english = card.catalogName?.takeIf { it.isNotBlank() }
             ?: card.name.takeUnless { it.equals(card.printedName, ignoreCase = true) }
@@ -196,7 +208,26 @@ object CardLanguageDetector {
         if (known != null && known != CardLanguage.ENGLISH && !card.printedName.isNullOrBlank()) {
             printed[known] = card.printedName
         }
-        val detection = explain(ocrName, english, printed)
+        val detection = explain(ocrName, english, printed, collectorLang = collectorLang)
+        val token = CardLanguage.fromCatalogCode(collectorLang.orEmpty())
+        val englishTitle = detection.language == CardLanguage.ENGLISH &&
+            detection.evidence.contains("name=en")
+        val englishToken = token == CardLanguage.ENGLISH
+        val namedOtherLanguage = detection.language != null &&
+            detection.language != CardLanguage.ENGLISH &&
+            detection.evidence.contains("name=")
+        if ((englishTitle || englishToken) && !namedOtherLanguage) {
+            val chosen = if (detection.language == CardLanguage.ENGLISH) {
+                detection
+            } else {
+                Detection(
+                    CardLanguage.ENGLISH,
+                    listOfNotNull(detection.evidence.ifBlank { null }, "collector=en").joinToString(","),
+                )
+            }
+            val stamped = if (card.printedLang.equals("en", ignoreCase = true)) card else card.copy(printedLang = "en")
+            return CopyLanguage(stamped, chosen)
+        }
         val code = detection.language?.scryfallLang() ?: return CopyLanguage(card, detection)
         if (code.equals(card.printedLang, ignoreCase = true)) return CopyLanguage(card, detection)
         if (!card.printedLang.isNullOrBlank() && detection.language == CardLanguage.ENGLISH) {
@@ -206,12 +237,72 @@ object CardLanguageDetector {
     }
 
     /**
+     * Magic collector token (`HOB • EN`). EN and the other codes are the print
+     * language. A bare IT or ES is not: OCR mixes those two up, so the title or
+     * the rules have to agree.
+     */
+    private fun trustedCollector(
+        collectorLang: String?,
+        ocrName: String?,
+        ocrText: String?,
+        printed: Map<CardLanguage, String>,
+    ): Detection? {
+        val token = CardLanguage.fromCatalogCode(collectorLang ?: return null) ?: return null
+        val supported = when (token) {
+            CardLanguage.ITALIAN -> agreesWithTitle(ocrName, printed[CardLanguage.ITALIAN]) ||
+                italianTextSupport(ocrName, ocrText)
+            CardLanguage.SPANISH -> agreesWithTitle(ocrName, printed[CardLanguage.SPANISH]) ||
+                spanishTextSupport(ocrName, ocrText)
+            else -> true
+        }
+        if (!supported) return null
+        return Detection(token, "collector=${token.scryfallLang()}")
+    }
+
+    private fun agreesWithTitle(ocrName: String?, title: String?): Boolean {
+        val ocr = normalize(ocrName) ?: return false
+        if (title.isNullOrBlank()) return false
+        return score(ocr, title) >= MIN_SCORE
+    }
+
+    /** `zz` or another strong cue. A lone `di` / `del` is not support for an IT token. */
+    private fun italianTextSupport(ocrName: String?, ocrText: String?): Boolean {
+        val labels = cueLabels(CardLanguage.ITALIAN, ocrName, ocrText)
+        if (labels.isEmpty()) return false
+        return labels.any { it != "di" && it != "del" }
+    }
+
+    private fun spanishTextSupport(ocrName: String?, ocrText: String?): Boolean {
+        val raw = listOfNotNull(ocrName, ocrText).filter { it.isNotBlank() }.joinToString("\n")
+        if (raw.isEmpty()) return false
+        if (raw.contains('ñ') || raw.contains('Ñ')) return true
+        return Regex("""(?i)\b(?:los|las)\b""").containsMatchIn(raw)
+    }
+
+    private fun cueLabels(language: CardLanguage, ocrName: String?, ocrText: String?): List<String> {
+        val blob = listOfNotNull(ocrName, ocrText).filter { it.isNotBlank() }.joinToString("\n")
+        if (blob.isBlank()) return emptyList()
+        val raw = blob.lowercase(Locale.ROOT)
+        val folded = fold(raw)
+        return titleCues.mapNotNull { cue ->
+            if (cue.language != language) return@mapNotNull null
+            val haystack = if (cue.folded) folded else raw
+            if (cue.pattern.containsMatchIn(haystack)) cue.label else null
+        }.distinct()
+    }
+
+    /**
      * OCR title vs the English oracle name when Scryfall has no localized printing.
      * `Druido del Suolo Avvizzito` is not `Blightsoil Druid`. A title word that is
      * also a rules word is not enough; Italian needs a real function word, and
      * `del` only counts together with Italian spelling (`avvizzito`).
      */
-    private fun inferPrintedLanguage(ocrName: String?, englishName: String?): Detection? {
+    private fun inferPrintedLanguage(
+        ocrName: String?,
+        englishName: String?,
+        italianTitle: String?,
+        collectorLang: String?,
+    ): Detection? {
         val ocr = normalize(ocrName) ?: return null
         if (englishName.isNullOrBlank()) return null
         if (score(ocr, englishName) >= MIN_SCORE) return null
@@ -226,6 +317,11 @@ object CardLanguageDetector {
             val found = cues.getOrPut(cue.language) { mutableListOf() }
             if (cue.label !in found) found += cue.label
         }
+        if (scores[CardLanguage.ITALIAN] != null &&
+            !italianCueAllowed(cues[CardLanguage.ITALIAN].orEmpty(), ocrName, italianTitle, collectorLang)
+        ) {
+            scores.remove(CardLanguage.ITALIAN)
+        }
         val best = scores.maxByOrNull { it.value } ?: return null
         val runner = scores.filterKeys { it != best.key }.maxOfOrNull { it.value } ?: 0
         if (best.value < 5 || (runner > 0 && best.value - runner < 2)) return null
@@ -234,6 +330,24 @@ object CardLanguageDetector {
             best.key,
             "title=${best.key.scryfallLang()} not-en cue=$labels",
         )
+    }
+
+    /**
+     * A lone `di` (or `del`) is not Italian when the collector line says EN, and
+     * it is not Italian just because the word appeared. With a Scryfall Italian
+     * title, the OCR has to agree with that title.
+     */
+    private fun italianCueAllowed(
+        labels: List<String>,
+        ocrName: String?,
+        italianTitle: String?,
+        collectorLang: String?,
+    ): Boolean {
+        val weakOnly = labels.isNotEmpty() && labels.all { it == "di" || it == "del" }
+        val token = CardLanguage.fromCatalogCode(collectorLang.orEmpty())
+        if (token == CardLanguage.ENGLISH && weakOnly) return false
+        if (!italianTitle.isNullOrBlank()) return agreesWithTitle(ocrName, italianTitle)
+        return !weakOnly
     }
 
     private data class TitleCue(

@@ -2081,13 +2081,20 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val autoOk = gate.accepted && top != null
             val ocrTitle = matched.nameGuess ?: parsed.nameGuess
             val resolved = top?.let {
-                com.scantrader.app.data.catalog.CardLanguageDetector.resolveCopyLanguage(it, ocrTitle)
+                com.scantrader.app.data.catalog.CardLanguageDetector.resolveCopyLanguage(
+                    it,
+                    ocrTitle,
+                    matched.printedLang,
+                )
             }
             val copyTop = resolved?.card
-            if (resolved != null && resolved.detection.evidence.startsWith("title=")) {
+            if (resolved != null &&
+                (resolved.detection.language != null || !matched.printedLang.isNullOrBlank())
+            ) {
                 com.scantrader.app.scan.ScanDebug.d(
-                    "${resolved.detection.logLine()} printed=${copyTop?.printedLang} " +
-                        "catalog=${copyTop?.catalogLang}",
+                    "${resolved.detection.logLine()} ocr=${ocrTitle.orEmpty()} " +
+                        "token=${matched.printedLang.orEmpty()} " +
+                        "printed=${copyTop?.printedLang} catalog=${copyTop?.catalogLang}",
                 )
             }
             val topKey = copyTop?.let { autoCardKey(it) }
@@ -2608,8 +2615,11 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
                 fallback = defaults.value.language,
             )
         }
+        val parsedLang = app.scanSession.parsed
         com.scantrader.app.scan.ScanDebug.d(
-            "autosave: wait lang ${result.waitedMs}ms source=${result.source} lang=${best.label}",
+            "autosave: wait lang ${result.waitedMs}ms source=${result.source} lang=${best.label} " +
+                "ocr=${parsedLang?.nameGuess.orEmpty()} token=${parsedLang?.printedLang.orEmpty()} " +
+                "evidence=${local.evidence.ifBlank { result.source }}",
         )
         app.scanSession.language = best
         liveLanguage.value = best
@@ -2709,7 +2719,8 @@ private fun ScanTraderApp.explainLocalLanguage(
 ): com.scantrader.app.data.catalog.CardLanguageDetector.Detection {
     val ocrName = scanSession.parsed?.nameGuess
     val ocrText = scanSession.ocrText
-    return languageResolver.explainLocal(card, ocrName, ocrText)
+    val token = if (card.game == Game.MTG) scanSession.parsed?.printedLang else null
+    return languageResolver.explainLocal(card, ocrName, ocrText, token)
 }
 
 private suspend fun ScanTraderApp.detectLanguagePrinted(
@@ -2720,8 +2731,9 @@ private suspend fun ScanTraderApp.detectLanguagePrinted(
     if (local.language != null) return local
     val ocrName = scanSession.parsed?.nameGuess
     val ocrText = scanSession.ocrText
+    val token = if (card.game == Game.MTG) scanSession.parsed?.printedLang else null
     val detection = try {
-        languageResolver.explainPrinted(card, ocrName, ocrText)
+        languageResolver.explainPrinted(card, ocrName, ocrText, token)
     } catch (cancel: CancellationException) {
         throw cancel
     } catch (error: Throwable) {

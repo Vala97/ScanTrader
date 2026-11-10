@@ -16,6 +16,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - L’introduzione al primo avvio parla dei principali TCG, di come inquadrare nome e numero, dell’auto-scan con il riconoscimento della lingua e lo scatto manuale, e dell’export CSV verso CardTrader.
 
 ### Corretto
+- Per Magic, la lingua stampata accanto al set (EN) conta come prova. Un IT o un ES da soli no: servono il titolo o il testo. Un «di» isolato non sceglie l’italiano se il bordo dice EN, e l’inglese sostituisce la lingua del catalogo quando il titolo letto è inglese o il bordo dice EN.
 - Un titolo Magic più corto non conferma una carta che ha altre parole nel nome, in nessuna delle due direzioni. «Mirkwood» non è «Mirkwood Meditator». Una parola tagliata dall’OCR resta valida. Un titolo troncato resta valido solo se il numero di collezione coincide. Senza numero, lo stem non sceglie la prima carta quando nel set ce ne sono più d’una con lo stesso inizio.
 
 ## [0.4] - 2026-11-09

@@ -25,20 +25,41 @@ class CardLanguageResolver(
 ) {
     private val pokemonNameCache = ConcurrentHashMap<String, Pair<String?, Map<CardLanguage, String>>>()
     private val pokemonNameGate = Mutex()
-    suspend fun detect(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguage? =
-        explain(card, ocrName, ocrText).language
+    suspend fun detect(
+        card: IdentifiedCard,
+        ocrName: String?,
+        ocrText: String? = null,
+        collectorLang: String? = null,
+    ): CardLanguage? = explain(card, ocrName, ocrText, collectorLang).language
 
     /** OCR, script, and names already on the card. No network. */
-    fun explainLocal(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguageDetector.Detection {
+    fun explainLocal(
+        card: IdentifiedCard,
+        ocrName: String?,
+        ocrText: String? = null,
+        collectorLang: String? = null,
+    ): CardLanguageDetector.Detection {
         val pokemon = card.game == Game.POKEMON
         val local = localNames(card)
-        return CardLanguageDetector.explain(ocrName, local.first, local.second, ocrText, pokemon)
+        return CardLanguageDetector.explain(
+            ocrName,
+            local.first,
+            local.second,
+            ocrText,
+            pokemon,
+            collectorLang,
+        )
     }
 
-    suspend fun explain(card: IdentifiedCard, ocrName: String?, ocrText: String? = null): CardLanguageDetector.Detection {
-        val fromLocal = explainLocal(card, ocrName, ocrText)
+    suspend fun explain(
+        card: IdentifiedCard,
+        ocrName: String?,
+        ocrText: String? = null,
+        collectorLang: String? = null,
+    ): CardLanguageDetector.Detection {
+        val fromLocal = explainLocal(card, ocrName, ocrText, collectorLang)
         if (fromLocal.language != null) return fromLocal
-        return explainPrinted(card, ocrName, ocrText)
+        return explainPrinted(card, ocrName, ocrText, collectorLang)
     }
 
     /**
@@ -50,6 +71,7 @@ class CardLanguageResolver(
         card: IdentifiedCard,
         ocrName: String?,
         ocrText: String? = null,
+        collectorLang: String? = null,
     ): CardLanguageDetector.Detection {
         val pokemon = card.game == Game.POKEMON
         val (english, printed) = when (card.game) {
@@ -58,7 +80,7 @@ class CardLanguageResolver(
             Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER ->
                 card.name to emptyMap()
         }
-        return CardLanguageDetector.explain(ocrName, english, printed, ocrText, pokemon)
+        return CardLanguageDetector.explain(ocrName, english, printed, ocrText, pokemon, collectorLang)
     }
 
     private fun localNames(card: IdentifiedCard): Pair<String?, Map<CardLanguage, String>> {
