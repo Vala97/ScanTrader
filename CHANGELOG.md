@@ -9,6 +9,9 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Nella collezione, accanto alla sigla della lingua, le carte salvate come foil mostrano «Foil». Le altre non hanno quel badge.
 - In auto-scan, se la carta inquadrata è la stessa appena salvata, a destra di «Già salvata» o di «Analisi in corso…» compare «Apri ultima carta». Apre la scheda di modifica di quella riga. Una carta nuova non la mostra.
 
+### Corretto
+- Un titolo Magic più corto non conferma una carta che ha altre parole nel nome, in nessuna delle due direzioni. «Mirkwood» non è «Mirkwood Meditator». Una parola tagliata dall’OCR resta valida. Un titolo troncato resta valido solo se il numero di collezione coincide. Senza numero, lo stem non sceglie la prima carta quando nel set ce ne sono più d’una con lo stesso inizio.
+
 ## [0.4] - 2026-11-09
 
 ### Aggiunto

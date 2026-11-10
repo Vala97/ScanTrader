@@ -2182,6 +2182,11 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "shortCn=${gate.shortCn} conf=${gate.confidence}",
             )
             com.scantrader.app.scan.ScanDebug.d(
+                "decision ocr=${parsed.nameGuess.orEmpty()} candidate=${top?.name.orEmpty()} " +
+                    "set=${top?.setCode.orEmpty()} cn=${top?.collectorNumber.orEmpty()} " +
+                    "reason=${gate.reason} autosave=${requireMatch && acceptAuto}",
+            )
+            com.scantrader.app.scan.ScanDebug.d(
                 "result candidates=${candidates.size} top=${top?.name} " +
                     "set=${top?.setCode} cn=${top?.collectorNumber} " +
                     "ocr=${top?.ocrScore} visual=${top?.visualScore} conf=${top?.matchConfidence} " +

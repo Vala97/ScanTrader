@@ -537,6 +537,71 @@ class CatalogLookupTest {
         assertTrue(queries.any { it.contains("cn:34") })
     }
 
+    @Test
+    fun mirkwoodStemWithoutANumberDoesNotPickTheFirstCard() = runBlocking {
+        val mirkwood = scry("Mirkwood", "188")
+        val meditator = scry("Mirkwood Meditator", "48")
+        val nurturer = scry("Mirkwood Nurturer", "160")
+        val pathmaker = scry("Mirkwood Pathmaker", "129")
+        val hob = listOf(mirkwood, meditator, nurturer, pathmaker)
+        val lookup = CatalogLookup(ScryfallClient(hobApi(hob), ScryfallGate(minSpacingMs = 0L, now = { 0L })), emptyTcgdex())
+        val ambiguous = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Mirkwood", collectorNumber = null, setCode = "hob"),
+        )
+        assertTrue(ambiguous.isEmpty() || ambiguous.single().name == "Mirkwood")
+        assertTrue(ambiguous.none { it.collectorNumber == "48" })
+
+        val short = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Mirkw", collectorNumber = null, setCode = "hob"),
+        )
+        assertTrue(short.isEmpty())
+
+        val byNumber = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Mirkwood", collectorNumber = "48", setCode = "hob"),
+        )
+        assertEquals("Mirkwood Meditator", byNumber.single().name)
+        assertEquals("48", byNumber.single().collectorNumber)
+
+        val ownNumber = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Mirkwood", collectorNumber = "188", setCode = "hob"),
+        )
+        assertEquals("Mirkwood", ownNumber.single().name)
+        assertEquals("188", ownNumber.single().collectorNumber)
+    }
+
+    private fun scry(name: String, number: String) = ScryfallCard(
+        id = "hob-$number",
+        name = name,
+        set = "hob",
+        setName = "The Hobbit",
+        collectorNumber = number,
+    )
+
+    private fun hobApi(cards: List<ScryfallCard>): ScryfallApi = object : ScryfallApi {
+        override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard =
+            cards.firstOrNull { it.set == set && it.collectorNumber == number } ?: throw notFound()
+
+        override suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard =
+            error("unused")
+
+        override suspend fun cardById(id: String): ScryfallCard = error("unused")
+
+        override suspend fun search(query: String, unique: String): ScryfallSearchResponse {
+            if (query.contains("!\"Mirkwood\"")) {
+                return ScryfallSearchResponse(cards.filter { it.name == "Mirkwood" })
+            }
+            if (query.contains("name:/mirkw/")) return ScryfallSearchResponse(cards)
+            throw notFound()
+        }
+
+        override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = throw notFound()
+        override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = throw notFound()
+    }
+
     private fun emptyTcgdex(): TcgdexApi = object : TcgdexApi {
         override suspend fun search(lang: String, name: String?, localId: String?): List<TcgdexCardBrief> =
             emptyList()
