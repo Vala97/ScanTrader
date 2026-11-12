@@ -42,6 +42,7 @@ class UserPreferences(private val context: Context) {
             onboardingCompleted = prefs[ONBOARDING_COMPLETED] ?: false,
             autoUpdateCheck = prefs[AUTO_UPDATE_CHECK] ?: true,
             recognitionSound = prefs[RECOGNITION_SOUND] ?: true,
+            lastCardBarCollapsed = prefs[LAST_CARD_BAR_COLLAPSED] ?: false,
         )
     }
 
@@ -91,6 +92,10 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { it[RECOGNITION_SOUND] = enabled }
     }
 
+    suspend fun setLastCardBarCollapsed(collapsed: Boolean) {
+        context.dataStore.edit { it[LAST_CARD_BAR_COLLAPSED] = collapsed }
+    }
+
     suspend fun setAutoUpdateCheck(enabled: Boolean) {
         context.dataStore.edit { it[AUTO_UPDATE_CHECK] = enabled }
     }
@@ -118,6 +123,22 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setAppUpdateCheckedAt(epochMs: Long) {
         context.dataStore.edit { it[UPDATE_CHECKED_AT] = epochMs }
+    }
+
+    suspend fun mtgCatalogCheckedAt(): Long =
+        context.dataStore.data.first()[MTG_CATALOG_CHECKED_AT] ?: 0L
+
+    suspend fun setMtgCatalogCheckedAt(epochMs: Long) {
+        context.dataStore.edit { it[MTG_CATALOG_CHECKED_AT] = epochMs }
+    }
+
+    suspend fun mtgCatalogRemoteVersion(): String? =
+        context.dataStore.data.first()[MTG_CATALOG_REMOTE]?.takeIf { it.isNotBlank() }
+
+    suspend fun setMtgCatalogRemoteVersion(version: String?) {
+        context.dataStore.edit { prefs ->
+            if (version.isNullOrBlank()) prefs.remove(MTG_CATALOG_REMOTE) else prefs[MTG_CATALOG_REMOTE] = version
+        }
     }
 
     suspend fun expansionsSyncedAt(): Long =
@@ -164,7 +185,10 @@ class UserPreferences(private val context: Context) {
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
         val RECOGNITION_SOUND = booleanPreferencesKey("recognition_sound")
+        val LAST_CARD_BAR_COLLAPSED = booleanPreferencesKey("scan_last_card_bar_collapsed")
         val UPDATE_CHECKED_AT = longPreferencesKey("app_update_checked_at")
+        val MTG_CATALOG_CHECKED_AT = longPreferencesKey("mtg_catalog_checked_at")
+        val MTG_CATALOG_REMOTE = stringPreferencesKey("mtg_catalog_remote_version")
         val EXPANSIONS_SYNCED_AT = longPreferencesKey("ct_expansions_synced_at")
         val PENDING_APP_UPDATE = stringPreferencesKey("app_update_pending")
     }
@@ -203,4 +227,6 @@ data class ScanDefaults(
     val autoUpdateCheck: Boolean = true,
     /** Beep when auto-scan recognizes a card. Silent and vibrate stay quiet. */
     val recognitionSound: Boolean = true,
+    /** Last-card bar on the scan screen. False shows the full card lines. */
+    val lastCardBarCollapsed: Boolean = false,
 )

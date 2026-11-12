@@ -2,6 +2,7 @@ package com.scantrader.app
 
 import com.scantrader.app.data.catalog.CardLanguageDetector
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.ui.collection.collectionTileBadges
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -292,6 +293,16 @@ class CardLanguageDetectorTest {
     }
 
     @Test
+    fun foilBadgeSitsBesideTheLanguageAndIsAbsentOtherwise() {
+        assertEquals(listOf("ITA", "Foil"), collectionTileBadges("Italian", foil = true))
+        assertEquals(listOf("ENG"), collectionTileBadges("English", foil = false))
+        assertEquals(listOf("JAP", "Foil"), collectionTileBadges("ja", foil = true))
+        assertEquals(listOf("Foil"), collectionTileBadges("", foil = true))
+        assertEquals(emptyList<String>(), collectionTileBadges("", foil = false))
+        assertFalse(collectionTileBadges("Italian", foil = false).contains("Foil"))
+    }
+
+    @Test
     fun supporterAiutoIsItalianWhenTheTitleDoesNotMatch() {
         val detection = CardLanguageDetector.explain(
             ocrName = "AIUtO",
@@ -339,6 +350,67 @@ class CardLanguageDetectorTest {
             incoming = CardLanguageDetector.Detection(null, "error"),
         )
         assertNull(none.language)
+    }
+
+    @Test
+    fun sputavelenoTitleAndTokenOpenConfirmInItalian() {
+        val detection = CardLanguageDetector.explain(
+            ocrName = "Sputaveleno",
+            englishName = "Attercop",
+            printed = mapOf(CardLanguage.ITALIAN to "Sputaveleno"),
+            collectorLang = "it",
+        )
+        assertEquals(CardLanguage.ITALIAN, detection.language)
+        assertTrue(detection.evidence.contains("name=it"))
+        assertEquals(
+            CardLanguage.ITALIAN,
+            CardLanguageDetector.confirmLanguage(
+                detection = detection,
+                session = CardLanguage.ENGLISH,
+                fallback = CardLanguage.ENGLISH,
+            ),
+        )
+        assertEquals(
+            CardLanguage.ENGLISH,
+            CardLanguageDetector.confirmLanguage(
+                detection = null,
+                session = CardLanguage.ENGLISH,
+                fallback = CardLanguage.ENGLISH,
+            ),
+        )
+    }
+
+    @Test
+    fun italianRulesTextSupportsAnItTokenWhenTheTitleIsUnreadable() {
+        val detected = CardLanguageDetector.explain(
+            ocrName = "xyzabc qqq",
+            englishName = "Attercop",
+            printed = mapOf(CardLanguage.ITALIAN to "Sputaveleno"),
+            ocrText = "Creatura — Ragno\nTocco letale\nVolare\nfino alla fine del turno",
+            collectorLang = "it",
+        )
+        assertEquals(CardLanguage.ITALIAN, detected.language)
+        assertTrue(detected.evidence.contains("collector=it"))
+    }
+
+    @Test
+    fun englishRulesTextDoesNotLetAMisreadItTokenWin() {
+        val detected = CardLanguageDetector.explain(
+            ocrName = "xyzabc qqq",
+            englishName = "Attercop",
+            printed = mapOf(CardLanguage.ITALIAN to "Sputaveleno"),
+            ocrText = "Creature — Spider\nDeathtouch\nUntil end of turn",
+            collectorLang = "it",
+        )
+        assertNull(detected.language)
+        assertEquals(
+            CardLanguage.ENGLISH,
+            CardLanguageDetector.confirmLanguage(
+                detection = detected,
+                session = CardLanguage.ENGLISH,
+                fallback = CardLanguage.ENGLISH,
+            ),
+        )
     }
 
     private fun pokemon(text: String): CardLanguage? = CardLanguageDetector.detect(

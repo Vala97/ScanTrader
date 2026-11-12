@@ -50,10 +50,39 @@ object CardIdentity {
         val b = normalizeName(right)
         if (a.isBlank() || b.isBlank()) return false
         if (a == b) return true
-        val shorter = if (a.length <= b.length) a else b
-        val longer = if (a.length <= b.length) b else a
-        if (shorter.length >= 4 && longer.contains(shorter)) return true
+        if (alignedTitleTokens(a, b)) return true
         return similarity(a, b) >= threshold
+    }
+
+    /**
+     * Same words, allowing an OCR prefix of one word (`Squadr` / `Squadra`).
+     * An extra title word (`Mirkwood` / `Mirkwood Meditator`) is not a match.
+     */
+    fun alignedTitleTokens(left: String, right: String): Boolean {
+        val a = titleWords(left)
+        val b = titleWords(right)
+        if (a.isEmpty() || b.size != a.size) return false
+        val used = BooleanArray(b.size)
+        for (token in a) {
+            val index = b.indices.firstOrNull { !used[it] && wordClose(token, b[it]) } ?: return false
+            used[index] = true
+        }
+        return true
+    }
+
+    fun titleWords(raw: String): List<String> =
+        raw.lowercase(Locale.ROOT)
+            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .split(" ")
+            .filter { it.length >= 3 }
+
+    /** `Squadr` closes `Squadra`. A different word does not. */
+    fun wordClose(left: String, right: String): Boolean {
+        if (left == right) return true
+        val shorter = if (left.length <= right.length) left else right
+        val longer = if (left.length <= right.length) right else left
+        if (shorter.length >= 4 && longer.startsWith(shorter)) return true
+        return similarity(left, right) >= 0.75
     }
 
     /**

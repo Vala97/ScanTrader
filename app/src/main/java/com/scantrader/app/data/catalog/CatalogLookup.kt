@@ -80,7 +80,7 @@ class CatalogLookup(
             if (number.isNullOrBlank()) break
             val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.orRethrowBusy()
                 ?: continue
-            if (mtgIdAgrees(card, name)) return listOf(card.asIdentified(ocrScore = 0.98f))
+            if (mtgIdAgrees(card, name, number)) return listOf(card.asIdentified(ocrScore = 0.98f))
             // English oracle name missed. Adventure faces keep the Italian title
             // on card_faces.printed_name (`Maestro di Spada Invaghito`).
             val localized = localizedIdHit(card, name, parsed.printedLang)
@@ -124,7 +124,7 @@ class CatalogLookup(
             for (snap in snapshots) {
                 val card = snap.defaultPrint(number)
                 if (card == null) continue
-                if (mtgIdAgrees(card, name)) {
+                if (mtgIdAgrees(card, name, number)) {
                     local.logHit(snap.setCode, System.currentTimeMillis() - started)
                     return listOf(card.asIdentifiedFromCache(snap.cards, 0.98f))
                 }
@@ -161,7 +161,7 @@ class CatalogLookup(
             val local = snap.printsFor(english.collectorNumber).firstOrNull {
                 it.lang.equals(lang, ignoreCase = true)
             } ?: continue
-            if (!mtgIdAgrees(local, title)) continue
+            if (!mtgIdAgrees(local, title, english.collectorNumber)) continue
             val printed = local.localizedPrintedName()
             return local.asIdentifiedFromCache(snap.cards, 0.98f).copy(
                 name = printed ?: local.name,
@@ -265,7 +265,7 @@ class CatalogLookup(
         if (sets.isNotEmpty()) {
             for (set in sets) {
                 val inSet = runCatching { scryfall.namedFuzzy(safeName, set) }.orRethrowBusy()
-                if (inSet != null && mtgIdAgrees(inSet, safeName)) {
+                if (inSet != null && mtgIdAgrees(inSet, safeName, number)) {
                     return listOf(inSet.asIdentified(ocrScore = 0.84f))
                 }
             }
@@ -273,12 +273,12 @@ class CatalogLookup(
             if (stemmed.isNotEmpty()) return stemmed
         }
         val fuzzy = runCatching { scryfall.namedFuzzy(safeName) }.orRethrowBusy()
-        if (fuzzy != null && sets.isNotEmpty() && mtgIdAgrees(fuzzy, safeName)) {
+        if (fuzzy != null && sets.isNotEmpty() && mtgIdAgrees(fuzzy, safeName, number)) {
             val printing = searchMtgInSets(fuzzy.name, sets, number)
             if (printing.isNotEmpty()) return printing
         }
         val cnOk = number.isNullOrBlank() || collectorEquals(fuzzy?.collectorNumber, number)
-        if (fuzzy != null && cnOk && (sets.isEmpty() || mtgIdAgrees(fuzzy, safeName))) {
+        if (fuzzy != null && cnOk && (sets.isEmpty() || mtgIdAgrees(fuzzy, safeName, number))) {
             return listOf(fuzzy.asIdentified(ocrScore = 0.72f))
         }
         return lookupItalianPrintedName(safeName, number)
@@ -296,13 +296,13 @@ class CatalogLookup(
         if (sets.isEmpty() || safeName.isBlank()) return emptyList()
         for (set in sets) {
             val exact = pickMtgPrinting(searchCards("set:$set !\"$safeName\""), set, number)
-            if (exact != null && mtgIdAgrees(exact, safeName)) {
+            if (exact != null && mtgIdAgrees(exact, safeName, number)) {
                 return listOf(exact.asIdentified(ocrScore = 0.96f))
             }
         }
         for (set in sets) {
             val named = pickMtgPrinting(searchCards("set:$set name:\"$safeName\""), set, number)
-            if (named != null && mtgIdAgrees(named, safeName)) {
+            if (named != null && mtgIdAgrees(named, safeName, number)) {
                 return listOf(named.asIdentified(ocrScore = 0.9f))
             }
         }
@@ -321,7 +321,13 @@ class CatalogLookup(
         val stem = safeName.lowercase().filter { it.isLetter() }.take(5)
         if (stem.length < 4) return emptyList()
         for (set in sets) {
-            val agreed = searchCards("set:$set name:/$stem/").filter { mtgIdAgrees(it, safeName) }
+            val hits = searchCards("set:$set name:/$stem/")
+            if (number.isNullOrBlank()) {
+                val names = hits.map { it.name.lowercase() }.distinct()
+                if (names.size != 1) continue
+                return listOf(hits.first().asIdentified(ocrScore = 0.8f))
+            }
+            val agreed = hits.filter { mtgIdAgrees(it, safeName, number) }
             val picked = pickMtgPrinting(agreed, set, number) ?: continue
             return listOf(picked.asIdentified(ocrScore = 0.8f))
         }
@@ -331,8 +337,10 @@ class CatalogLookup(
     private fun pickMtgPrinting(cards: List<ScryfallCard>, set: String, number: String?): ScryfallCard? {
         val inSet = cards.filter { it.set.equals(set, ignoreCase = true) }.ifEmpty { cards }
         if (!number.isNullOrBlank()) {
-            inSet.firstOrNull { collectorEquals(it.collectorNumber, number) }?.let { return it }
+            return inSet.firstOrNull { collectorEquals(it.collectorNumber, number) }
         }
+        val names = inSet.map { it.name.lowercase() }.distinct()
+        if (names.size != 1) return null
         return inSet.firstOrNull()
     }
 
@@ -365,7 +373,7 @@ class CatalogLookup(
             val local = runCatching {
                 scryfall.cardBySetNumberLang(card.set, card.collectorNumber, lang)
             }.orRethrowBusy() ?: continue
-            if (!mtgIdAgrees(local, title)) continue
+            if (!mtgIdAgrees(local, title, card.collectorNumber)) continue
             val printed = local.localizedPrintedName()
             return local.asIdentified(ocrScore = 0.98f).copy(
                 name = printed ?: local.name,
@@ -376,15 +384,20 @@ class CatalogLookup(
         return null
     }
 
-    private fun mtgIdAgrees(card: ScryfallCard, ocrName: String?): Boolean {
+    private fun mtgIdAgrees(card: ScryfallCard, ocrName: String?, number: String? = null): Boolean {
         val title = OcrParser.cleanMtgNameGuess(ocrName) ?: return true
         // `nchar` is not evidence for or against the printing. A real title is.
         if (CardOrientation.implausibleTitle(title)) return false
         if (FrameNameGate.confidentTitle(title) == null) return true
+        val collectorMatches = !number.isNullOrBlank() &&
+            (collectorEquals(card.collectorNumber, number) ||
+                card.collectorNumber.equals(number, ignoreCase = true))
         val printed = card.localizedPrintedName()
-        if (FrameNameGate.agreesName(Game.MTG, card.name, printed, title)) return true
+        if (FrameNameGate.mtgTitlesAgree(card.name, title, collectorMatches)) return true
+        if (printed != null && FrameNameGate.mtgTitlesAgree(printed, title, collectorMatches)) return true
         return card.cardFaces.orEmpty().any { face ->
-            FrameNameGate.agreesName(Game.MTG, face.name, face.printedName, title)
+            FrameNameGate.mtgTitlesAgree(face.name, title, collectorMatches) ||
+                FrameNameGate.mtgTitlesAgree(face.printedName, title, collectorMatches)
         }
     }
 

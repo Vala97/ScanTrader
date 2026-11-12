@@ -36,6 +36,7 @@ import com.scantrader.app.update.DisabledUpdateSource
 import com.scantrader.app.update.GithubReleaseUpdateSource
 import com.scantrader.app.update.PackageUpdateInstaller
 import com.scantrader.app.vision.GalleryMatcher
+import com.scantrader.app.vision.MtgCatalogNoticeController
 import com.scantrader.app.vision.NeuralPackManager
 import com.scantrader.app.vision.PokemonCatalogController
 import com.scantrader.app.vision.VisualRanker
@@ -68,6 +69,8 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
     lateinit var visualRanker: VisualRanker
         private set
     lateinit var neuralPack: NeuralPackManager
+        private set
+    lateinit var mtgCatalogNotice: MtgCatalogNoticeController
         private set
     lateinit var pokemonCatalogs: PokemonCatalogController
         private set
@@ -169,6 +172,14 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         ocr = CardOcr()
         visualRanker = VisualRanker(http)
         neuralPack = NeuralPackManager(this, http)
+        mtgCatalogNotice = MtgCatalogNoticeController(
+            prefs = prefs,
+            scope = appScope,
+            installed = { neuralPack.mtgCatalogStatus.value },
+            fetchRemoteVersion = { neuralPack.peekRemoteMtgVersion() },
+            download = { neuralPack.downloadAndInstall() },
+        )
+        mtgCatalogNotice.checkOnLaunch()
         pokemonCatalogs = PokemonCatalogController(
             visionDir = File(filesDir, "vision"),
             baseHttp = http,

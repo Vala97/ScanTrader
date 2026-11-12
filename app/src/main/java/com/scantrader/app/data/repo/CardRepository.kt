@@ -37,6 +37,14 @@ data class MoveCardsResult(
 
 data class CollectionImportResult(val collections: Int, val cards: Int)
 
+sealed class SingleCopyEditResult {
+    data class Saved(val hostId: Long, val ownedQuantity: Int) : SingleCopyEditResult()
+    data object Removed : SingleCopyEditResult()
+    data object Missing : SingleCopyEditResult()
+}
+
+data class DeleteCardsResult(val rows: Int, val copies: Int)
+
 class CardRepository(private val db: AppDatabase) {
     fun collections() = db.collections().observeCollections()
     fun collectionList() = db.collections().observeAll()
@@ -293,6 +301,82 @@ class CardRepository(private val db: AppDatabase) {
 
     suspend fun deleteCard(entry: CardEntryEntity) {
         db.cards().delete(entry)
+    }
+
+    /** The row only if it is still in this collection. A move or delete is absent. */
+    suspend fun cardInCollection(collectionId: Long, id: Long): CardEntryEntity? {
+        val row = db.cards().byId(id) ?: return null
+        return row.takeIf { it.collectionId == collectionId && it.quantity > 0 }
+    }
+
+    /**
+     * Changes language, condition, foil, or quantity for [ownedQuantity] copies
+     * on [hostId]. Copies that were already on that row stay as they are.
+     * A matching stock line only gains quantity: its price and other fields stay.
+     */
+    suspend fun editSingleCopy(
+        collectionId: Long,
+        hostId: Long,
+        ownedQuantity: Int,
+        language: CardLanguage,
+        condition: CardCondition,
+        foil: Boolean,
+        quantity: Int,
+    ): SingleCopyEditResult = db.withTransaction {
+        val host = cardInCollection(collectionId, hostId) ?: return@withTransaction SingleCopyEditResult.Missing
+        val owned = ownedQuantity.coerceIn(0, host.quantity)
+        if (owned <= 0) return@withTransaction SingleCopyEditResult.Missing
+        if (quantity <= 0) {
+            reduceCopies(host, owned)
+            return@withTransaction SingleCopyEditResult.Removed
+        }
+        val pokemon = host.game == Game.POKEMON
+        val desired = host.copy(
+            id = 0L,
+            quantity = quantity,
+            language = language.csvValue,
+            condition = condition.csvValue,
+            foil = foil && !pokemon,
+            priceEurFoil = if (pokemon) null else host.priceEurFoil,
+            priceUsdFoil = if (pokemon) null else host.priceUsdFoil,
+        ).stamped()
+        if (desired.copyKey == host.copyKey) {
+            val kept = host.copy(quantity = host.quantity - owned + quantity).stamped()
+            db.cards().update(kept)
+            return@withTransaction SingleCopyEditResult.Saved(kept.id, quantity)
+        }
+        reduceCopies(host, owned)
+        val other = db.cards().findByCopyKey(collectionId, desired.copyKey)
+        if (other != null) {
+            val kept = other.copy(quantity = other.quantity + quantity)
+            db.cards().update(kept)
+            SingleCopyEditResult.Saved(kept.id, quantity)
+        } else {
+            val newId = db.cards().insert(desired)
+            SingleCopyEditResult.Saved(newId, quantity)
+        }
+    }
+
+    private suspend fun reduceCopies(host: CardEntryEntity, owned: Int) {
+        val remain = host.quantity - owned
+        if (remain <= 0) db.cards().delete(host)
+        else db.cards().update(host.copy(quantity = remain).stamped())
+    }
+
+    /** Deletes the selected rows of this collection. Rows elsewhere are left alone. */
+    suspend fun deleteCards(collectionId: Long, ids: Collection<Long>): DeleteCardsResult {
+        var rows = 0
+        var copies = 0
+        db.withTransaction {
+            for (id in ids.distinct()) {
+                val row = db.cards().byId(id) ?: continue
+                if (row.collectionId != collectionId) continue
+                copies += row.quantity.coerceAtLeast(0)
+                db.cards().delete(row)
+                rows++
+            }
+        }
+        return DeleteCardsResult(rows, copies)
     }
 
     /** Full ScanTrader backup of user collections (exclude mirror / other ids). */

@@ -39,22 +39,29 @@ object Onboarding {
     ): List<OnboardingPage> = listOf(
         OnboardingPage(
             title = "Benvenuto",
-            body = "ScanTrader scansiona le carte Magic e Pokémon, le organizza in collezioni " +
-                "e prepara un CSV da caricare su CardTrader.",
+            body = "ScanTrader scansiona le carte dei principali TCG, le organizza in collezioni " +
+                "e prepara un CSV da caricare su CardTrader, per vendere la tua collezione in fretta!",
         ),
         OnboardingPage(
             title = "Come inquadrare",
-            body = "Tieni la carta dentro la guida, con una buona luce. Devono vedersi bene " +
-                "sia il titolo in alto sia la parte in basso, con il numero di collezione e il codice del set.",
+            body = "Tieni la carta dentro la guida, con una buona luce. Devono vedersi bene il nome " +
+                "e il numero di collezione con il codice del set. Di solito sono in alto e in basso, " +
+                "ma la posizione cambia da gioco a gioco.",
         ),
         OnboardingPage(
             title = "Auto-scan",
-            body = "Quando il riconoscimento è sicuro, la carta si salva da sola. La soglia si regola " +
-                "in Impostazioni. La stessa identica carta non viene presa due volte di fila.",
+            body = "Puoi attivare la lettura automatica: basta mettere la carta davanti alla fotocamera. " +
+                "Quando viene riconosciuta, ti viene mostrata insieme alla lingua, se hai attivato il " +
+                "riconoscimento della lingua. Se il riconoscimento è sicuro, la carta si salva da sola. " +
+                "La soglia si regola in Impostazioni e la stessa identica carta non viene presa due volte di fila." +
+                "\n\n" +
+                "Tips: se una carta non viene riconosciuta, puoi sempre forzare la lettura con il pulsante " +
+                "di scatto manuale, accanto a quello principale.",
         ),
         OnboardingPage(
             title = "Esporta",
-            body = "Dalla collezione generi il CSV da caricare su CardTrader.",
+            body = "Collezione pronta? Con un tocco generi il CSV e la porti su CardTrader. " +
+                "Le tue carte sono già in vetrina!",
         ),
         OnboardingPage(
             title = "Fotocamera e pacchetti",

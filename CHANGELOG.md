@@ -5,6 +5,25 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Aggiunto
+- Nella collezione, accanto alla sigla della lingua, le carte salvate come foil mostrano «Foil». Le altre non hanno quel badge.
+- In auto-scan, «Apri» resta sulla barra dell’ultima carta salvata e apre la modifica delle sole copie appena salvate. Chiudendo la scheda, o dopo «Salva prezzo», si torna allo scan e la fotocamera riparte.
+- La barra sopra i controlli tiene il nome, il set, il numero, la lingua, l’ora e, se serve, «Già salvata» o «Nuova: …». Il chevron a sinistra la riduce a «Ultima salvata · ora» e la scelta resta salvata. Lo stato dell’analisi resta solo al centro dello schermo. Se non c’è nulla da mostrare, la barra non compare.
+- Gli angoli del riquadro sono bianchi durante la ricerca, azzurri durante l’analisi e verdi quando la carta è riconosciuta.
+- Le impostazioni di scan si aprono dall’icona ingranaggio. Il tasto Auto sta accanto allo scatto.
+- In «Seleziona», accanto a «Sposta», «Elimina» chiede conferma con il numero di carte e di copie, anche se un filtro ne nasconde alcune. Il conteggio e il valore della collezione si aggiornano subito.
+
+### Modificato
+- L’introduzione al primo avvio parla dei principali TCG, di come inquadrare nome e numero, dell’auto-scan con il riconoscimento della lingua e lo scatto manuale, e dell’export CSV verso CardTrader.
+- Nella lista delle collezioni, «Cancella» chiede conferma prima di eliminare. Il messaggio dice quante carte e copie contiene, oppure che la collezione è vuota. «Annulla» non cancella nulla.
+- All’avvio, al massimo una volta al giorno, l’app legge l’indice del catalogo Magic. Se c’è una versione più nuova compare «Catalogo Magic aggiornato disponibile» con «Aggiorna». Il file si scarica solo a quel tocco.
+
+### Corretto
+- «Apri» modifica solo le copie appena salvate: lingua, condizione, foil e quantità. Le altre copie della stessa carta restano com’erano. Se la riga è stata eliminata o spostata, compare un messaggio.
+- Se lo scan riconosce la lingua con sicurezza, la conferma si apre già su quella lingua. Un IT o un ES sul bordo vale anche quando il testo ha parole di regole italiane o spagnole; un testo inglese non diventa italiano solo perché il bordo è stato letto IT.
+- Per Magic, la lingua stampata accanto al set (EN) conta come prova. Un IT o un ES da soli no: servono il titolo o il testo. Un «di» isolato non sceglie l’italiano se il bordo dice EN, e l’inglese sostituisce la lingua del catalogo quando il titolo letto è inglese o il bordo dice EN.
+- Un titolo Magic più corto non conferma una carta che ha altre parole nel nome, in nessuna delle due direzioni. «Mirkwood» non è «Mirkwood Meditator». Una parola tagliata dall’OCR resta valida. Un titolo troncato resta valido solo se il numero di collezione coincide. Senza numero, lo stem non sceglie la prima carta quando nel set ce ne sono più d’una con lo stesso inizio.
+
 ## [0.4] - 2026-11-09
 
 ### Aggiunto

@@ -29,17 +29,37 @@ class OnboardingTest {
             listOf("Benvenuto", "Come inquadrare", "Auto-scan", "Esporta", "Fotocamera e pacchetti"),
             pages.map { it.title },
         )
-        assertTrue(pages[0].body.contains("Magic"))
-        assertTrue(pages[0].body.contains("Pokémon"))
-        assertTrue(pages[0].body.contains("CSV"))
-        assertTrue(pages[0].body.contains("CardTrader"))
-        assertTrue(pages[1].body.contains("titolo"))
-        assertTrue(pages[1].body.contains("numero di collezione"))
-        assertTrue(pages[1].body.contains("codice del set"))
-        assertTrue(pages[2].body.contains("soglia"))
-        assertTrue(pages[2].body.contains("due volte"))
-        assertTrue(pages[3].body.contains("CSV"))
-        assertTrue(pages[3].body.contains("CardTrader"))
+        assertEquals(
+            "ScanTrader scansiona le carte dei principali TCG, le organizza in collezioni " +
+                "e prepara un CSV da caricare su CardTrader, per vendere la tua collezione in fretta!",
+            pages[0].body,
+        )
+        assertEquals(
+            "Tieni la carta dentro la guida, con una buona luce. Devono vedersi bene il nome " +
+                "e il numero di collezione con il codice del set. Di solito sono in alto e in basso, " +
+                "ma la posizione cambia da gioco a gioco.",
+            pages[1].body,
+        )
+        val autoScan = pages[2].body.split("\n\n")
+        assertEquals(2, autoScan.size)
+        assertEquals(
+            "Puoi attivare la lettura automatica: basta mettere la carta davanti alla fotocamera. " +
+                "Quando viene riconosciuta, ti viene mostrata insieme alla lingua, se hai attivato il " +
+                "riconoscimento della lingua. Se il riconoscimento è sicuro, la carta si salva da sola. " +
+                "La soglia si regola in Impostazioni e la stessa identica carta non viene presa due volte di fila.",
+            autoScan[0],
+        )
+        assertEquals(
+            "Tips: se una carta non viene riconosciuta, puoi sempre forzare la lettura con il pulsante " +
+                "di scatto manuale, accanto a quello principale.",
+            autoScan[1],
+        )
+        assertEquals(
+            "Collezione pronta? Con un tocco generi il CSV e la porti su CardTrader. " +
+                "Le tue carte sono già in vetrina!",
+            pages[3].body,
+        )
+        assertTrue(pages[4].body.contains("\n\n"))
         assertTrue(pages[4].requestsCamera)
         assertTrue(pages[4].body.contains("fotocamera"))
         val packs = pages[4].body
