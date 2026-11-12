@@ -16,6 +16,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 ### Modificato
 - L’introduzione al primo avvio parla dei principali TCG, di come inquadrare nome e numero, dell’auto-scan con il riconoscimento della lingua e lo scatto manuale, e dell’export CSV verso CardTrader.
 - Nella lista delle collezioni, «Cancella» chiede conferma prima di eliminare. Il messaggio dice quante carte e copie contiene, oppure che la collezione è vuota. «Annulla» non cancella nulla.
+- All’avvio, al massimo una volta al giorno, l’app legge l’indice del catalogo Magic. Se c’è una versione più nuova compare «Catalogo Magic aggiornato disponibile» con «Aggiorna». Il file si scarica solo a quel tocco.
 
 ### Corretto
 - «Apri» modifica solo le copie appena salvate: lingua, condizione, foil e quantità. Le altre copie della stessa carta restano com’erano. Se la riga è stata eliminata o spostata, compare un messaggio.

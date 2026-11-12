@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -65,6 +67,8 @@ fun HomeScreen(
     val collections by viewModel.collections.collectAsStateWithLifecycle()
     val showOnboarding by viewModel.showOnboarding.collectAsStateWithLifecycle()
     val appUpdate by viewModel.appUpdate.collectAsStateWithLifecycle()
+    val mtgNotice by viewModel.mtgCatalogNotice.collectAsStateWithLifecycle()
+    val mtgNoticeBusy by viewModel.mtgCatalogNoticeBusy.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<CollectionWithCount?>(null) }
@@ -98,11 +102,37 @@ fun HomeScreen(
             )
         },
     ) { padding ->
-        if (collections.isEmpty()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            if (mtgNotice) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "Catalogo Magic aggiornato disponibile",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Button(
+                        onClick = viewModel::updateMtgCatalog,
+                        enabled = !mtgNoticeBusy,
+                        colors = ButtonDefaults.buttonColors(),
+                    ) {
+                        Text(if (mtgNoticeBusy) "Scarico…" else "Aggiorna")
+                    }
+                }
+            }
+            if (collections.isEmpty()) {
             Column(
                 Modifier
                     .fillMaxSize()
-                    .padding(padding)
                     .padding(24.dp),
                 verticalArrangement = Arrangement.Center,
             ) {
@@ -117,8 +147,7 @@ fun HomeScreen(
         } else {
             LazyColumn(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
+                    .fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -166,6 +195,7 @@ fun HomeScreen(
                     }
                 }
             }
+        }
         }
     }
 

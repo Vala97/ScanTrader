@@ -281,6 +281,11 @@ class NeuralPackManager(
         }
     }
 
+    /** The Magic row in the published index, or null when the index has none. */
+    suspend fun peekRemoteMtgVersion(): String? = withContext(Dispatchers.IO) {
+        fetchMtgEntry()?.version
+    }
+
     /** Reads the Magic row from the published catalog index, without downloading it. */
     suspend fun refreshMtgIndex() {
         val remote = withContext(Dispatchers.IO) {

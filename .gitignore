@@ -21,6 +21,8 @@ __pycache__/
 tools/build_pokemon_stcat/cache/
 tools/build_pokemon_stcat/*.stcat
 tools/build_pokemon_stcat/*.stcat.part
+tools/update_mtg_catalog/out/
+tools/update_mtg_catalog/**/*.npz
 tools/publish_stcat/stcat-index.json
 /app-update.json
 tools/publish_app_update/app-update.json

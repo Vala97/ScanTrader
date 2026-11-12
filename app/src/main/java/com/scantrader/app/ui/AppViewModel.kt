@@ -92,6 +92,10 @@ class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     val appUpdate = app.appUpdates.state
+    val mtgCatalogNotice = app.mtgCatalogNotice.visible
+    val mtgCatalogNoticeBusy = app.mtgCatalogNotice.busy
+
+    fun updateMtgCatalog() = app.mtgCatalogNotice.download()
 
     fun installAppUpdate() = app.appUpdates.downloadAndInstall()
 
