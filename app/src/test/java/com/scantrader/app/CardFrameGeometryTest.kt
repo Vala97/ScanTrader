@@ -2,6 +2,7 @@ package com.scantrader.app
 
 import com.scantrader.app.scan.CardFrameGeometry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.min
@@ -39,6 +40,37 @@ class CardFrameGeometryTest {
         assertEquals(guide.top.toInt(), mapped.top)
         assertEquals(guide.width.toInt(), mapped.width)
         assertEquals(guide.height.toInt(), mapped.height)
+    }
+
+    @Test
+    fun aViewShapedBufferIsMappedLinearlyAndNotFillCenterCroppedAgain() {
+        val viewW = 1080f
+        val viewH = 2400f
+        val guide = CardFrameGeometry.frameIn(viewW, viewH)
+        val rect = CardFrameGeometry.analysisRect(
+            bitmapWidth = 540,
+            bitmapHeight = 1200,
+            viewWidth = viewW,
+            viewHeight = viewH,
+        )
+        assertEquals(guide.left / viewW, rect.left / 540f, 0.02f)
+        assertEquals(guide.top / viewH, rect.top / 1200f, 0.02f)
+        assertEquals(guide.width / viewW, rect.width / 540f, 0.02f)
+        assertEquals(guide.height / viewH, rect.height / 1200f, 0.02f)
+    }
+
+    @Test
+    fun aSensorBufferIsMappedOnceWithFillCenter() {
+        val viewW = 1080f
+        val viewH = 2400f
+        val guide = CardFrameGeometry.frameIn(viewW, viewH)
+        val once = CardFrameGeometry.analysisRect(960, 1280, viewW, viewH)
+        val fill = CardFrameGeometry.mapFillCenterViewRectToBitmap(960, 1280, viewW, viewH, guide)
+        assertEquals(fill.left, once.left)
+        assertEquals(fill.top, once.top)
+        assertEquals(fill.width, once.width)
+        assertEquals(fill.height, once.height)
+        assertFalse(CardFrameGeometry.bufferMatchesView(960, 1280, viewW, viewH))
     }
 
     @Test

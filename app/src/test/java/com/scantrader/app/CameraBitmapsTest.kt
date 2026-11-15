@@ -44,6 +44,26 @@ class CameraBitmapsTest {
     }
 
     @Test
+    fun topBandOfALandscapeBufferLandsOnTheRightAfterPortraitRotation() {
+        // A horizontal band taken with the wrong rotation becomes the right
+        // side of the portrait frame. That is the off-center zoom crop.
+        val mapped = CameraBitmaps.mapCropRect(
+            left = 0,
+            top = 0,
+            right = 1280,
+            bottom = 480,
+            rotationDegrees = 90,
+            width = 1280,
+            height = 960,
+        )
+        assertEquals(480, mapped.left)
+        assertEquals(0, mapped.top)
+        assertEquals(960, mapped.right)
+        assertEquals(1280, mapped.bottom)
+        assertTrue(mapped.left >= 960 / 2)
+    }
+
+    @Test
     fun flatPhoneRotation180BecomesThePortrait90ThatWorked() {
         assertEquals(90, CameraBitmaps.rotationForPortrait(180, 1280, 960))
         assertEquals(90, CameraBitmaps.rotationForPortrait(0, 1280, 960))

@@ -858,10 +858,14 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         cropGuideWarning.value = true
     }
 
-    /** First real scanner layout. Later sizes must not move the guide. */
-    fun lockGuideViewport(width: Float, height: Float) {
+    /** Latest settled scanner layout. A new settled size replaces the previous one. */
+    fun setGuideViewport(width: Float, height: Float) {
         if (width <= 1f || height <= 1f) return
-        if (app.scanSession.guideViewWidth > 1f && app.scanSession.guideViewHeight > 1f) return
+        if (kotlin.math.abs(app.scanSession.guideViewWidth - width) < 1f &&
+            kotlin.math.abs(app.scanSession.guideViewHeight - height) < 1f
+        ) {
+            return
+        }
         app.scanSession.guideViewWidth = width
         app.scanSession.guideViewHeight = height
         guideViewWidth.value = width

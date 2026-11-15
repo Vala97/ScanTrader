@@ -20,6 +20,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - Lo stesso controllo, una volta al giorno, vale per il catalogo Pokémon inglese già installato. Se l’indice è più nuovo compare «Catalogo Pokémon aggiornato disponibile» con «Aggiorna». Il file si scarica solo a quel tocco.
 
 ### Corretto
+- Riaprire lo scanner non sposta più la cornice né applica lo zoom fuori centro. La fotocamera si aggancia solo quando l’anteprima ha una misura stabile e la tastiera è chiusa, e la cornice segue quella misura invece della prima vista.
 - «Apri» modifica solo le copie appena salvate: lingua, condizione, foil e quantità. Le altre copie della stessa carta restano com’erano. Se la riga è stata eliminata o spostata, compare un messaggio.
 - Se lo scan riconosce la lingua con sicurezza, la conferma si apre già su quella lingua. Un IT o un ES sul bordo vale anche quando il testo ha parole di regole italiane o spagnole; un testo inglese non diventa italiano solo perché il bordo è stato letto IT.
 - Per Magic, la lingua stampata accanto al set (EN) conta come prova. Un IT o un ES da soli no: servono il titolo o il testo. Un «di» isolato non sceglie l’italiano se il bordo dice EN, e l’inglese sostituisce la lingua del catalogo quando il titolo letto è inglese o il bordo dice EN.
