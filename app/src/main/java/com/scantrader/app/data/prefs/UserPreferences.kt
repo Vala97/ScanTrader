@@ -141,6 +141,22 @@ class UserPreferences(private val context: Context) {
         }
     }
 
+    suspend fun pokemonCatalogCheckedAt(): Long =
+        context.dataStore.data.first()[POKEMON_CATALOG_CHECKED_AT] ?: 0L
+
+    suspend fun setPokemonCatalogCheckedAt(epochMs: Long) {
+        context.dataStore.edit { it[POKEMON_CATALOG_CHECKED_AT] = epochMs }
+    }
+
+    suspend fun pokemonCatalogRemoteVersion(): String? =
+        context.dataStore.data.first()[POKEMON_CATALOG_REMOTE]?.takeIf { it.isNotBlank() }
+
+    suspend fun setPokemonCatalogRemoteVersion(version: String?) {
+        context.dataStore.edit { prefs ->
+            if (version.isNullOrBlank()) prefs.remove(POKEMON_CATALOG_REMOTE) else prefs[POKEMON_CATALOG_REMOTE] = version
+        }
+    }
+
     suspend fun expansionsSyncedAt(): Long =
         context.dataStore.data.first()[EXPANSIONS_SYNCED_AT] ?: 0L
 
@@ -189,6 +205,8 @@ class UserPreferences(private val context: Context) {
         val UPDATE_CHECKED_AT = longPreferencesKey("app_update_checked_at")
         val MTG_CATALOG_CHECKED_AT = longPreferencesKey("mtg_catalog_checked_at")
         val MTG_CATALOG_REMOTE = stringPreferencesKey("mtg_catalog_remote_version")
+        val POKEMON_CATALOG_CHECKED_AT = longPreferencesKey("pokemon_catalog_checked_at")
+        val POKEMON_CATALOG_REMOTE = stringPreferencesKey("pokemon_catalog_remote_version")
         val EXPANSIONS_SYNCED_AT = longPreferencesKey("ct_expansions_synced_at")
         val PENDING_APP_UPDATE = stringPreferencesKey("app_update_pending")
     }

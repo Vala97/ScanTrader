@@ -1,0 +1,70 @@
+name: Update Pokémon catalog
+
+on:
+  schedule:
+    # Weekly, after the Magic job's slot. Stays a dry run unless started by hand
+    # with dry_run false. Shares stcat-publish so the two jobs never clobber the index.
+    - cron: "30 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Write the catalog locally and do not upload
+        type: boolean
+        default: true
+      set_ids:
+        description: Optional TCGdex set ids, comma-separated, for example sv10
+        type: string
+        default: ""
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stcat-publish
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            tools/update_pokemon_catalog/requirements.txt
+            tools/publish_stcat/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tools/update_pokemon_catalog/requirements.txt
+          pip install -r tools/publish_stcat/requirements.txt
+
+      - name: Download Milo
+        run: |
+          mkdir -p tools/update_pokemon_catalog/cache
+          curl -fsSL -o tools/update_pokemon_catalog/cache/model.onnx \
+            https://huggingface.co/HanClinto/milo/resolve/main/model.onnx
+
+      - name: Update catalog
+        env:
+          DRY_RUN: ${{ github.event_name == 'schedule' || inputs.dry_run }}
+          SET_IDS: ${{ inputs.set_ids }}
+        run: |
+          set -euo pipefail
+          args=(--out tools/update_pokemon_catalog/out/pokemon-en.stcat)
+          if [ "${DRY_RUN}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          if [ -n "${SET_IDS}" ]; then
+            args+=(--sets "${SET_IDS}")
+          else
+            args+=(--newest 8)
+          fi
+          cd tools/update_pokemon_catalog
+          python update_pokemon_catalog.py "${args[@]}"

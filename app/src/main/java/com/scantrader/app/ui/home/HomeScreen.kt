@@ -69,6 +69,8 @@ fun HomeScreen(
     val appUpdate by viewModel.appUpdate.collectAsStateWithLifecycle()
     val mtgNotice by viewModel.mtgCatalogNotice.collectAsStateWithLifecycle()
     val mtgNoticeBusy by viewModel.mtgCatalogNoticeBusy.collectAsStateWithLifecycle()
+    val pokemonNotice by viewModel.pokemonCatalogNotice.collectAsStateWithLifecycle()
+    val pokemonNoticeBusy by viewModel.pokemonCatalogNoticeBusy.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<CollectionWithCount?>(null) }
@@ -108,26 +110,18 @@ fun HomeScreen(
                 .padding(padding),
         ) {
             if (mtgNotice) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        "Catalogo Magic aggiornato disponibile",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Button(
-                        onClick = viewModel::updateMtgCatalog,
-                        enabled = !mtgNoticeBusy,
-                        colors = ButtonDefaults.buttonColors(),
-                    ) {
-                        Text(if (mtgNoticeBusy) "Scarico…" else "Aggiorna")
-                    }
-                }
+                CatalogUpdateNotice(
+                    text = "Catalogo Magic aggiornato disponibile",
+                    busy = mtgNoticeBusy,
+                    onUpdate = viewModel::updateMtgCatalog,
+                )
+            }
+            if (pokemonNotice) {
+                CatalogUpdateNotice(
+                    text = "Catalogo Pokémon aggiornato disponibile",
+                    busy = pokemonNoticeBusy,
+                    onUpdate = viewModel::updatePokemonCatalog,
+                )
             }
             if (collections.isEmpty()) {
             Column(
@@ -320,4 +314,31 @@ fun RenameCollectionDialog(
             TextButton(onClick = onDismiss) { Text("Annulla") }
         },
     )
+}
+
+@Composable
+private fun CatalogUpdateNotice(
+    text: String,
+    busy: Boolean,
+    onUpdate: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Button(
+            onClick = onUpdate,
+            enabled = !busy,
+        ) {
+            Text(if (busy) "Scarico…" else "Aggiorna")
+        }
+    }
 }
