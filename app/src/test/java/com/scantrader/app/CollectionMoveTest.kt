@@ -29,6 +29,19 @@ class CollectionMoveTest {
     }
 
     @Test
+    fun deleteConfirmCountsHiddenCopies() {
+        val count = CollectionSelection.count(
+            selected = setOf(1L, 2L),
+            all = listOf(card(1, qty = 2), card(2, qty = 3)),
+            visibleIds = setOf(1L),
+        )
+        assertEquals(
+            "Eliminare 2 carte (5 copie)? Comprende 3 copie nascoste dai filtri. L'azione non si annulla.",
+            CollectionSelection.deleteConfirm(count),
+        )
+    }
+
+    @Test
     fun wholeMoveKeepsTheRowAndPartialMoveKeepsTheRest() {
         val source = card(id = 8, qty = 5, manual = "9.00")
         val whole = CollectionMove.plan(

@@ -47,4 +47,19 @@ object CollectionSelection {
         }
         return "$rows · $copies$hidden"
     }
+
+    /** Confirmation before the selected rows are deleted. Hidden rows still count. */
+    fun deleteConfirm(count: SelectionCount): String {
+        val cards = if (count.rows == 1) "1 carta" else "${count.rows} carte"
+        val copies = if (count.copies == 1) "1 copia" else "${count.copies} copie"
+        val hidden = if (count.hiddenCopies > 0) {
+            " Comprende ${count.hiddenCopies} copie nascoste dai filtri."
+        } else {
+            ""
+        }
+        return "Eliminare $cards ($copies)?$hidden L'azione non si annulla."
+    }
+
+    const val MISSING_COPY =
+        "Questa copia non è più nella collezione. Potrebbe essere stata eliminata o spostata."
 }

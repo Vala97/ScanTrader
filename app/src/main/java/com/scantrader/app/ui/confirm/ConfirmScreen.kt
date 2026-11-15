@@ -97,7 +97,13 @@ fun ConfirmScreen(
     var quantity by quantityState
     var languageTouched by remember { mutableStateOf(false) }
     val languageState = remember {
-        mutableStateOf(viewModel.sessionLanguage ?: defaults.language)
+        mutableStateOf(
+            com.scantrader.app.data.catalog.CardLanguageDetector.confirmLanguage(
+                detection = viewModel.pendingLanguage,
+                session = viewModel.sessionLanguage,
+                fallback = defaults.language,
+            ),
+        )
     }
     var language by languageState
     val conditionState = remember {

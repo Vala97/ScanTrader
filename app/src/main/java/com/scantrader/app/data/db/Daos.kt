@@ -13,6 +13,7 @@ interface CollectionDao {
     @Query(
         """
         SELECT c.id, c.name, c.createdAt,
+               CAST(COUNT(e.id) AS INTEGER) AS rowCount,
                CAST(COALESCE(SUM(e.quantity), 0) AS INTEGER) AS cardCount
         FROM collections c
         LEFT JOIN card_entries e ON e.collectionId = c.id

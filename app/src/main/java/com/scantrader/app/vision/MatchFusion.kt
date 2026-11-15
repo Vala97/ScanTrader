@@ -546,16 +546,14 @@ object MatchFusion {
 
         val nameGuess = parsed.nameGuess?.trim().orEmpty()
         val namePresent = nameGuess.length >= 2
-        val nameOk = namePresent && (
-            mtgNameMatches(top.name, nameGuess) ||
-                mtgNameMatches(top.printedName.orEmpty(), nameGuess) ||
-                mtgNameMatches(top.catalogName.orEmpty(), nameGuess)
-            )
         val numbers = OcrParser.collectorCandidates(parsed.collectorNumber)
         val cn = top.collectorNumber.trimStart('0').ifBlank { top.collectorNumber }
         val cnOk = numbers.any {
             top.collectorNumber.equals(it, ignoreCase = true) ||
                 cn.equals(it.trimStart('0').ifBlank { it }, ignoreCase = true)
+        }
+        val nameOk = namePresent && listOf(top.name, top.printedName, top.catalogName).any { title ->
+            FrameNameGate.mtgTitlesAgree(title, nameGuess, allowTruncatedTitle = cnOk)
         }
         val sets = OcrParser.setCodeCandidates(parsed.setCode)
         val cardSet = top.setCode.lowercase()
@@ -654,15 +652,8 @@ object MatchFusion {
     }
 
     /** Loose token overlap for EN/IT MTG titles (not Pokémon species matching). */
-    private fun mtgNameMatches(cardName: String, query: String): Boolean {
-        val tokens = query.lowercase()
-            .split(Regex("""[^a-z0-9àèéìòù]+"""))
-            .filter { it.length >= 3 }
-        if (tokens.isEmpty()) return false
-        val card = cardName.lowercase()
-        val hits = tokens.count { token -> card.contains(token) }
-        return hits >= 1 && hits.toFloat() / tokens.size >= 0.4f
-    }
+    private fun mtgNameMatches(cardName: String, query: String): Boolean =
+        FrameNameGate.mtgTitlesAgree(cardName, query, allowTruncatedTitle = false)
 
     fun ocrAgreement(card: IdentifiedCard, parsed: ParsedCardText): Float {
         var score = 0f

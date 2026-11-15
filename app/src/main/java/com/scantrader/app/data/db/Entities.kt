@@ -78,6 +78,9 @@ data class CollectionWithCount(
     val id: Long,
     val name: String,
     val createdAt: Long,
+    /** Stock rows in the collection. */
+    val rowCount: Int,
+    /** Copies, the sum of those rows' quantities. */
     val cardCount: Int,
 )
 

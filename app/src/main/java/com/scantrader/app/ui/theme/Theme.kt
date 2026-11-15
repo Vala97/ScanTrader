@@ -104,6 +104,7 @@ object ScanColors {
     val panel = Color(0xF0102344)
     val text = Mist
     val accent = Color(0xFF5CC8FF)
+    val recognized = Color(0xFF3DDC97)
     val onAccent = Color(0xFF04182C)
     val chipIdle = Color(0x1FFFFFFF)
 }

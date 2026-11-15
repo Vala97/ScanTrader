@@ -59,13 +59,36 @@ fun AppNav() {
             )
         }
         composable(
-            "collection/{id}",
-            arguments = listOf(navArgument("id") { type = NavType.LongType }),
+            "collection/{id}?edit={editId}&returnTo={returnTo}&copies={copies}",
+            arguments = listOf(
+                navArgument("id") { type = NavType.LongType },
+                navArgument("editId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("returnTo") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("copies") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
         ) { entry ->
             val id = entry.arguments?.getLong("id") ?: return@composable
+            val editId = entry.arguments?.getString("editId")?.toLongOrNull()
+            val returnToScan = entry.arguments?.getString("returnTo") == "scan"
+            val editCopies = entry.arguments?.getString("copies")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
             val vm: CollectionViewModel = viewModel(factory = CollectionViewModel.factory(app, id))
             CollectionScreen(
                 viewModel = vm,
+                initialEditId = editId,
+                returnToScan = returnToScan,
+                editCopies = editCopies,
                 onBack = { nav.popBackStack() },
                 onScan = {
                     app.scanSession.targetCollectionId = id
@@ -103,6 +126,28 @@ fun AppNav() {
                     onManualSearch = {
                         app.scanSession.resetResults()
                         showConfirm = true
+                    },
+                    onOpenLastSaved = {
+                        val saved = app.scanSession.lastSaved.value
+                        val collection = saved?.collectionId
+                        val entryId = com.scantrader.app.scan.AutoScanLive.savedEntryId(
+                            saved?.entryId,
+                            collection,
+                        )
+                        if (
+                            saved != null &&
+                            collection != null &&
+                            entryId != null &&
+                            com.scantrader.app.scan.AutoScanLive.showApri(true)
+                        ) {
+                            // Scan leaves the composition. Popping this editor
+                            // recomposes it and binds the camera again.
+                            nav.navigate(
+                                "collection/$collection?edit=$entryId&returnTo=scan&copies=${saved.quantity.coerceAtLeast(1)}",
+                            ) {
+                                launchSingleTop = true
+                            }
+                        }
                     },
                 )
                 if (showConfirm) {

@@ -126,17 +126,33 @@ class PokemonCatalogController(
 
     fun download(id: String) {
         scope.launch {
-            val known = synchronized(gate) { remote.firstOrNull { it.id == id } }
-            val entry = known ?: run {
-                if (!fetchIntoMemory()) return@launch
-                synchronized(gate) { remote.firstOrNull { it.id == id } }
-            }
-            if (entry == null) {
+            val entry = entryFor(id) ?: run {
                 setError(id, "Catalogo non trovato nell’elenco.")
                 return@launch
             }
             startDownload(entry)
         }
+    }
+
+    /** Blocks until the index fetch finishes. False on network or parse failure. */
+    suspend fun refreshAwait(): Boolean = fetchIntoMemory()
+
+    fun remoteVersion(id: String): String? =
+        synchronized(gate) { remote.firstOrNull { it.id == id }?.version }
+
+    fun installed(id: String): InstalledStcat? = library.read(id)
+
+    /** Download one catalog and return whether the verified file replaced the old one. */
+    suspend fun downloadAndAwait(id: String): Boolean {
+        val entry = entryFor(id) ?: return false
+        return runDownload(entry)
+    }
+
+    private suspend fun entryFor(id: String): StcatCatalogEntry? {
+        val known = synchronized(gate) { remote.firstOrNull { it.id == id } }
+        if (known != null) return known
+        if (!fetchIntoMemory()) return null
+        return synchronized(gate) { remote.firstOrNull { it.id == id } }
     }
 
     fun delete(id: String) {
@@ -185,10 +201,10 @@ class PokemonCatalogController(
         }
     }
 
-    private suspend fun runDownload(entry: StcatCatalogEntry) {
+    private suspend fun runDownload(entry: StcatCatalogEntry): Boolean {
         val id = entry.id
         val part = library.partFile(id)
-        try {
+        return try {
             setProgress(id, 0f)
             part.parentFile?.mkdirs()
             if (part.exists()) part.delete()
@@ -198,12 +214,14 @@ class PokemonCatalogController(
             synchronized(gate) { errors.remove(id) }
             publish()
             onChanged()
+            true
         } catch (cancelled: CancellationException) {
             part.delete()
             throw cancelled
         } catch (t: Throwable) {
             part.delete()
             setError(id, messageFor(t))
+            false
         } finally {
             synchronized(gate) { progress.remove(id) }
             publish()
