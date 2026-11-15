@@ -414,17 +414,13 @@ fun ScanScreen(
         boundHeight = previewHeight
         controller.initializationFuture.addListener({
             PortraitTargetRotation.lock(controller)
-            // Control is up on the viewport session. Apply only if zoomState was
-            // already observed; otherwise the zoom observer applies on the first real sample.
             val state = controller.cameraInfo?.zoomState?.value
-            val step = zoomGate.onCameraControlReady(
-                requested = viewModel.zoomRatio.value,
-                minZoom = state?.minZoomRatio ?: Float.NaN,
-                maxZoom = state?.maxZoomRatio ?: Float.NaN,
-                viewportReady = viewportReady.get(),
-            )
-            handleZoomStep(step)
+            if (state != null) {
+                onZoomSample(state.zoomRatio, state.minZoomRatio, state.maxZoomRatio)
+            }
         }, mainExecutor)
+        // A zoom sample that arrived before the viewport was ready is not repeated.
+        scheduleZoomApply()
     }
 
     // Zoom-only lens changes stay on the bound camera so torch and auto-scan are not reset.
@@ -1221,9 +1217,7 @@ private fun CardFrameOverlay(
         val (width, height) = measured
         kotlinx.coroutines.delay(48)
         if (measured != width to height) return@LaunchedEffect
-        if (PreviewFraming.acceptGuideMeasurement(width, height, previous.first, previous.second, keyboardOpen) ||
-            PreviewFraming.acceptGuideMeasurement(width, height, width, height, keyboardOpen)
-        ) {
+        if (PreviewFraming.guideSize(width, height, keyboardOpen) != null) {
             onGuideViewport(width, height)
         }
     }
