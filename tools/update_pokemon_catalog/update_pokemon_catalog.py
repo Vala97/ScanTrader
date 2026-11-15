@@ -225,8 +225,7 @@ def resolve_sets(session: requests.Session, sets_arg: str, newest: int) -> set[s
 
 
 def embed_missing(session, session_ort, cards: list[dict]) -> tuple[list[str], np.ndarray]:
-    import onnxruntime as ort
-
+    input_name = session_ort.get_inputs()[0].name
     ids: list[str] = []
     rows: list[np.ndarray] = []
     started = time.time()
@@ -241,7 +240,7 @@ def embed_missing(session, session_ort, cards: list[dict]) -> tuple[list[str], n
             except FileNotFoundError:
                 log(f"  skip {cid}: no image")
                 continue
-        vector = session_ort.run(None, {"input": preprocess(Image.open(io.BytesIO(blob)))})[0][0]
+        vector = session_ort.run(None, {input_name: preprocess(Image.open(io.BytesIO(blob)))})[0][0]
         ids.append(cid)
         rows.append(l2_normalize(np.asarray(vector, dtype=np.float32).reshape(-1)))
         if index % 25 == 0 or index == len(cards):

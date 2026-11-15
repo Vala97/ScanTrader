@@ -10,8 +10,8 @@ class PokemonCatalogNoticeTest {
     @Test
     fun readsTheEnglishPokemonRow() {
         val entries = listOf(
-            StcatCatalogEntry("mtg", "2026.11.13", "https://example/mtg", "aa", 1L),
-            StcatCatalogEntry("pokemon-en", "2026.10.26", "https://example/p", "bb", 2L),
+            StcatCatalogEntry("mtg", "Magic", "2026.11.13", 1L, "aa", "https://example/mtg"),
+            StcatCatalogEntry("pokemon-en", "Pokémon", "2026.10.26", 2L, "bb", "https://example/p"),
         )
         assertEquals("2026.10.26", PokemonCatalogNotice.versionOf(entries))
     }
