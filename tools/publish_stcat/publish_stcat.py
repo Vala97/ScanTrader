@@ -44,6 +44,26 @@ def catalog_spec(spec: str) -> tuple[str, Path]:
     return catalog_id, path
 
 
+def attach_latest_set(
+    entry: dict,
+    *,
+    set_name: str = "",
+    set_code: str = "",
+    set_date: str = "",
+    updated_at: str = "",
+) -> dict:
+    """Add optional fields. Blank values are omitted so an old index stays valid."""
+    if set_name.strip():
+        entry["latest_set_name"] = set_name.strip()
+    if set_code.strip():
+        entry["latest_set_code"] = set_code.strip()
+    if set_date.strip():
+        entry["latest_set_date"] = set_date.strip()
+    if updated_at.strip():
+        entry["updated_at"] = updated_at.strip()
+    return entry
+
+
 def build_index(args: argparse.Namespace) -> tuple[dict, list[Path]]:
     names = dict(DEFAULT_NAMES)
     names.update(parse_name_flags(args.name))
@@ -60,16 +80,22 @@ def build_index(args: argparse.Namespace) -> tuple[dict, list[Path]]:
             f"https://github.com/{args.repo}/releases/download/"
             f"{args.tag}/{path.name}"
         )
-        catalogs.append(
-            {
-                "id": catalog_id,
-                "name": names.get(catalog_id, catalog_id),
-                "version": args.version,
-                "size": len(data),
-                "sha256": hashlib.sha256(data).hexdigest(),
-                "url": url,
-            }
+        row = {
+            "id": catalog_id,
+            "name": names.get(catalog_id, catalog_id),
+            "version": args.version,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "url": url,
+        }
+        attach_latest_set(
+            row,
+            set_name=getattr(args, "latest_set_name", ""),
+            set_code=getattr(args, "latest_set_code", ""),
+            set_date=getattr(args, "latest_set_date", ""),
+            updated_at=getattr(args, "updated_at", ""),
         )
+        catalogs.append(row)
         paths.append(path)
     return {"catalogs": catalogs}, paths
 
@@ -113,6 +139,10 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="Nome visibile, ripetibile: pokemon-en=Pokémon (inglese)",
     )
+    parser.add_argument("--latest-set-name", default="", help="Nome dell'ultimo set incluso, es. Foundations")
+    parser.add_argument("--latest-set-code", default="", help="Sigla dell'ultimo set, es. fdn")
+    parser.add_argument("--latest-set-date", default="", help="Data di uscita dell'ultimo set, YYYY-MM-DD")
+    parser.add_argument("--updated-at", default="", help="Data di questa pubblicazione, YYYY-MM-DD")
     parser.add_argument(
         "files",
         nargs="+",

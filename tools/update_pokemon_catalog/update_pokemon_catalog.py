@@ -282,7 +282,48 @@ def validate_saved_stcat(path: Path, previous_count: int) -> None:
         raise SystemExit("validation: an embedding is not finite")
 
 
-def write_index(out: Path, version: str, base: Path, index_out: Path) -> None:
+def choose_latest_set(previous: dict, details: list[dict]) -> dict:
+    """Keep the previous latest set unless a detail has a newer release date."""
+    best_name = str(previous.get("latest_set_name") or "")
+    best_code = str(previous.get("latest_set_code") or "")
+    best_date = str(previous.get("latest_set_date") or "")
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        released = str(detail.get("releaseDate") or "")
+        name = str(detail.get("name") or "").strip()
+        code = str(detail.get("id") or "").strip()
+        if released and released >= best_date:
+            best_date = released
+            if code:
+                best_code = code
+            if name:
+                best_name = name
+        elif not best_name and name:
+            best_name = name
+            if code:
+                best_code = code
+    return {"name": best_name, "code": best_code, "date": best_date}
+
+
+def latest_published_set(session: requests.Session, set_ids: set[str], previous: dict) -> dict:
+    """Newest TCGdex set among those included, falling back to the previous index row."""
+    details: list[dict] = []
+    for set_id in sorted(set_ids):
+        detail = get_json(session, f"{TCGDEX}/sets/{set_id}")
+        if isinstance(detail, dict):
+            details.append(detail)
+    return choose_latest_set(previous, details)
+
+
+def write_index(
+    out: Path,
+    version: str,
+    base: Path,
+    index_out: Path,
+    latest: dict,
+    updated_at: str,
+) -> None:
     """Write stcat-index.json. Does not upload."""
     cmd = [
         sys.executable,
@@ -295,6 +336,14 @@ def write_index(out: Path, version: str, base: Path, index_out: Path) -> None:
         str(base),
         "--out",
         str(index_out),
+        "--latest-set-name",
+        str(latest.get("name") or ""),
+        "--latest-set-code",
+        str(latest.get("code") or ""),
+        "--latest-set-date",
+        str(latest.get("date") or ""),
+        "--updated-at",
+        updated_at,
         f"{CATALOG_ID}={out}",
     ]
     log("Index " + " ".join(cmd))
@@ -421,7 +470,9 @@ def main() -> int:
         f"(+{len(new_ids)}), {args.out.stat().st_size / 1e6:.1f} MB"
     )
     index_out = args.out.with_name("stcat-index.json")
-    write_index(args.out, version, index_path, index_out)
+    included = set(chosen or []) or set(fresh_sets)
+    latest = latest_published_set(session, included, entry)
+    write_index(args.out, version, index_path, index_out, latest, date.today().isoformat())
     write_result({
         "added": len(new_ids),
         "previous": len(old_ids),

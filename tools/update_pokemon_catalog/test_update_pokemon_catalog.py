@@ -8,6 +8,7 @@ import numpy as np
 
 from update_pokemon_catalog import (
     catalog_entry,
+    choose_latest_set,
     filter_new_cards,
     known_set_ids,
     new_set_ids,
@@ -75,6 +76,19 @@ class SetDiffTests(unittest.TestCase):
             known,
         )
         self.assertEqual(fresh, ["me06"])
+
+    def test_latest_set_keeps_a_newer_published_row(self):
+        chosen = choose_latest_set(
+            {"latest_set_name": "Foundations", "latest_set_code": "fdn", "latest_set_date": "2026-11-01"},
+            [{"id": "old", "name": "Base", "releaseDate": "1999-01-09"}],
+        )
+        self.assertEqual(chosen["name"], "Foundations")
+        self.assertEqual(chosen["code"], "fdn")
+        newer = choose_latest_set(
+            {"latest_set_name": "Base", "latest_set_code": "base1", "latest_set_date": "1999-01-09"},
+            [{"id": "me06", "name": "Mega Evolution", "releaseDate": "2026-11-01"}],
+        )
+        self.assertEqual(newer, {"name": "Mega Evolution", "code": "me06", "date": "2026-11-01"})
 
     def test_saved_stcat_must_load_and_not_shrink(self):
         ids = ["base1-1", "base1-2"]

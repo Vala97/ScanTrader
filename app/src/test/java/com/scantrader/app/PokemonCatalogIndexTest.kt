@@ -75,6 +75,29 @@ class PokemonCatalogIndexTest {
               ]
             }
         """.trimIndent()
+        val withLatestSet = """
+            {
+              "catalogs": [
+                {
+                  "id": "mtg",
+                  "name": "Magic",
+                  "version": "2026.11.16",
+                  "size": 12,
+                  "sha256": "$sha",
+                  "url": "https://github.com/Vala97/ScanTrader/releases/download/stcat/milo.npz",
+                  "latest_set_name": "Foundations",
+                  "latest_set_code": "fdn",
+                  "latest_set_date": "2026-11-01",
+                  "updated_at": "2026-11-16"
+                }
+              ]
+            }
+        """.trimIndent()
+        val extra = PokemonCatalogIndex.parse(withLatestSet).single()
+        assertEquals("mtg", extra.id)
+        assertEquals("2026.11.16", extra.version)
+        assertEquals(sha, extra.sha256)
+
         val parsed = PokemonCatalogIndex.parse(json)
         assertEquals(1, parsed.size)
         val only = parsed.single()

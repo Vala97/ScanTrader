@@ -473,6 +473,9 @@ def main(argv: list[str] | None = None) -> int:
     vectors: list[np.ndarray] = []
     added_ids: list[str] = []
     newest_day = ""
+    latest_set_name = str(entry.get("latest_set_name") or "")
+    latest_set_code = str(entry.get("latest_set_code") or "")
+    latest_set_date = str(entry.get("latest_set_date") or "")
     check_images: list[Image.Image] = []
     for card in new_cards:
         url = front_image_url(card)
@@ -493,6 +496,14 @@ def main(argv: list[str] | None = None) -> int:
         released = str(card.get("released_at") or "")
         if released > newest_day:
             newest_day = released
+        if released and released >= latest_set_date:
+            latest_set_date = released
+            code = str(card.get("set") or "").strip()
+            name = str(card.get("set_name") or "").strip()
+            if code:
+                latest_set_code = code
+            if name:
+                latest_set_name = name
         if len(check_images) < 3:
             check_images.append(image.copy())
         image.close()
@@ -539,6 +550,14 @@ def main(argv: list[str] | None = None) -> int:
             str(base_index),
             "--out",
             str(new_index),
+            "--latest-set-name",
+            latest_set_name,
+            "--latest-set-code",
+            latest_set_code,
+            "--latest-set-date",
+            latest_set_date,
+            "--updated-at",
+            date.today().isoformat(),
             f"mtg={npz_path}",
         ],
         check=True,
