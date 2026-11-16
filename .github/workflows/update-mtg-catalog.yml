@@ -2,8 +2,8 @@ name: Update Magic catalog
 
 on:
   schedule:
-    # Weekly. Stays a dry run unless someone starts it by hand with dry_run false.
-    - cron: "0 6 * * 1"
+    # Daily. Stays a dry run unless someone starts it by hand with dry_run false.
+    - cron: "0 5 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -47,6 +47,7 @@ jobs:
       - name: Build the catalog
         id: build
         env:
+          # A scheduled run is always a dry run. Publishing is a manual dispatch.
           DRY_RUN: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run }}
           SET_CODE: ${{ github.event_name == 'workflow_dispatch' && inputs.set_code || '' }}
         run: |
@@ -63,14 +64,26 @@ jobs:
           import json, os
           from pathlib import Path
           result = json.loads(Path(os.environ["RUNNER_TEMP"], "mtg-catalog", "update-result.json").read_text())
-          path = Path(os.environ["GITHUB_OUTPUT"])
-          with path.open("a") as handle:
+          sets = result.get("new_sets") or []
+          sets_text = ",".join(str(item) for item in sets)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
               handle.write(f"added={int(result.get('added') or 0)}\n")
               handle.write(f"unchanged={str(bool(result.get('unchanged'))).lower()}\n")
+              handle.write(f"validated={str(bool(result.get('validated'))).lower()}\n")
+              handle.write(f"skipped={str(bool(result.get('skipped'))).lower()}\n")
+              handle.write(f"new_sets={sets_text}\n")
+          summary = [
+              "### Magic catalog",
+              f"- new sets: {sets_text or '(none)'}",
+              f"- skipped: {str(bool(result.get('skipped'))).lower()}",
+              f"- added: {int(result.get('added') or 0)}",
+              f"- validated: {str(bool(result.get('validated'))).lower()}",
+          ]
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(summary) + "\n", encoding="utf-8")
           PY
 
       - name: Upload to the existing stcat release
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false && steps.build.outputs.added != '0'
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false && steps.build.outputs.validated == 'true' && steps.build.outputs.added != '0'
         env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run }}
