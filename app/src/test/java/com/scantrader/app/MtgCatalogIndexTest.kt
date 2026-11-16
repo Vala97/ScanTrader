@@ -36,13 +36,13 @@ class MtgCatalogIndexTest {
     }
 
     @Test
-    fun settingsShowTheCatalogDateAndAnAvailableUpdate() {
+    fun settingsShowTheCatalogDateWithoutAskingForAnUpdate() {
         assertEquals(
             "Data del catalogo non ancora letta.",
             MtgCatalogStatus().settingsLine(),
         )
         assertEquals(
-            "Catalogo del 2026.10.31, da scaricare.",
+            "Data del catalogo non ancora letta.",
             MtgCatalogStatus(remoteVersion = "2026.10.31").settingsLine(),
         )
         val installed = MtgCatalogStatus(
@@ -53,10 +53,10 @@ class MtgCatalogIndexTest {
         assertEquals("Catalogo del 2026.07.09.", installed.settingsLine())
         assertFalse(installed.updateAvailable)
         val newer = installed.copy(remoteVersion = "2026.10.31")
-        assertEquals("Catalogo del 2026.07.09. Disponibile 2026.10.31.", newer.settingsLine())
+        assertEquals("Catalogo del 2026.07.09.", newer.settingsLine())
         assertTrue(newer.updateAvailable)
         val legacy = MtgCatalogStatus(remoteVersion = "2026.10.31", catalogInstalled = true)
         assertTrue(legacy.updateAvailable)
-        assertEquals("Catalogo già sul telefono. Disponibile 2026.10.31.", legacy.settingsLine())
+        assertEquals("Catalogo già sul telefono. Data non registrata.", legacy.settingsLine())
     }
 }

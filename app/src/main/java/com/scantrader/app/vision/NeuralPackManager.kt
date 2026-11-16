@@ -92,6 +92,26 @@ class NeuralPackManager(
 
     fun catalogOrNull(): EmbeddingCatalog? = mtgCatalog
 
+    /** Drop the in-memory copy so the next scan loads the file just swapped in. */
+    fun forgetLoaded(magic: Boolean, pokemon: Boolean) {
+        if (magic) {
+            mtgCatalog = null
+            _mtgState.value = if (mtgCatalogFile.exists()) {
+                NeuralPackState.InstalledNotLoaded
+            } else {
+                NeuralPackState.NotInstalled
+            }
+        }
+        if (pokemon) {
+            pokemonCatalog = null
+            _pokemonState.value = if (pokemonCatalogFiles().isNotEmpty()) {
+                NeuralPackState.InstalledNotLoaded
+            } else {
+                NeuralPackState.NotInstalled
+            }
+        }
+    }
+
     suspend fun ensureLoaded(game: Game? = null): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
             val targets = when (game) {
@@ -692,15 +712,9 @@ data class MtgCatalogStatus(
 
     fun settingsLine(): String {
         val installed = installedVersion?.takeIf { it.isNotBlank() }
-        val remote = remoteVersion?.takeIf { it.isNotBlank() }
         return when {
-            installed != null && remote != null &&
-                PokemonCatalogIndex.compareVersions(remote, installed) > 0 ->
-                "Catalogo del $installed. Disponibile $remote."
             installed != null -> "Catalogo del $installed."
-            catalogInstalled && remote != null -> "Catalogo già sul telefono. Disponibile $remote."
             catalogInstalled -> "Catalogo già sul telefono. Data non registrata."
-            remote != null -> "Catalogo del $remote, da scaricare."
             else -> "Data del catalogo non ancora letta."
         }
     }

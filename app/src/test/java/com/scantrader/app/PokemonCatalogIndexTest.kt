@@ -203,7 +203,8 @@ class PokemonCatalogIndexTest {
             missing.statusLine(),
         )
         val update = ready.copy(remoteVersion = "2026.11.1", updateAvailable = true)
-        assertTrue(update.statusLine().contains("versione 2026.10.26 → 2026.11.1"))
+        assertEquals(ready.statusLine(), update.statusLine())
+        assertFalse(update.statusLine().contains("→"))
         assertEquals("Download… (40%)", ready.copy(downloading = true, progress = 0.4f).statusLine())
     }
 

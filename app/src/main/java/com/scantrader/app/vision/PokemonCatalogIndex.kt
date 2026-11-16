@@ -17,6 +17,11 @@ data class StcatCatalogEntry(
     val size: Long,
     val sha256: String,
     val url: String,
+    /** Optional. Missing on indexes written before the set fields existed. */
+    val latestSetName: String? = null,
+    val latestSetCode: String? = null,
+    val latestSetDate: String? = null,
+    val updatedAt: String? = null,
 )
 
 /**
@@ -94,6 +99,10 @@ object PokemonCatalogIndex {
                 size = size.coerceAtLeast(0L),
                 sha256 = sha.lowercase(Locale.US),
                 url = url,
+                latestSetName = obj.string("latest_set_name"),
+                latestSetCode = obj.string("latest_set_code"),
+                latestSetDate = obj.string("latest_set_date"),
+                updatedAt = obj.string("updated_at"),
             )
         }
         return out

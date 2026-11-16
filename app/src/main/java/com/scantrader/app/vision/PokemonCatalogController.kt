@@ -37,10 +37,8 @@ data class PokemonCatalogRow(
             else -> "Non installato"
         }
         val version = when {
-            updateAvailable && !installedVersion.isNullOrBlank() && !remoteVersion.isNullOrBlank() ->
-                "versione $installedVersion → $remoteVersion"
             installed && !installedVersion.isNullOrBlank() -> "versione $installedVersion"
-            !remoteVersion.isNullOrBlank() -> "versione $remoteVersion"
+            !installed && !remoteVersion.isNullOrBlank() -> "versione $remoteVersion"
             else -> null
         }
         val bytes = when {
@@ -110,16 +108,13 @@ class PokemonCatalogController(
         }
     }
 
-    /** Every catalog that is missing or older than the index. */
+    /** Catalogs that are not on the phone yet. A newer file waits for the silent updater. */
     fun downloadMissing() {
         scope.launch {
             if (!fetchIntoMemory()) return@launch
             val entries = synchronized(gate) { remote.toList() }
             for (entry in entries) {
-                val local = library.read(entry.id)
-                val needs = local == null ||
-                    PokemonCatalogIndex.isUpdate(entry.version, local.version, true)
-                if (needs) startDownload(entry)
+                if (library.read(entry.id) == null) startDownload(entry)
             }
         }
     }

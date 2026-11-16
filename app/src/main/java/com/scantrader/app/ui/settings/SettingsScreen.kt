@@ -69,6 +69,8 @@ fun SettingsScreen(
     onReviewIntro: () -> Unit,
 ) {
     val defaults by viewModel.defaults.collectAsStateWithLifecycle()
+    val catalogLines by viewModel.catalogStatus.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.refreshCatalogStatus() }
     val tokenSaved by viewModel.hasCardTraderToken.collectAsStateWithLifecycle()
     val neural by viewModel.neuralPackState.collectAsStateWithLifecycle()
     val mtgCatalog by viewModel.mtgCatalog.collectAsStateWithLifecycle()
@@ -254,7 +256,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    mtgCatalog.settingsLine(),
+                    catalogLines.magic ?: mtgCatalog.settingsLine(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -269,7 +271,8 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     val busy = neural is NeuralPackState.Downloading || neural is NeuralPackState.Loading
-                    val canInstall = !busy && (neural !is NeuralPackState.Ready || mtgCatalog.updateAvailable)
+                    val canInstall = !busy && neural !is NeuralPackState.Ready &&
+                        neural !is NeuralPackState.InstalledNotLoaded
                     Button(
                         onClick = viewModel::downloadNeuralPack,
                         enabled = canInstall,
@@ -277,8 +280,8 @@ fun SettingsScreen(
                         Text(
                             when {
                                 neural is NeuralPackState.Downloading -> "Download…"
-                                neural is NeuralPackState.Ready && mtgCatalog.updateAvailable -> "Aggiorna"
-                                neural is NeuralPackState.Ready -> "Installato"
+                                neural is NeuralPackState.Ready ||
+                                    neural is NeuralPackState.InstalledNotLoaded -> "Installato"
                                 else -> "Scarica"
                             },
                         )
@@ -295,6 +298,9 @@ fun SettingsScreen(
             }
 
             SettingsSection(title = "Riconoscimento Pokémon") {
+                catalogLines.pokemon?.let { line ->
+                    Text(line, style = MaterialTheme.typography.bodyMedium)
+                }
                 Text(
                     "Pack neurale on-device (AGPL-3.0). " +
                         "Utile quando l’OCR è debole; dopo il download resta offline.",
@@ -350,12 +356,6 @@ fun SettingsScreen(
                         onDownload = { viewModel.downloadPokemonCatalog(row.id) },
                         onDelete = { viewModel.deletePokemonCatalog(row.id) },
                     )
-                }
-                TextButton(
-                    onClick = viewModel::refreshPokemonCatalogs,
-                    enabled = !pokemonCatalogs.checking,
-                ) {
-                    Text("Controlla aggiornamenti")
                 }
                 if (defaults.showDebugInfo) {
                     val importBusy = pokemonNeural is NeuralPackState.Downloading ||
@@ -555,8 +555,6 @@ private fun PokemonCatalogRowCard(
         ) {
             if (!row.installed) {
                 Button(onClick = onDownload, enabled = !row.downloading) { Text("Scarica") }
-            } else if (row.updateAvailable) {
-                Button(onClick = onDownload, enabled = !row.downloading) { Text("Aggiorna") }
             }
             if (row.installed) {
                 OutlinedButton(onClick = onDelete, enabled = !row.downloading) { Text("Rimuovi") }

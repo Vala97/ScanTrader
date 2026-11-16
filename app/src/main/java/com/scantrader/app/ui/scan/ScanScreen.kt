@@ -465,8 +465,10 @@ fun ScanScreen(
     }
 
     DisposableEffect(Unit) {
+        viewModel.setScannerInUse(true)
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
+            viewModel.setScannerInUse(false)
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             activity?.setScanBrightness(null)
         }

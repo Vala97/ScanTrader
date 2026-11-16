@@ -36,10 +36,10 @@ import com.scantrader.app.update.DisabledUpdateSource
 import com.scantrader.app.update.GithubReleaseUpdateSource
 import com.scantrader.app.update.PackageUpdateInstaller
 import com.scantrader.app.vision.GalleryMatcher
-import com.scantrader.app.vision.MtgCatalogNoticeController
+import com.scantrader.app.vision.CatalogUpdateWorker
 import com.scantrader.app.vision.NeuralPackManager
+import com.scantrader.app.vision.SilentCatalogUpdates
 import com.scantrader.app.vision.PokemonCatalogController
-import com.scantrader.app.vision.PokemonCatalogNoticeController
 import com.scantrader.app.vision.VisualRanker
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -71,8 +71,7 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         private set
     lateinit var neuralPack: NeuralPackManager
         private set
-    lateinit var mtgCatalogNotice: MtgCatalogNoticeController
-    lateinit var pokemonCatalogNotice: PokemonCatalogNoticeController
+    lateinit var catalogUpdates: SilentCatalogUpdates
         private set
     lateinit var pokemonCatalogs: PokemonCatalogController
         private set
@@ -174,26 +173,18 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         ocr = CardOcr()
         visualRanker = VisualRanker(http)
         neuralPack = NeuralPackManager(this, http)
-        mtgCatalogNotice = MtgCatalogNoticeController(
-            prefs = prefs,
-            scope = appScope,
-            installed = { neuralPack.mtgCatalogStatus.value },
-            fetchRemoteVersion = { neuralPack.peekRemoteMtgVersion() },
-            download = { neuralPack.downloadAndInstall() },
+        catalogUpdates = SilentCatalogUpdates(
+            visionDir = File(filesDir, "vision"),
+            http = http,
+            forgetLoaded = neuralPack::forgetLoaded,
         )
-        mtgCatalogNotice.checkOnLaunch()
+        CatalogUpdateWorker.enqueue(this)
         pokemonCatalogs = PokemonCatalogController(
             visionDir = File(filesDir, "vision"),
             baseHttp = http,
             scope = appScope,
             onChanged = { neuralPack.ensurePokemonReady() },
         )
-        pokemonCatalogNotice = PokemonCatalogNoticeController(
-            prefs = prefs,
-            scope = appScope,
-            catalogs = pokemonCatalogs,
-        )
-        pokemonCatalogNotice.checkOnLaunch()
         galleryMatcher = GalleryMatcher(neuralPack, scryfall, tcgdex)
         val updateClient = http.newBuilder()
             .connectTimeout(30, TimeUnit.SECONDS)

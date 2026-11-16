@@ -92,14 +92,6 @@ class HomeViewModel(private val app: ScanTraderApp) : ViewModel() {
     }
 
     val appUpdate = app.appUpdates.state
-    val mtgCatalogNotice = app.mtgCatalogNotice.visible
-    val mtgCatalogNoticeBusy = app.mtgCatalogNotice.busy
-    val pokemonCatalogNotice = app.pokemonCatalogNotice.visible
-    val pokemonCatalogNoticeBusy = app.pokemonCatalogNotice.busy
-
-    fun updateMtgCatalog() = app.mtgCatalogNotice.download()
-
-    fun updatePokemonCatalog() = app.pokemonCatalogNotice.download()
 
     fun installAppUpdate() = app.appUpdates.downloadAndInstall()
 
@@ -480,6 +472,12 @@ data class PriceRefreshState(
 )
 
 class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
+    val catalogStatus = MutableStateFlow(app.catalogUpdates.statusLines())
+
+    fun refreshCatalogStatus() {
+        catalogStatus.value = app.catalogUpdates.statusLines()
+    }
+
     val defaults: StateFlow<ScanDefaults> =
         app.prefs.defaults.stateIn(
             viewModelScope,
@@ -793,6 +791,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private val zoomTouched = AtomicBoolean(false)
 
     init {
+        app.catalogUpdates.activatePending()
         viewModelScope.launch {
             val defaults = app.prefs.currentDefaults()
             if (!userPickedLens.get() && !zoomTouched.get()) {
@@ -1090,6 +1089,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun setTargetCollection(id: Long?) {
         app.scanSession.targetCollectionId = id
+    }
+
+    fun setScannerInUse(inUse: Boolean) {
+        app.catalogUpdates.setScannerInUse(inUse)
     }
 
     /**
