@@ -23,8 +23,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -67,10 +65,6 @@ fun HomeScreen(
     val collections by viewModel.collections.collectAsStateWithLifecycle()
     val showOnboarding by viewModel.showOnboarding.collectAsStateWithLifecycle()
     val appUpdate by viewModel.appUpdate.collectAsStateWithLifecycle()
-    val mtgNotice by viewModel.mtgCatalogNotice.collectAsStateWithLifecycle()
-    val mtgNoticeBusy by viewModel.mtgCatalogNoticeBusy.collectAsStateWithLifecycle()
-    val pokemonNotice by viewModel.pokemonCatalogNotice.collectAsStateWithLifecycle()
-    val pokemonNoticeBusy by viewModel.pokemonCatalogNoticeBusy.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<CollectionWithCount?>(null) }
@@ -109,20 +103,6 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            if (mtgNotice) {
-                CatalogUpdateNotice(
-                    text = "Catalogo Magic aggiornato disponibile",
-                    busy = mtgNoticeBusy,
-                    onUpdate = viewModel::updateMtgCatalog,
-                )
-            }
-            if (pokemonNotice) {
-                CatalogUpdateNotice(
-                    text = "Catalogo Pokémon aggiornato disponibile",
-                    busy = pokemonNoticeBusy,
-                    onUpdate = viewModel::updatePokemonCatalog,
-                )
-            }
             if (collections.isEmpty()) {
             Column(
                 Modifier
@@ -314,31 +294,4 @@ fun RenameCollectionDialog(
             TextButton(onClick = onDismiss) { Text("Annulla") }
         },
     )
-}
-
-@Composable
-private fun CatalogUpdateNotice(
-    text: String,
-    busy: Boolean,
-    onUpdate: () -> Unit,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Button(
-            onClick = onUpdate,
-            enabled = !busy,
-        ) {
-            Text(if (busy) "Scarico…" else "Aggiorna")
-        }
-    }
 }

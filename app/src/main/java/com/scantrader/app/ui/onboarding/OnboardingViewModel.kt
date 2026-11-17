@@ -32,7 +32,7 @@ class OnboardingViewModel(private val app: ScanTraderApp) : ViewModel() {
         }
     }
 
-    /** Starts the Magic pack (if missing) and any Pokémon catalog that is missing or older. */
+    /** Starts the Magic pack and any Pokémon catalog that is not on the phone yet. */
     fun downloadPacks() {
         if (!downloadGate.compareAndSet(false, true)) return
         downloadStarted.value = true

@@ -11,6 +11,8 @@ data class InstalledStcat(
     val sha256: String,
     val size: Long,
     val cardCount: Int = 0,
+    val latestSetName: String? = null,
+    val updatedAt: String? = null,
 )
 
 /**

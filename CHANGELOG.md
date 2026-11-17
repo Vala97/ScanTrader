@@ -14,6 +14,7 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 - In «Seleziona», accanto a «Sposta», «Elimina» chiede conferma con il numero di carte e di copie, anche se un filtro ne nasconde alcune. Il conteggio e il valore della collezione si aggiornano subito.
 
 ### Modificato
+- Un catalogo Magic o Pokémon già installato si aggiorna da solo, in Wi‑Fi e con la batteria non scarica, senza avvisi. Il file nuovo entra in uso alla prossima apertura dello scanner. In impostazioni, sotto ogni gioco, compare la data e, se c’è, l’ultimo set.
 - L’introduzione al primo avvio parla dei principali TCG, di come inquadrare nome e numero, dell’auto-scan con il riconoscimento della lingua e lo scatto manuale, e dell’export CSV verso CardTrader.
 - Nella lista delle collezioni, «Cancella» chiede conferma prima di eliminare. Il messaggio dice quante carte e copie contiene, oppure che la collezione è vuota. «Annulla» non cancella nulla.
 - All’avvio, al massimo una volta al giorno, l’app legge l’indice del catalogo Magic. Se c’è una versione più nuova compare «Catalogo Magic aggiornato disponibile» con «Aggiorna». Il file si scarica solo a quel tocco.
