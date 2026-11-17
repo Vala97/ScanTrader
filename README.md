@@ -6,7 +6,7 @@ Non è affiliata a Wizards of the Coast, The Pokémon Company, Nintendo, Riot Ga
 
 Licenza [GNU AGPL-3.0](LICENSE) (copyright 2026 Daniele Valacchi / WillyCo). Informativa: [docs/privacy.md](docs/privacy.md).
 
-La versione è solo in `app/version.properties` (`VERSION_NAME` e `VERSION_CODE`; oggi 0.5, build 6). **Informazioni** la legge da lì (`Versione V0.5 (build 6)`; le build debug aggiungono `· debug`).
+La versione è solo in `app/version.properties` (`VERSION_NAME` e `VERSION_CODE`; oggi 0.5.1, build 7). **Informazioni** la legge da lì (`Versione V0.5.1 (build 7)`; le build debug aggiungono `· debug`).
 
 ## Cosa fa
 

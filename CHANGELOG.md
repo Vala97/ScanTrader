@@ -5,6 +5,8 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+## [0.5.1] - 2026-11-17
+
 ### Corretto
 - Lo scan automatico riparte: anteprima, scatto e analisi si collegano insieme, e se la cornice non si installa l'analisi parte lo stesso.
 - Se Scryfall non risponde in tempo e numero e set sono letti, una seconda richiesta precisa attende più a lungo prima di arrendersi.
