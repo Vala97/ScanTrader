@@ -21,12 +21,7 @@ object CameraBitmaps {
         /** [androidx.camera.core.ImageInfo.getRotationDegrees] before the portrait lock. */
         val reportedRotation: Int,
         val sourceSize: Size,
-        /** CameraX viewport crop was smaller than the buffer. The pixels are not cropped here. */
         val cropApplied: Boolean,
-        val cropLeft: Int,
-        val cropTop: Int,
-        val cropRight: Int,
-        val cropBottom: Int,
     )
 
     /**
@@ -52,21 +47,28 @@ object CameraBitmaps {
             rect.top <= 0 &&
             rect.right >= proxy.width &&
             rect.bottom >= proxy.height
-        // Leave the buffer intact. [CardFrameGeometry.analysisRect] maps the guide
-        // once: linearly when the buffer already matches the view, otherwise
-        // with FILL_CENTER. Cropping this rect and mapping again shifts the card.
-        val cropApplied = !fullBuffer && rect.width() > 1 && rect.height() > 1
-        return finish(
-            bitmap = upright,
-            rotation = rotation,
-            reported = reported,
-            sourceSize = sourceSize,
-            cropApplied = cropApplied,
-            cropLeft = rect.left,
-            cropTop = rect.top,
-            cropRight = rect.right,
-            cropBottom = rect.bottom,
+        if (fullBuffer || rect.width() <= 1 || rect.height() <= 1) {
+            return finish(upright, rotation, reported, sourceSize, cropApplied = false)
+        }
+        val mapped = mapCropRect(
+            left = rect.left,
+            top = rect.top,
+            right = rect.right,
+            bottom = rect.bottom,
+            rotationDegrees = rotation,
+            width = proxy.width,
+            height = proxy.height,
         )
+        val left = mapped.left.coerceIn(0, upright.width - 1)
+        val top = mapped.top.coerceIn(0, upright.height - 1)
+        val w = mapped.width.coerceAtMost(upright.width - left).coerceAtLeast(1)
+        val h = mapped.height.coerceAtMost(upright.height - top).coerceAtLeast(1)
+        if (left == 0 && top == 0 && w == upright.width && h == upright.height) {
+            return finish(upright, rotation, reported, sourceSize, cropApplied = false)
+        }
+        val cropped = Bitmap.createBitmap(upright, left, top, w, h)
+        if (cropped !== upright) upright.recycle()
+        return finish(cropped, rotation, reported, sourceSize, cropApplied = true)
     }
 
     fun fromJpegFile(path: String): Bitmap? {
@@ -105,23 +107,9 @@ object CameraBitmaps {
         reported: Int,
         sourceSize: Size,
         cropApplied: Boolean,
-        cropLeft: Int,
-        cropTop: Int,
-        cropRight: Int,
-        cropBottom: Int,
     ): Upright {
         val portrait = ensurePortrait(bitmap)
-        return Upright(
-            bitmap = portrait,
-            rotationDegrees = rotation,
-            reportedRotation = reported,
-            sourceSize = sourceSize,
-            cropApplied = cropApplied,
-            cropLeft = cropLeft,
-            cropTop = cropTop,
-            cropRight = cropRight,
-            cropBottom = cropBottom,
-        )
+        return Upright(portrait, rotation, reported, sourceSize, cropApplied)
     }
 
     private fun rotate(source: Bitmap, degrees: Int): Bitmap {

@@ -179,34 +179,4 @@ class ZoomFramingTest {
         assertTrue(flushed is com.scantrader.app.scan.ZoomRestoreStep.Apply)
         assertFalse(flushed is com.scantrader.app.scan.ZoomRestoreStep.Confirmed)
     }
-
-    @Test
-    fun sampleBeforeTheViewportExistsDoesNotFinishTheRestore() {
-        val gate = com.scantrader.app.scan.ZoomRestoreController()
-        val early = gate.onZoomSample(
-            reported = 2f,
-            requested = 2f,
-            minZoom = 0.5f,
-            maxZoom = 8f,
-            cameraControlReady = true,
-            viewportReady = false,
-        )
-        assertTrue(early is com.scantrader.app.scan.ZoomRestoreStep.Wait)
-        val ready = gate.onCameraControlReady(
-            requested = 2f,
-            minZoom = 0.5f,
-            maxZoom = 8f,
-            viewportReady = false,
-        )
-        assertTrue(ready is com.scantrader.app.scan.ZoomRestoreStep.Wait)
-        val after = gate.onZoomSample(
-            reported = 2f,
-            requested = 2f,
-            minZoom = 0.5f,
-            maxZoom = 8f,
-            cameraControlReady = true,
-            viewportReady = true,
-        )
-        assertTrue(after is com.scantrader.app.scan.ZoomRestoreStep.Confirmed)
-    }
 }

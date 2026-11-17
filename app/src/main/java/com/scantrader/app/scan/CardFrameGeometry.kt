@@ -102,55 +102,6 @@ object CardFrameGeometry {
     }
 
     /**
-     * True when [bitmapWidth]×[bitmapHeight] already has the view's aspect, so it
-     * is the viewport crop and must not be FILL_CENTER-cropped again.
-     */
-    fun bufferMatchesView(
-        bitmapWidth: Int,
-        bitmapHeight: Int,
-        viewWidth: Float,
-        viewHeight: Float,
-    ): Boolean {
-        if (bitmapWidth <= 1 || bitmapHeight <= 1 || viewWidth <= 1f || viewHeight <= 1f) return false
-        val buffer = bitmapWidth.toFloat() / bitmapHeight.toFloat()
-        val view = viewWidth / viewHeight
-        return abs(buffer - view) <= 0.08f
-    }
-
-    /**
-     * Guide rectangle in bitmap pixels.
-     * A buffer that already matches the view is mapped linearly. Anything else
-     * is mapped once, with FILL_CENTER. Never both.
-     */
-    fun analysisRect(
-        bitmapWidth: Int,
-        bitmapHeight: Int,
-        viewWidth: Float,
-        viewHeight: Float,
-    ): PixelRect {
-        if (bitmapWidth <= 1 || bitmapHeight <= 1 || viewWidth <= 1f || viewHeight <= 1f) {
-            return PixelRect(0, 0, bitmapWidth.coerceAtLeast(1), bitmapHeight.coerceAtLeast(1))
-        }
-        val guide = frameIn(viewWidth, viewHeight)
-        if (bufferMatchesView(bitmapWidth, bitmapHeight, viewWidth, viewHeight)) {
-            val scaleX = bitmapWidth / viewWidth
-            val scaleY = bitmapHeight / viewHeight
-            val left = (guide.left * scaleX).toInt().coerceIn(0, bitmapWidth - 1)
-            val top = (guide.top * scaleY).toInt().coerceIn(0, bitmapHeight - 1)
-            val right = (guide.right * scaleX).toInt().coerceIn(left + 1, bitmapWidth)
-            val bottom = (guide.bottom * scaleY).toInt().coerceIn(top + 1, bitmapHeight)
-            return PixelRect(left, top, right - left, bottom - top)
-        }
-        return mapFillCenterViewRectToBitmap(
-            bitmapWidth = bitmapWidth,
-            bitmapHeight = bitmapHeight,
-            viewWidth = viewWidth,
-            viewHeight = viewHeight,
-            guide = guide,
-        )
-    }
-
-    /**
      * Four corners of the on-screen guide, in bitmap pixels: TL, TR, BR, BL.
      * Null when the preview size is unknown. Callers that embed a card must not
      * substitute [cropBitmap]: on a 960×1280 analysis buffer that crop is nearly square
@@ -164,11 +115,13 @@ object CardFrameGeometry {
     ): FloatArray? {
         if (viewWidth <= 1f || viewHeight <= 1f) return null
         if (bitmapWidth <= 1 || bitmapHeight <= 1) return null
-        val crop = analysisRect(
+        val guide = frameStable(viewWidth, viewHeight, viewWidth, viewHeight)
+        val crop = mapFillCenterViewRectToBitmap(
             bitmapWidth = bitmapWidth,
             bitmapHeight = bitmapHeight,
             viewWidth = viewWidth,
             viewHeight = viewHeight,
+            guide = guide,
         )
         val left = crop.left.toFloat()
         val top = crop.top.toFloat()
@@ -179,7 +132,7 @@ object CardFrameGeometry {
 
     /**
      * Crops [source] to the on-screen guide. [viewWidth] and [viewHeight] are the
-     * settled preview size the overlay uses. Unknown size falls back to [cropBitmap].
+     * locked preview size the overlay uses. Unknown size falls back to [cropBitmap].
      * OCR may use that fallback. The neural embedder must use [guideCorners] instead.
      */
     fun cropToGuide(
@@ -188,11 +141,13 @@ object CardFrameGeometry {
         viewHeight: Float,
     ): android.graphics.Bitmap {
         if (viewWidth <= 1f || viewHeight <= 1f) return cropBitmap(source)
-        val crop = analysisRect(
+        val guide = frameStable(viewWidth, viewHeight, viewWidth, viewHeight)
+        val crop = mapFillCenterViewRectToBitmap(
             bitmapWidth = source.width,
             bitmapHeight = source.height,
             viewWidth = viewWidth,
             viewHeight = viewHeight,
+            guide = guide,
         )
         return android.graphics.Bitmap.createBitmap(source, crop.left, crop.top, crop.width, crop.height)
     }

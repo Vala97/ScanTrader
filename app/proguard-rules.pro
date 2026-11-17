@@ -35,10 +35,8 @@
 # CameraX pulls in optional classes that are not packaged.
 -dontwarn com.google.devtools.build.android.desugar.runtime.**
 
-# Camera bind uses the public API. PreviewView.setController installs
-# PreviewView.getViewPort() into CameraX's UseCaseGroup. Do not reflect into
-# CameraController: R8 renames private fields such as mViewPort, and that
-# failure used to leave ImageAnalysis unbound.
+# Public CameraX bind methods. Do not reflect into CameraController:
+# R8 renames private fields such as mViewPort.
 -keepclassmembers class androidx.camera.view.CameraController {
     public void setEnabledUseCases(int);
     public void setImageAnalysisAnalyzer(java.util.concurrent.Executor, androidx.camera.core.ImageAnalysis$Analyzer);
