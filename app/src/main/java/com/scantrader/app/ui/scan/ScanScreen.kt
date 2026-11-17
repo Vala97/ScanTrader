@@ -12,7 +12,6 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.os.Build
 import android.view.HapticFeedbackConstants
-import android.view.Surface
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Toast
@@ -52,8 +51,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -87,7 +84,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -106,7 +102,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -125,9 +120,7 @@ import com.scantrader.app.R
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.scan.AutoScanQuick
 import com.scantrader.app.scan.CameraDevices
-import com.scantrader.app.scan.PreviewFraming
 import com.scantrader.app.scan.ManualShutter
-import com.scantrader.app.scan.PortraitTargetRotation
 import com.scantrader.app.scan.CardFrameGeometry
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
@@ -221,21 +214,6 @@ fun ScanScreen(
         if (granted) viewModel.refreshHardware()
     }
 
-    // One PreviewView for the lifetime of this screen. Reassigning controller
-    // on recomposition calls bindToLifecycle again and freezes the preview.
-    val previewView = remember {
-        PreviewView(context).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-            // FILL_CENTER so the guide overlay matches the analysis/capture FOV
-            // (FIT_CENTER letterboxes and misaligns the card-frame crop).
-            // The controller is attached only after this view has a real size.
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-        }
-    }
     val controller = remember {
         LifecycleCameraController(context).apply {
             setEnabledUseCases(
@@ -258,12 +236,21 @@ fun ScanScreen(
     // when the same lens is still attached (confirm → scan).
     var cameraBound by remember { mutableStateOf(false) }
     var boundCameraId by remember { mutableStateOf<String?>(null) }
-    var previewWidth by remember { mutableIntStateOf(0) }
-    var previewHeight by remember { mutableIntStateOf(0) }
-    var boundWidth by remember { mutableIntStateOf(0) }
-    var boundHeight by remember { mutableIntStateOf(0) }
-    val viewportReady = remember { AtomicBoolean(false) }
-    val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    // One PreviewView for the lifetime of this screen. Reassigning controller
+    // on recomposition calls bindToLifecycle again and freezes the preview.
+    val previewView = remember {
+        PreviewView(context).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            // FILL_CENTER so the guide overlay matches the analysis/capture FOV
+            // (FIT_CENTER letterboxes and misaligns the card-frame crop).
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+            this.controller = controller
+        }
+    }
 
     fun logZoom(requested: Float, applied: Float?) {
         ScanDebug.d(
@@ -301,7 +288,6 @@ fun ScanScreen(
             minZoom = minZoom,
             maxZoom = maxZoom,
             cameraControlReady = controller.cameraControl != null,
-            viewportReady = viewportReady.get(),
         )
         handleZoomStep(step)
     }
@@ -350,123 +336,35 @@ fun ScanScreen(
         onZoomSample(state.zoomRatio, state.minZoomRatio, state.maxZoomRatio)
     }
 
-    DisposableEffect(previewView) {
-        val listener = android.view.View.OnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
-            if (view.width != previewWidth || view.height != previewHeight) {
-                previewWidth = view.width
-                previewHeight = view.height
-            }
-            // PreviewView re-registers the rotation listener on layout. Pin portrait again.
-            if (viewportReady.get()) PortraitTargetRotation.lock(controller)
-        }
-        previewView.addOnLayoutChangeListener(listener)
-        onDispose { previewView.removeOnLayoutChangeListener(listener) }
-    }
-
-    DisposableEffect(previewView, lifecycleOwner, granted, gamePicked) {
-        if (!granted || !gamePicked) return@DisposableEffect onDispose { }
-        val observer = Observer<PreviewView.StreamState> { state ->
-            if (state == PreviewView.StreamState.STREAMING) {
-                PortraitTargetRotation.lock(controller)
-            }
-        }
-        previewView.previewStreamState.observe(lifecycleOwner, observer)
-        onDispose { previewView.previewStreamState.removeObserver(observer) }
-    }
-
-    LaunchedEffect(cameraId, granted, gamePicked, previewWidth, previewHeight, keyboardOpen) {
-        val bind = PreviewFraming.shouldBind(
-            granted = granted,
-            gamePicked = gamePicked,
-            keyboardOpen = keyboardOpen,
-            width = previewWidth,
-            height = previewHeight,
+    LaunchedEffect(cameraId, granted, gamePicked) {
+        if (!granted || !gamePicked) return@LaunchedEffect
+        previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
+        previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+        val rebind = ZoomFraming.shouldRebindCamera(
             alreadyBound = cameraBound,
             boundCameraId = boundCameraId,
             requestedCameraId = cameraId,
-            boundWidth = boundWidth,
-            boundHeight = boundHeight,
         )
-        if (!bind) return@LaunchedEffect
-        // Wait until this size survives a frame, so a keyboard animation does not bind.
-        kotlinx.coroutines.delay(48)
-        if (!PreviewFraming.readyToBind(previewView.width, previewView.height)) return@LaunchedEffect
-        if (previewView.width != previewWidth || previewView.height != previewHeight) return@LaunchedEffect
-        viewportReady.set(false)
+        if (!rebind) return@LaunchedEffect
         zoomGate.resetForBind()
         viewModel.armZoomRestore()
-        previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
-        previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-        val plan = runCatching {
-            // Official viewport: PreviewView.getViewPort(ROTATION_0). setController
-            // installs getViewPort() into the CameraX UseCaseGroup. A null or
-            // throwing viewport must not skip the bind.
-            val official = previewView.getViewPort(Surface.ROTATION_0)
-            if (official == null) PreviewFraming.bindPlanAfterFailure()
-            else PreviewFraming.bindPlan(viewportReady = true)
-        }.getOrElse {
-            ScanDebug.w("frame: viewport setup failed ${it.javaClass.simpleName}")
-            PreviewFraming.bindPlanAfterFailure()
-        }
         controller.cameraSelector = CameraDevices.selectorFor(cameraId)
-        controller.setEnabledUseCases(
-            LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
-        )
-        // setController installs PreviewView.getViewPort() on the CameraX UseCaseGroup.
-        runCatching {
-            if (previewView.controller !== controller) previewView.controller = controller
-        }.onFailure { ScanDebug.w("frame: preview attach failed ${it.javaClass.simpleName}") }
-        try {
-            controller.bindToLifecycle(lifecycleOwner)
-        } catch (error: Throwable) {
-            ScanDebug.w("frame: bind failed ${error.javaClass.simpleName}")
-            controller.setEnabledUseCases(
-                LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
-            )
-            try {
-                controller.bindToLifecycle(lifecycleOwner)
-            } catch (fallback: Throwable) {
-                ScanDebug.w("frame: fallback bind failed ${fallback.javaClass.simpleName}")
-            }
-        }
-        if (!controller.isImageAnalysisEnabled()) {
-            ScanDebug.w("frame: analysis disabled after bind, rebinding")
-            controller.setEnabledUseCases(
-                LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
-            )
-            runCatching { controller.bindToLifecycle(lifecycleOwner) }
-                .onFailure { ScanDebug.w("frame: analysis rebind failed ${it.javaClass.simpleName}") }
-        }
-        ScanDebug.d(
-            "frame: bound ${plan.useCases.joinToString()} viewport=${plan.withViewport} " +
-                "analysis=${controller.isImageAnalysisEnabled()}",
-        )
-        if (autoScan && !confirmVisible) {
-            attachAutoAnalyzer(
-                controller = controller,
-                previewView = previewView,
-                executor = cameraExecutor,
-                mainExecutor = mainExecutor,
-                enabled = true,
-                viewModel = viewModel,
-                onFrame = { bitmap -> viewModel.processAutoFrame(bitmap) { goToConfirm() } },
-            )
-        }
-        PortraitTargetRotation.lock(controller)
-        viewportReady.set(true)
+        controller.bindToLifecycle(lifecycleOwner)
+        com.scantrader.app.scan.PortraitTargetRotation.lock(controller)
         cameraBound = true
         boundCameraId = cameraId
-        boundWidth = previewWidth
-        boundHeight = previewHeight
         controller.initializationFuture.addListener({
-            PortraitTargetRotation.lock(controller)
+            com.scantrader.app.scan.PortraitTargetRotation.lock(controller)
+            // Control is up. Apply only if zoomState was already observed;
+            // otherwise the zoom observer applies on the first real sample.
             val state = controller.cameraInfo?.zoomState?.value
-            if (state != null) {
-                onZoomSample(state.zoomRatio, state.minZoomRatio, state.maxZoomRatio)
-            }
+            val step = zoomGate.onCameraControlReady(
+                requested = viewModel.zoomRatio.value,
+                minZoom = state?.minZoomRatio ?: Float.NaN,
+                maxZoom = state?.maxZoomRatio ?: Float.NaN,
+            )
+            handleZoomStep(step)
         }, mainExecutor)
-        // A zoom sample that arrived before the viewport was ready is not repeated.
-        scheduleZoomApply()
     }
 
     // Zoom-only lens changes stay on the bound camera so torch and auto-scan are not reset.
@@ -500,7 +398,6 @@ fun ScanScreen(
                     zoomGate.arm()
                     attachAutoAnalyzer(
                         controller = controller,
-                        previewView = previewView,
                         executor = cameraExecutor,
                         mainExecutor = mainExecutor,
                         enabled = autoScan,
@@ -615,7 +512,6 @@ fun ScanScreen(
         navigated.set(false)
         attachAutoAnalyzer(
             controller = controller,
-            previewView = previewView,
             executor = cameraExecutor,
             mainExecutor = mainExecutor,
             enabled = autoScan,
@@ -655,6 +551,9 @@ fun ScanScreen(
                     update = { view ->
                         view.scaleType = PreviewView.ScaleType.FILL_CENTER
                         view.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        // One controller on this PreviewView: CameraX uses view.viewPort
+                        // for preview, analysis, and capture together.
+                        if (view.controller !== controller) view.controller = controller
                     },
                 )
                 CardFrameOverlay(
@@ -664,10 +563,9 @@ fun ScanScreen(
                         autoStatus = autoStatus,
                         framed = framedCard.kind,
                     ),
-                    settledWidth = guideViewWidth,
-                    settledHeight = guideViewHeight,
-                    keyboardOpen = keyboardOpen,
-                    onGuideViewport = viewModel::setGuideViewport,
+                    lockedWidth = guideViewWidth,
+                    lockedHeight = guideViewHeight,
+                    onLockViewport = viewModel::lockGuideViewport,
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
@@ -1247,10 +1145,9 @@ private fun ModeToggleCard(
 private fun CardFrameOverlay(
     showBothBottomCorners: Boolean = false,
     phase: com.scantrader.app.scan.AutoScanLive.FramePhase,
-    settledWidth: Float,
-    settledHeight: Float,
-    keyboardOpen: Boolean,
-    onGuideViewport: (Float, Float) -> Unit,
+    lockedWidth: Float,
+    lockedHeight: Float,
+    onLockViewport: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val target = when (phase) {
@@ -1259,44 +1156,17 @@ private fun CardFrameOverlay(
         com.scantrader.app.scan.AutoScanLive.FramePhase.RECOGNIZED -> ScanColors.recognized
     }
     val accent by animateColorAsState(target, tween(durationMillis = 280), label = "frameCorners")
-    var measured by remember { mutableStateOf(0f to 0f) }
-    var previous by remember { mutableStateOf(0f to 0f) }
-    LaunchedEffect(measured, keyboardOpen) {
-        val (width, height) = measured
-        kotlinx.coroutines.delay(48)
-        if (measured != width to height) return@LaunchedEffect
-        if (PreviewFraming.guideSize(width, height, keyboardOpen) != null) {
-            onGuideViewport(width, height)
-        }
-    }
     Canvas(
         modifier.onSizeChanged { size ->
-            val width = size.width.toFloat()
-            val height = size.height.toFloat()
-            if (PreviewFraming.acceptGuideMeasurement(
-                    width,
-                    height,
-                    previous.first,
-                    previous.second,
-                    keyboardOpen,
-                )
-            ) {
-                onGuideViewport(width, height)
-            }
-            previous = measured
-            measured = width to height
+            onLockViewport(size.width.toFloat(), size.height.toFloat())
         },
     ) {
-        val rect = if (
-            settledWidth > 1f &&
-            settledHeight > 1f &&
-            (abs(size.width - settledWidth) >= 1f || abs(size.height - settledHeight) >= 1f)
-        ) {
-            // Keyboard or a late inset: keep the last settled cornice until the new size repeats.
-            CardFrameGeometry.frameIn(settledWidth, settledHeight)
-        } else {
-            CardFrameGeometry.frameIn(size.width, size.height)
-        }
+        val rect = CardFrameGeometry.frameStable(
+            viewWidth = size.width,
+            viewHeight = size.height,
+            lockedWidth = lockedWidth,
+            lockedHeight = lockedHeight,
+        )
         val left = rect.left
         val top = rect.top
         val right = rect.right
@@ -1436,7 +1306,6 @@ private fun applySavedZoom(
 
 private fun attachAutoAnalyzer(
     controller: LifecycleCameraController,
-    previewView: PreviewView,
     executor: java.util.concurrent.ExecutorService,
     mainExecutor: java.util.concurrent.Executor,
     enabled: Boolean,
@@ -1455,29 +1324,6 @@ private fun attachAutoAnalyzer(
             }
             if (!viewModel.canAcceptAutoFrame()) return@setImageAnalysisAnalyzer
             val upright = com.scantrader.app.scan.CameraBitmaps.fromImageProxy(proxy)
-            val guideW = viewModel.guideViewWidth.value
-            val guideH = viewModel.guideViewHeight.value
-            val guide = if (guideW > 1f && guideH > 1f) {
-                com.scantrader.app.scan.CardFrameGeometry.frameIn(guideW, guideH)
-            } else {
-                null
-            }
-            ScanDebug.d(
-                PreviewFraming.frameLogLine(
-                    viewWidth = previewView.width,
-                    viewHeight = previewView.height,
-                    previewRotation = PortraitTargetRotation.previewRotation(controller),
-                    cropLeft = upright.cropLeft,
-                    cropTop = upright.cropTop,
-                    cropRight = upright.cropRight,
-                    cropBottom = upright.cropBottom,
-                    zoom = controller.cameraInfo?.zoomState?.value?.zoomRatio,
-                    guideLeft = guide?.left ?: 0f,
-                    guideTop = guide?.top ?: 0f,
-                    guideWidth = guide?.width ?: 0f,
-                    guideHeight = guide?.height ?: 0f,
-                ),
-            )
             ScanDebug.d(
                 "autoFrame rot=${upright.reportedRotation} applied=${upright.rotationDegrees} " +
                     "src=${upright.sourceSize.width}x${upright.sourceSize.height} " +
@@ -1486,15 +1332,7 @@ private fun attachAutoAnalyzer(
             )
             val bitmap = upright.bitmap
             mainExecutor.execute {
-                val guideW = viewModel.guideViewWidth.value
-                val guideH = viewModel.guideViewHeight.value
-                val aligned = upright.cropApplied || com.scantrader.app.scan.CardFrameGeometry.bufferMatchesView(
-                    bitmap.width,
-                    bitmap.height,
-                    guideW,
-                    guideH,
-                )
-                viewModel.noteAnalysisCrop(aligned)
+                viewModel.noteAnalysisCrop(upright.cropApplied)
                 onFrame(bitmap)
             }
         } catch (_: Throwable) {

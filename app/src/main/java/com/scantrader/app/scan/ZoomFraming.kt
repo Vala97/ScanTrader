@@ -135,9 +135,7 @@ class ZoomRestoreController {
         requested: Float,
         minZoom: Float,
         maxZoom: Float,
-        viewportReady: Boolean = true,
     ): ZoomRestoreStep {
-        if (!viewportReady) return ZoomRestoreStep.Wait
         cameraControlReady = true
         val reported = lastReported
         if (!zoomStateObserved || reported == null) return ZoomRestoreStep.Wait
@@ -152,11 +150,7 @@ class ZoomRestoreController {
         minZoom: Float,
         maxZoom: Float,
         cameraControlReady: Boolean,
-        viewportReady: Boolean = true,
     ): ZoomRestoreStep {
-        // A 1× report from the session that existed before the view had a size
-        // must not confirm the restore. That crop is not the one on screen.
-        if (!viewportReady) return ZoomRestoreStep.Wait
         if (reported.isFinite() && reported > 0f) lastReported = reported
         zoomStateObserved = true
         // The flag tracks this sample. A report from before CameraControl exists

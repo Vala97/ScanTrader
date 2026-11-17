@@ -5,6 +5,9 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Corretto
+- Lo scan automatico torna al collegamento della fotocamera che funzionava prima della cornice nuova: anteprima, scatto e analisi insieme, con il ritaglio di prima.
+
 ## [0.5.1] - 2026-11-17
 
 ### Corretto
