@@ -44,6 +44,62 @@ def catalog_spec(spec: str) -> tuple[str, Path]:
     return catalog_id, path
 
 
+def release_upload_allowed(
+    *,
+    event: str,
+    dry_run: bool,
+    validated: bool,
+    added: int,
+) -> bool:
+    """A daily run publishes a validated catalog. A manual run does so only when dry_run is false.
+
+    No new cards, a skipped run, or a failed validation never uploads.
+    """
+    if not validated or added <= 0:
+        return False
+    if event == "schedule":
+        return True
+    if event == "workflow_dispatch":
+        return not dry_run
+    return False
+
+
+def index_matches_catalog(index_path: Path, catalog_id: str, file_path: Path) -> None:
+    """The published row must describe this file. Raise before any upload."""
+    document = json.loads(Path(index_path).read_text(encoding="utf-8"))
+    rows = [row for row in document.get("catalogs") or [] if isinstance(row, dict) and row.get("id") == catalog_id]
+    if len(rows) != 1:
+        raise SystemExit(f"indice senza una sola riga {catalog_id}")
+    data = Path(file_path).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    row = rows[0]
+    if row.get("sha256") != digest or int(row.get("size") or -1) != len(data):
+        raise SystemExit(f"sha256 o size di {catalog_id} non coincidono col file")
+    url = str(row.get("url") or "")
+    if not url.startswith("https://") or not url.endswith("/" + Path(file_path).name):
+        raise SystemExit(f"url di {catalog_id} non punta a questo file")
+
+
+def attach_latest_set(
+    entry: dict,
+    *,
+    set_name: str = "",
+    set_code: str = "",
+    set_date: str = "",
+    updated_at: str = "",
+) -> dict:
+    """Add optional fields. Blank values are omitted so an old index stays valid."""
+    if set_name.strip():
+        entry["latest_set_name"] = set_name.strip()
+    if set_code.strip():
+        entry["latest_set_code"] = set_code.strip()
+    if set_date.strip():
+        entry["latest_set_date"] = set_date.strip()
+    if updated_at.strip():
+        entry["updated_at"] = updated_at.strip()
+    return entry
+
+
 def build_index(args: argparse.Namespace) -> tuple[dict, list[Path]]:
     names = dict(DEFAULT_NAMES)
     names.update(parse_name_flags(args.name))
@@ -60,16 +116,22 @@ def build_index(args: argparse.Namespace) -> tuple[dict, list[Path]]:
             f"https://github.com/{args.repo}/releases/download/"
             f"{args.tag}/{path.name}"
         )
-        catalogs.append(
-            {
-                "id": catalog_id,
-                "name": names.get(catalog_id, catalog_id),
-                "version": args.version,
-                "size": len(data),
-                "sha256": hashlib.sha256(data).hexdigest(),
-                "url": url,
-            }
+        row = {
+            "id": catalog_id,
+            "name": names.get(catalog_id, catalog_id),
+            "version": args.version,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "url": url,
+        }
+        attach_latest_set(
+            row,
+            set_name=getattr(args, "latest_set_name", ""),
+            set_code=getattr(args, "latest_set_code", ""),
+            set_date=getattr(args, "latest_set_date", ""),
+            updated_at=getattr(args, "updated_at", ""),
         )
+        catalogs.append(row)
         paths.append(path)
     return {"catalogs": catalogs}, paths
 
@@ -113,6 +175,10 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="Nome visibile, ripetibile: pokemon-en=Pokémon (inglese)",
     )
+    parser.add_argument("--latest-set-name", default="", help="Nome dell'ultimo set incluso, es. Foundations")
+    parser.add_argument("--latest-set-code", default="", help="Sigla dell'ultimo set, es. fdn")
+    parser.add_argument("--latest-set-date", default="", help="Data di uscita dell'ultimo set, YYYY-MM-DD")
+    parser.add_argument("--updated-at", default="", help="Data di questa pubblicazione, YYYY-MM-DD")
     parser.add_argument(
         "files",
         nargs="+",

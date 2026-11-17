@@ -1,12 +1,21 @@
 """Unit tests for the incremental Pokémon catalog update. No network."""
 
+import tempfile
 import unittest
+from pathlib import Path
+
+import numpy as np
 
 from update_pokemon_catalog import (
     catalog_entry,
+    choose_latest_set,
     filter_new_cards,
+    known_set_ids,
+    new_set_ids,
     next_version,
     sets_by_newest,
+    validate_saved_stcat,
+    write_stcat,
 )
 
 
@@ -56,6 +65,43 @@ class IndexTests(unittest.TestCase):
         entry = catalog_entry(index, "pokemon-en")
         self.assertEqual(entry["version"], "2026.10.26")
         self.assertEqual(entry["url"], "https://example/pokemon-en.stcat")
+
+
+class SetDiffTests(unittest.TestCase):
+    def test_new_sets_are_the_ones_missing_from_published_ids(self):
+        known = known_set_ids(["base1-1", "base1-2", "sv10-4"])
+        self.assertEqual(known, {"base1", "sv10"})
+        fresh = new_set_ids(
+            [{"id": "base1"}, {"id": "sv10"}, {"id": "me06"}, {"id": ""}],
+            known,
+        )
+        self.assertEqual(fresh, ["me06"])
+
+    def test_latest_set_keeps_a_newer_published_row(self):
+        chosen = choose_latest_set(
+            {"latest_set_name": "Foundations", "latest_set_code": "fdn", "latest_set_date": "2026-11-01"},
+            [{"id": "old", "name": "Base", "releaseDate": "1999-01-09"}],
+        )
+        self.assertEqual(chosen["name"], "Foundations")
+        self.assertEqual(chosen["code"], "fdn")
+        newer = choose_latest_set(
+            {"latest_set_name": "Base", "latest_set_code": "base1", "latest_set_date": "1999-01-09"},
+            [{"id": "me06", "name": "Mega Evolution", "releaseDate": "2026-11-01"}],
+        )
+        self.assertEqual(newer, {"name": "Mega Evolution", "code": "me06", "date": "2026-11-01"})
+
+    def test_saved_stcat_must_load_and_not_shrink(self):
+        ids = ["base1-1", "base1-2"]
+        vectors = np.zeros((2, 128), dtype=np.float32)
+        vectors[:, 0] = 1
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pokemon-en.stcat"
+            write_stcat(path, ids, vectors)
+            validate_saved_stcat(path, previous_count=2)
+            short = Path(tmp) / "short.stcat"
+            write_stcat(short, ids[:1], vectors[:1])
+            with self.assertRaises(SystemExit):
+                validate_saved_stcat(short, previous_count=2)
 
 
 if __name__ == "__main__":

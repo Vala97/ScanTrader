@@ -31,6 +31,8 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 PUBLISH = ROOT / "tools" / "publish_stcat" / "publish_stcat.py"
+sys.path.insert(0, str(PUBLISH.parent))
+from publish_stcat import index_matches_catalog  # noqa: E402
 INDEX_URL = "https://github.com/Vala97/ScanTrader/releases/download/stcat/stcat-index.json"
 TCGDEX = "https://api.tcgdex.net/v2/en"
 MILO_URL = "https://huggingface.co/HanClinto/milo/resolve/main/model.onnx"
@@ -91,6 +93,26 @@ def filter_new_cards(cards: list[dict], known: set[str], sets_filter: set[str] |
             continue
         out.append(card)
     return out
+
+
+def set_id_of(card_id: str) -> str:
+    return card_id.split("-", 1)[0] if card_id else ""
+
+
+def known_set_ids(card_ids: list[str]) -> set[str]:
+    return {set_id_of(card_id) for card_id in card_ids if set_id_of(card_id)}
+
+
+def new_set_ids(upstream: list[dict], known: set[str]) -> list[str]:
+    """TCGdex set ids that are not already present in the published catalog."""
+    found: list[str] = []
+    for item in upstream:
+        if not isinstance(item, dict):
+            continue
+        set_id = str(item.get("id") or "").strip()
+        if set_id and set_id not in known:
+            found.append(set_id)
+    return found
 
 
 def sets_by_newest(sets: list[dict], count: int) -> set[str]:
@@ -251,17 +273,82 @@ def embed_missing(session, session_ort, cards: list[dict]) -> tuple[list[str], n
     return ids, np.stack(rows).astype(np.float32)
 
 
-def publish(out: Path, version: str, base: Path) -> None:
+def validate_saved_stcat(path: Path, previous_count: int) -> None:
+    """Reload the file that would be uploaded. Raise before any publish."""
+    ids, embeddings = read_stcat(path)
+    if len(ids) < previous_count:
+        raise SystemExit("validation: new catalog has fewer cards than the published one")
+    if embeddings.shape != (len(ids), EMBED_DIM) or embeddings.dtype != np.float32:
+        raise SystemExit("validation: embeddings are not float32 with dim 128")
+    if not np.isfinite(embeddings).all():
+        raise SystemExit("validation: an embedding is not finite")
+
+
+def choose_latest_set(previous: dict, details: list[dict]) -> dict:
+    """Keep the previous latest set unless a detail has a newer release date."""
+    best_name = str(previous.get("latest_set_name") or "")
+    best_code = str(previous.get("latest_set_code") or "")
+    best_date = str(previous.get("latest_set_date") or "")
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        released = str(detail.get("releaseDate") or "")
+        name = str(detail.get("name") or "").strip()
+        code = str(detail.get("id") or "").strip()
+        if released and released >= best_date:
+            best_date = released
+            if code:
+                best_code = code
+            if name:
+                best_name = name
+        elif not best_name and name:
+            best_name = name
+            if code:
+                best_code = code
+    return {"name": best_name, "code": best_code, "date": best_date}
+
+
+def latest_published_set(session: requests.Session, set_ids: set[str], previous: dict) -> dict:
+    """Newest TCGdex set among those included, falling back to the previous index row."""
+    details: list[dict] = []
+    for set_id in sorted(set_ids):
+        detail = get_json(session, f"{TCGDEX}/sets/{set_id}")
+        if isinstance(detail, dict):
+            details.append(detail)
+    return choose_latest_set(previous, details)
+
+
+def write_index(
+    out: Path,
+    version: str,
+    base: Path,
+    index_out: Path,
+    latest: dict,
+    updated_at: str,
+) -> None:
+    """Write stcat-index.json. Does not upload."""
     cmd = [
         sys.executable,
         str(PUBLISH),
-        "--id", CATALOG_ID,
-        "--version", version,
-        "--file", str(out),
-        "--base", str(base),
-        "--clobber",
+        "--version",
+        version,
+        "--name",
+        "pokemon-en=Pokémon (inglese)",
+        "--base",
+        str(base),
+        "--out",
+        str(index_out),
+        "--latest-set-name",
+        str(latest.get("name") or ""),
+        "--latest-set-code",
+        str(latest.get("code") or ""),
+        "--latest-set-date",
+        str(latest.get("date") or ""),
+        "--updated-at",
+        updated_at,
+        f"{CATALOG_ID}={out}",
     ]
-    log("Publishing " + " ".join(cmd))
+    log("Index " + " ".join(cmd))
     subprocess.run(cmd, check=True)
 
 
@@ -274,9 +361,15 @@ def main() -> int:
     parser.add_argument("--newest", type=int, default=0, help="Only cards from the N newest TCGdex sets")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--index", default=INDEX_URL)
+    parser.add_argument("--result", type=Path, default=None, help="Where to write update-result.json")
     args = parser.parse_args()
 
-    import onnxruntime as ort
+    def write_result(payload: dict) -> None:
+        if args.result is None:
+            log(json.dumps(payload))
+            return
+        args.result.parent.mkdir(parents=True, exist_ok=True)
+        args.result.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
     session = requests.Session()
     session.headers["User-Agent"] = "ScanTrader-pokemon-catalog/1.0"
@@ -295,14 +388,49 @@ def main() -> int:
 
     old_ids, old_vectors = read_stcat(published)
     log(f"Published {CATALOG_ID} {current}: {len(old_ids)} cards")
-    chosen = resolve_sets(session, args.sets, args.newest)
+    listing = get_json(session, f"{TCGDEX}/sets")
+    if not isinstance(listing, list):
+        raise SystemExit("TCGdex /sets did not return a list")
+    fresh_sets = new_set_ids(listing, known_set_ids(old_ids))
+    log(f"TCGdex sets not in the published catalog: {len(fresh_sets)}")
+    forced = {part.strip() for part in args.sets.split(",") if part.strip()}
+    if not forced and args.newest <= 0 and not fresh_sets:
+        log("No new sets. No card list and no embeddings.")
+        write_result({
+            "added": 0,
+            "version": current,
+            "unchanged": True,
+            "skipped": True,
+            "validated": False,
+            "new_sets": [],
+            "dry_run": bool(args.dry_run),
+        })
+        return 0
+    if forced:
+        chosen = forced
+    elif args.newest > 0:
+        chosen = resolve_sets(session, "", args.newest)
+    else:
+        chosen = set(fresh_sets)
+        log(f"Embedding only new sets: {sorted(chosen)}")
     cards = get_json(session, f"{TCGDEX}/cards")
     missing = filter_new_cards(cards, set(old_ids), chosen)
     log(f"Missing cards to embed: {len(missing)}")
     version = next_version(current)
     if not missing:
         log(f"Nothing new. Index stays at {current}.")
+        write_result({
+            "added": 0,
+            "version": current,
+            "unchanged": True,
+            "skipped": False,
+            "validated": False,
+            "new_sets": sorted(chosen or fresh_sets),
+            "dry_run": bool(args.dry_run),
+        })
         return 0
+
+    import onnxruntime as ort
 
     model = args.model or (args.cache / "model.onnx")
     download(session, MILO_URL, model)
@@ -313,26 +441,60 @@ def main() -> int:
     new_ids, new_vectors = embed_missing(session, ort_session, missing)
     if not new_ids:
         log("No embeddable cards. Index unchanged.")
+        write_result({
+            "added": 0,
+            "version": current,
+            "unchanged": True,
+            "skipped": False,
+            "validated": False,
+            "new_sets": sorted(chosen or fresh_sets),
+            "dry_run": bool(args.dry_run),
+        })
         return 0
     ids = old_ids + new_ids
     vectors = np.concatenate([old_vectors, new_vectors], axis=0)
     write_stcat(args.out, ids, vectors)
-    check_ids, check_vectors = read_stcat(args.out)
-    if check_ids != ids or check_vectors.shape != vectors.shape:
-        raise SystemExit("rewritten stcat failed the read-back check")
-    if not np.allclose(check_vectors[:len(old_ids)], old_vectors, atol=1e-6):
-        raise SystemExit("old embeddings changed")
-    norms = np.linalg.norm(check_vectors[len(old_ids):], axis=1)
-    if np.any(np.abs(norms - 1.0) > 1e-3):
-        raise SystemExit("a new embedding is not unit length")
+    try:
+        validate_saved_stcat(args.out, len(old_ids))
+        check_ids, check_vectors = read_stcat(args.out)
+        if check_ids != ids or check_vectors.shape != vectors.shape:
+            raise SystemExit("rewritten stcat failed the read-back check")
+        if not np.allclose(check_vectors[:len(old_ids)], old_vectors, atol=1e-6):
+            raise SystemExit("old embeddings changed")
+        norms = np.linalg.norm(check_vectors[len(old_ids):], axis=1)
+        if np.any(np.abs(norms - 1.0) > 1e-3):
+            raise SystemExit("a new embedding is not unit length")
+    except SystemExit:
+        args.out.unlink(missing_ok=True)
+        raise
     log(
         f"Catalog {version}: {len(ids)} cards "
         f"(+{len(new_ids)}), {args.out.stat().st_size / 1e6:.1f} MB"
     )
+    index_out = args.out.with_name("stcat-index.json")
+    included = set(chosen or []) or set(fresh_sets)
+    latest = latest_published_set(session, included, entry)
+    write_index(args.out, version, index_path, index_out, latest, date.today().isoformat())
+    index_matches_catalog(index_out, CATALOG_ID, args.out)
+    write_result({
+        "added": len(new_ids),
+        "previous": len(old_ids),
+        "total": len(ids),
+        "version": version,
+        "previous_version": current,
+        "stcat": str(args.out),
+        "index": str(index_out),
+        "bytes": args.out.stat().st_size,
+        "unchanged": False,
+        "skipped": False,
+        "validated": True,
+        "new_sets": sorted(chosen or fresh_sets),
+        "dry_run": bool(args.dry_run),
+    })
     if args.dry_run:
         log("Dry run: not uploading.")
         return 0
-    publish(args.out, version, index_path)
+    log("Files ready. The workflow uploads with gh release upload --clobber.")
     return 0
 
 

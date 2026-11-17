@@ -2,8 +2,8 @@ name: Update Magic catalog
 
 on:
   schedule:
-    # Weekly. Stays a dry run unless someone starts it by hand with dry_run false.
-    - cron: "0 6 * * 1"
+    # Daily. A catalog that passes every check is uploaded. No new sets is a success with no upload.
+    - cron: "0 5 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -19,6 +19,7 @@ on:
 permissions:
   contents: write
 
+# Shared with the Pokémon workflow so two uploads cannot rewrite stcat-index.json together.
 concurrency:
   group: stcat-publish
   cancel-in-progress: false
@@ -47,7 +48,8 @@ jobs:
       - name: Build the catalog
         id: build
         env:
-          DRY_RUN: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run }}
+          # Schedule publishes. A manual run uploads only when dry_run is false (default true).
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           SET_CODE: ${{ github.event_name == 'workflow_dispatch' && inputs.set_code || '' }}
         run: |
           set -euo pipefail
@@ -63,30 +65,55 @@ jobs:
           import json, os
           from pathlib import Path
           result = json.loads(Path(os.environ["RUNNER_TEMP"], "mtg-catalog", "update-result.json").read_text())
-          path = Path(os.environ["GITHUB_OUTPUT"])
-          with path.open("a") as handle:
+          sets = result.get("new_sets") or []
+          sets_text = ",".join(str(item) for item in sets)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
               handle.write(f"added={int(result.get('added') or 0)}\n")
               handle.write(f"unchanged={str(bool(result.get('unchanged'))).lower()}\n")
+              handle.write(f"validated={str(bool(result.get('validated'))).lower()}\n")
+              handle.write(f"skipped={str(bool(result.get('skipped'))).lower()}\n")
+              handle.write(f"new_sets={sets_text}\n")
+          summary = [
+              "### Magic catalog",
+              f"- new sets: {sets_text or '(none)'}",
+              f"- skipped: {str(bool(result.get('skipped'))).lower()}",
+              f"- added: {int(result.get('added') or 0)}",
+              f"- validated: {str(bool(result.get('validated'))).lower()}",
+          ]
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("\n".join(summary) + "\n", encoding="utf-8")
           PY
 
       - name: Upload to the existing stcat release
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false && steps.build.outputs.added != '0'
+        if: steps.build.outputs.validated == 'true' && steps.build.outputs.added != '0' && (github.event_name == 'schedule' || inputs.dry_run == false)
         env:
           GH_TOKEN: ${{ github.token }}
-          DRY_RUN: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run }}
+          DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
           set -euo pipefail
           # Never `gh release create`: that replaces the asset list on an existing tag.
-          # Upload only the new .npz name plus the index, so the previous .npz stays.
+          # The new .npz goes up first. The index is uploaded only after that file exists.
+          # Previous .npz names are left in place. No other release or tag is touched.
           python - <<'PY'
-          import json, os
+          import json, os, sys
           from pathlib import Path
+          sys.path.insert(0, "tools/publish_stcat")
+          from publish_stcat import release_upload_allowed
           result = json.loads(Path(os.environ["RUNNER_TEMP"], "mtg-catalog", "update-result.json").read_text())
+          event = os.environ["GITHUB_EVENT_NAME"]
+          dry = os.environ.get("DRY_RUN_INPUT", "false") == "true"
+          if not release_upload_allowed(
+              event=event,
+              dry_run=dry,
+              validated=bool(result.get("validated")),
+              added=int(result.get("added") or 0),
+          ):
+              raise SystemExit("refusing to upload")
           Path(os.environ["RUNNER_TEMP"], "mtg-upload-args").write_text(result["npz"] + "\n")
           PY
           npz="$(cat "$RUNNER_TEMP/mtg-upload-args")"
           index="$RUNNER_TEMP/mtg-catalog/stcat-index.json"
-          gh release upload stcat --repo Vala97/ScanTrader --clobber "$npz" "$index"
+          gh release upload stcat --repo Vala97/ScanTrader --clobber "$npz"
+          gh release upload stcat --repo Vala97/ScanTrader --clobber "$index"
           prerelease="$(gh release view stcat --repo Vala97/ScanTrader --json isPrerelease --jq .isPrerelease)"
           if [ "$prerelease" != "false" ]; then
             echo "stcat must stay a normal release, not a prerelease."

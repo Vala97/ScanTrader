@@ -9,16 +9,19 @@ Images are not kept. This script never uploads a GitHub release.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import io
 import json
 import subprocess
 import sys
-import tempfile
 import time
 import zipfile
 from datetime import date
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "publish_stcat"))
+from publish_stcat import index_matches_catalog  # noqa: E402
 
 import numpy as np
 import requests
@@ -220,6 +223,78 @@ def l2_normalize(vector: np.ndarray) -> np.ndarray:
     return (vector / norm).astype(np.float32)
 
 
+def version_to_iso(version: str) -> str:
+    """`2026.07.09` or `2026.07.09.1` → `2026-07-09`. Empty when it is not a date."""
+    parts = version.strip().split(".")
+    if len(parts) < 3:
+        return ""
+    year, month, day = parts[0], parts[1], parts[2]
+    if not (year.isdigit() and month.isdigit() and day.isdigit()):
+        return ""
+    return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+
+
+def new_paper_sets(sets: list[dict], version: str) -> list[str] | None:
+    """Paper set codes released after the published catalog version.
+
+    None means the version is not a date, so the caller must not skip the build.
+    Magic rows are Scryfall ids, not set codes, and the index version is the
+    newest set day already included.
+    """
+    cutoff = version_to_iso(version)
+    if not cutoff:
+        return None
+    found: list[str] = []
+    for item in sets:
+        if not isinstance(item, dict) or item.get("digital") is True:
+            continue
+        code = str(item.get("code") or "").strip().lower()
+        released = str(item.get("released_at") or "")
+        if code and released > cutoff:
+            found.append(code)
+    return found
+
+
+def bulk_source(entry: dict) -> tuple[str, str]:
+    """`(url, kind)` with kind `json` (legacy array) or `jsonl` (one card per line)."""
+    if not isinstance(entry, dict):
+        raise SystemExit("bulk entry is not an object")
+    legacy = entry.get("download_uri")
+    if isinstance(legacy, str) and legacy.startswith("https://"):
+        return legacy, "json"
+    current = entry.get("jsonl_download_uri")
+    if isinstance(current, str) and current.startswith("https://"):
+        return current, "jsonl"
+    raise SystemExit("bulk entry has neither download_uri nor jsonl_download_uri")
+
+
+def open_bulk(path: Path):
+    """Binary reader. Gzip is detected from the magic bytes, not the file name."""
+    with path.open("rb") as handle:
+        magic = handle.read(2)
+    if magic == b"\x1f\x8b":
+        return gzip.open(path, "rb")
+    return path.open("rb")
+
+
+def iter_cards_file(path: Path, kind: str):
+    """Yield card objects from a Scryfall bulk file. `kind` is `json` or `jsonl`."""
+    if kind == "jsonl":
+        with open_bulk(path) as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line:
+                    continue
+                yield json.loads(line)
+        return
+    if kind != "json":
+        raise SystemExit(f"formato bulk sconosciuto: {kind}")
+    import ijson
+
+    with open_bulk(path) as handle:
+        yield from ijson.items(handle, "item")
+
+
 def search_set(session: requests.Session, set_code: str, pace: Pace) -> list[dict]:
     query = f"e:{set_code.lower()} lang:en game:paper unique:prints"
     url = f"{SCRYFALL}/cards/search?q={requests.utils.quote(query)}"
@@ -232,15 +307,27 @@ def search_set(session: requests.Session, set_code: str, pace: Pace) -> list[dic
 
 
 def iter_bulk(session: requests.Session, pace: Pace, dest: Path):
-    import ijson
-
     bulk = request_json(session, f"{SCRYFALL}/bulk-data", pace)
     entry = next((item for item in bulk.get("data") or [] if item.get("type") == "default_cards"), None)
     if entry is None:
         raise SystemExit("Scryfall bulk default_cards assente")
-    download_file(session, entry["download_uri"], dest, pace)
-    with dest.open("rb") as handle:
-        yield from ijson.items(handle, "item")
+    url, kind = bulk_source(entry)
+    log(f"Bulk default_cards {kind} {url}")
+    download_file(session, url, dest, pace)
+    yield from iter_cards_file(dest, kind)
+
+
+def validate_saved_catalog(path: Path, previous_count: int) -> None:
+    """Reload the file that would be uploaded. Raise before any publish."""
+    embeddings, ids, _width = load_catalog(path)
+    if embeddings.shape[0] < previous_count:
+        raise SystemExit("validazione: il catalogo nuovo ha meno carte di quello pubblicato")
+    if embeddings.shape[1] != EMBED_DIM or embeddings.dtype != np.float32:
+        raise SystemExit("validazione: gli embedding non sono float32 a 128 dimensioni")
+    if len(ids) != embeddings.shape[0] or len(set(ids)) != len(ids):
+        raise SystemExit("validazione: gli id non coincidono con le righe")
+    if not np.isfinite(embeddings).all():
+        raise SystemExit("validazione: embedding non finiti")
 
 
 def missing_cards(cards, known: set[str], set_code: str | None) -> list[dict]:
@@ -307,12 +394,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--index-url", default=INDEX_URL)
     args = parser.parse_args(argv)
 
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        log("Manca onnxruntime. pip install -r tools/update_mtg_catalog/requirements.txt")
-        return 1
-
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     pace = Pace()
@@ -326,13 +407,40 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("la riga mtg non ha version")
     log(f"Catalogo pubblicato {entry.get('url')} versione {current}")
 
+    set_code = args.set_code.strip().lower() or None
+    sets_payload = request_json(session, f"{SCRYFALL}/sets", pace)
+    upstream_sets = sets_payload.get("data") if isinstance(sets_payload, dict) else None
+    if not isinstance(upstream_sets, list):
+        raise SystemExit("Scryfall /sets senza data")
+    fresh_sets = None if set_code else new_paper_sets(upstream_sets, current)
+    if fresh_sets is not None:
+        log(f"Set di carte paper più nuovi di {current}: {len(fresh_sets)}")
+    if fresh_sets == []:
+        log("Nessun set nuovo. Nessun bulk e nessun embedding.")
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        result = {
+            "added": 0,
+            "version": current,
+            "unchanged": True,
+            "skipped": True,
+            "validated": False,
+            "new_sets": [],
+            "dry_run": bool(args.dry_run),
+        }
+        (args.out_dir / "update-result.json").write_text(json.dumps(result) + "\n", encoding="utf-8")
+        return 0
+
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        log("Manca onnxruntime. pip install -r tools/update_mtg_catalog/requirements.txt")
+        return 1
+
     catalog_path = args.cache / Path(str(entry["url"]).split("?")[0]).name
     download_file(session, entry["url"], catalog_path, pace, expected_sha=str(entry.get("sha256") or "") or None)
     old_embeddings, old_ids, width = load_catalog(catalog_path)
     known = set(old_ids)
     log(f"Catalogo locale {len(old_ids)} carte")
-
-    set_code = args.set_code.strip().lower() or None
     if set_code:
         source = search_set(session, set_code, pace)
         log(f"Scryfall set:{set_code} {len(source)} carte inglesi paper")
@@ -344,7 +452,15 @@ def main(argv: list[str] | None = None) -> int:
         log("Nessuna carta nuova. Nessun file scritto.")
         args.out_dir.mkdir(parents=True, exist_ok=True)
         (args.out_dir / "update-result.json").write_text(
-            json.dumps({"added": 0, "version": current, "unchanged": True}) + "\n",
+            json.dumps({
+                "added": 0,
+                "version": current,
+                "unchanged": True,
+                "skipped": False,
+                "validated": False,
+                "new_sets": fresh_sets or ([set_code] if set_code else []),
+                "dry_run": bool(args.dry_run),
+            }) + "\n",
             encoding="utf-8",
         )
         return 0
@@ -360,6 +476,9 @@ def main(argv: list[str] | None = None) -> int:
     vectors: list[np.ndarray] = []
     added_ids: list[str] = []
     newest_day = ""
+    latest_set_name = str(entry.get("latest_set_name") or "")
+    latest_set_code = str(entry.get("latest_set_code") or "")
+    latest_set_date = str(entry.get("latest_set_date") or "")
     check_images: list[Image.Image] = []
     for card in new_cards:
         url = front_image_url(card)
@@ -380,6 +499,14 @@ def main(argv: list[str] | None = None) -> int:
         released = str(card.get("released_at") or "")
         if released > newest_day:
             newest_day = released
+        if released and released >= latest_set_date:
+            latest_set_date = released
+            code = str(card.get("set") or "").strip()
+            name = str(card.get("set_name") or "").strip()
+            if code:
+                latest_set_code = code
+            if name:
+                latest_set_name = name
         if len(check_images) < 3:
             check_images.append(image.copy())
         image.close()
@@ -404,6 +531,11 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     npz_path = out_dir / filename
     save_catalog(npz_path, embeddings, ids, width)
+    try:
+        validate_saved_catalog(npz_path, len(old_ids))
+    except SystemExit:
+        npz_path.unlink(missing_ok=True)
+        raise
 
     base_index = out_dir / "stcat-index-base.json"
     base_index.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
@@ -421,10 +553,19 @@ def main(argv: list[str] | None = None) -> int:
             str(base_index),
             "--out",
             str(new_index),
+            "--latest-set-name",
+            latest_set_name,
+            "--latest-set-code",
+            latest_set_code,
+            "--latest-set-date",
+            latest_set_date,
+            "--updated-at",
+            date.today().isoformat(),
             f"mtg={npz_path}",
         ],
         check=True,
     )
+    index_matches_catalog(new_index, "mtg", npz_path)
     elapsed = time.time() - started
     result = {
         "added": len(added_ids),
@@ -438,6 +579,9 @@ def main(argv: list[str] | None = None) -> int:
         "unchanged": False,
         "dry_run": bool(args.dry_run),
         "set": set_code or "",
+        "skipped": False,
+        "validated": True,
+        "new_sets": fresh_sets or ([set_code] if set_code else []),
     }
     (out_dir / "update-result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     log(

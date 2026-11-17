@@ -1,0 +1,1 @@
+# publish_stcat.py uses the Python standard library only.
