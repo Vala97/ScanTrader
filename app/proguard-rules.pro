@@ -35,6 +35,19 @@
 # CameraX pulls in optional classes that are not packaged.
 -dontwarn com.google.devtools.build.android.desugar.runtime.**
 
+# Camera bind uses the public API. PreviewView.setController installs
+# PreviewView.getViewPort() into CameraX's UseCaseGroup. Do not reflect into
+# CameraController: R8 renames private fields such as mViewPort, and that
+# failure used to leave ImageAnalysis unbound.
+-keepclassmembers class androidx.camera.view.CameraController {
+    public void setEnabledUseCases(int);
+    public void setImageAnalysisAnalyzer(java.util.concurrent.Executor, androidx.camera.core.ImageAnalysis$Analyzer);
+    public boolean isImageAnalysisEnabled();
+}
+-keepclassmembers class androidx.camera.view.LifecycleCameraController {
+    public void bindToLifecycle(androidx.lifecycle.LifecycleOwner);
+}
+
 # Gson TypeToken under R8 full mode: keep generic signatures of TypeToken subclasses
 # (e.g. object : TypeToken<List<...>>() {} in CachingTcgdexApi).
 -keep class com.google.gson.reflect.TypeToken { *; }

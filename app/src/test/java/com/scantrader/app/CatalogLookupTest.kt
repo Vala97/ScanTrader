@@ -12,6 +12,7 @@ import com.scantrader.app.network.scryfall.ScryfallSearchResponse
 import com.scantrader.app.network.tcgdex.TcgdexApi
 import com.scantrader.app.network.tcgdex.TcgdexCard
 import com.scantrader.app.network.tcgdex.TcgdexCardBrief
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -571,6 +572,131 @@ class CatalogLookupTest {
         )
         assertEquals("Mirkwood", ownNumber.single().name)
         assertEquals("188", ownNumber.single().collectorNumber)
+    }
+
+    @Test
+    fun timeoutThenExactSetAndLangBeforeGivingUp() = runBlocking {
+        val italian = ScryfallCard(
+            id = "trk-267-it",
+            name = "Replication Specialist",
+            printedName = "Macchina Replicatrice",
+            set = "trk",
+            setName = "Star Trek",
+            collectorNumber = "267",
+            lang = "it",
+        )
+        val english = italian.copy(id = "trk-267", printedName = null, lang = "en")
+        var bareCalls = 0
+        var langCalls = mutableListOf<String>()
+        val api = object : ScryfallApi {
+            override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard {
+                bareCalls++
+                delay(80)
+                throw notFound()
+            }
+
+            override suspend fun cardBySetNumberLang(
+                set: String,
+                number: String,
+                lang: String,
+            ): ScryfallCard {
+                langCalls += lang
+                return if (lang == "it") italian else english
+            }
+
+            override suspend fun cardById(id: String): ScryfallCard = error("unused")
+
+            override suspend fun search(query: String, unique: String): ScryfallSearchResponse =
+                error("unused")
+
+            override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = error("unused")
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard =
+                error("unused")
+        }
+        val lookup = CatalogLookup(
+            ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L })),
+            emptyTcgdex(),
+            networkTimeoutMs = 30,
+            exactTimeoutMs = 2_000,
+        )
+        val hits = lookup.identify(
+            Game.MTG,
+            ParsedCardText(
+                nameGuess = "Macchina Replicatrice",
+                collectorNumber = "267",
+                setCode = "trk",
+                printedLang = "it",
+            ),
+        )
+        assertEquals("Macchina Replicatrice", hits.single().name)
+        assertEquals("trk", hits.single().setCode)
+        assertEquals("267", hits.single().collectorNumber)
+        assertEquals(listOf("it"), langCalls.take(1))
+        assertEquals(1, bareCalls)
+    }
+
+    @Test
+    fun exactLookupFallsBackToSetAndNumberWhenLangMisses() = runBlocking {
+        val english = ScryfallCard(
+            id = "trk-267",
+            name = "Replication Specialist",
+            set = "trk",
+            setName = "Star Trek",
+            collectorNumber = "267",
+            lang = "en",
+        )
+        var bareCalls = 0
+        var langCalls = 0
+        val api = object : ScryfallApi {
+            override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard {
+                bareCalls++
+                if (bareCalls == 1) {
+                    delay(80)
+                    throw notFound()
+                }
+                assertEquals("trk", set)
+                assertEquals("267", number)
+                return english
+            }
+
+            override suspend fun cardBySetNumberLang(
+                set: String,
+                number: String,
+                lang: String,
+            ): ScryfallCard {
+                langCalls++
+                throw notFound()
+            }
+
+            override suspend fun cardById(id: String): ScryfallCard = error("unused")
+
+            override suspend fun search(query: String, unique: String): ScryfallSearchResponse =
+                error("unused")
+
+            override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = error("unused")
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard =
+                error("unused")
+        }
+        val lookup = CatalogLookup(
+            ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L })),
+            emptyTcgdex(),
+            networkTimeoutMs = 30,
+            exactTimeoutMs = 2_000,
+        )
+        val hits = lookup.identify(
+            Game.MTG,
+            ParsedCardText(
+                nameGuess = "Replication Specialist",
+                collectorNumber = "267",
+                setCode = "trk",
+                printedLang = "it",
+            ),
+        )
+        assertEquals("Replication Specialist", hits.single().name)
+        assertTrue(langCalls >= 1)
+        assertEquals(2, bareCalls)
     }
 
     private fun scry(name: String, number: String) = ScryfallCard(

@@ -4,15 +4,16 @@ import android.util.Rational
 import android.view.Surface
 import android.view.View
 import androidx.camera.core.ViewPort
-import androidx.camera.view.CameraController
-import androidx.camera.view.LifecycleCameraController
 import java.util.Locale
 import kotlin.math.abs
 
 /**
- * When the scanner may bind, and the one viewport shared by preview, analysis,
- * and capture. CameraX builds that into a [androidx.camera.core.UseCaseGroup]
- * inside [CameraController] once [installSharedViewPort] has set it.
+ * When the scanner may bind, and the portrait viewport shared by preview,
+ * analysis, and capture. [androidx.camera.view.LifecycleCameraController] is
+ * final and has no public viewport setter. Attaching it to
+ * [androidx.camera.view.PreviewView] is the supported way to put
+ * [androidx.camera.view.PreviewView.getViewPort] on the CameraX UseCaseGroup.
+ * A framing failure still binds the same use cases.
  */
 object PreviewFraming {
     private const val SIZE_SLOP_PX = 2
@@ -80,16 +81,14 @@ object PreviewFraming {
             .build()
     }
 
-    /**
-     * Points the controller at [viewPort] before [LifecycleCameraController.bindToLifecycle].
-     * The bind then puts preview, analysis, and capture in one UseCaseGroup with that viewport.
-     */
-    fun installSharedViewPort(controller: LifecycleCameraController, viewPort: ViewPort) {
-        val type = controller.javaClass.superclass ?: return
-        val field = type.getDeclaredField("mViewPort")
-        field.isAccessible = true
-        field.set(controller, viewPort)
-    }
+    /** Preview, analysis, and capture. Analysis is never optional. */
+    fun bindPlan(viewportReady: Boolean): BindPlan = BindPlan(
+        useCases = listOf(BindUseCase.PREVIEW, BindUseCase.ANALYSIS, BindUseCase.CAPTURE),
+        withViewport = viewportReady,
+    )
+
+    /** Framing setup failed. The bind list stays the same, without a viewport. */
+    fun bindPlanAfterFailure(): BindPlan = bindPlan(viewportReady = false)
 
     fun frameLogLine(
         viewWidth: Int,
@@ -126,3 +125,10 @@ object PreviewFraming {
             "crop=[$cropLeft,$cropTop,$cropRight,$cropBottom] zoom=$zoomText guide=$guideText"
     }
 }
+
+enum class BindUseCase { PREVIEW, ANALYSIS, CAPTURE }
+
+data class BindPlan(
+    val useCases: List<BindUseCase>,
+    val withViewport: Boolean,
+)

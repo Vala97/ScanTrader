@@ -5,6 +5,11 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Corretto
+- Lo scan automatico riparte: anteprima, scatto e analisi si collegano insieme, e se la cornice non si installa l'analisi parte lo stesso.
+- Se Scryfall non risponde in tempo e numero e set sono letti, una seconda richiesta precisa attende più a lungo prima di arrendersi.
+- La riga della carta inquadrata non resta sulla carta precedente quando l'analisi si interrompe.
+
 ## [0.5] - 2026-11-17
 
 Novità di ScanTrader 0.5

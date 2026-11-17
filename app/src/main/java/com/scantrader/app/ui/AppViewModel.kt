@@ -1743,6 +1743,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 app.scanSession.resetResults()
                 app.scanSession.game = game.value
                 app.scanSession.errorMessage = missedCodeMessage()
+                releaseFramedCard()
                 return@withContext false
             }
 
@@ -1804,6 +1805,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 autoHold = AutoHold.SPECULATIVE
                 app.scanSession.parsed = parsed
                 logTiming("speculative-start", ocrMs, 0, System.currentTimeMillis() - t0)
+                releaseFramedCard()
                 return@withContext false
             }
             // A confirm already on screen keeps its card. Wiping here used to
@@ -1870,6 +1872,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "catalog skipped (OCR not stable yet) id=$catalogIdentity",
                 )
                 logTiming("catalog-skipped", ocrMs, 0, System.currentTimeMillis() - t0)
+                releaseFramedCard()
                 return@withContext false
             }
             // Old frames have no set and the collector jitters. The gallery id is
@@ -1884,6 +1887,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 autoHold = AutoHold.UNSTABLE
                 app.scanSession.parsed = matched
                 logTiming("catalog-held", ocrMs, 0, System.currentTimeMillis() - t0)
+                releaseFramedCard()
                 return@withContext false
             }
             if (autoMode && !queryCatalog && prefetched == null) {
@@ -1973,6 +1977,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 autoHold = AutoHold.BUSY
                 app.scanSession.parsed = matched
                 com.scantrader.app.scan.ScanDebug.d("catalog stopped (Scryfall 429)")
+                releaseFramedCard()
                 return@withContext false
             }
             var catalogHits = fetched.first
@@ -2002,6 +2007,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         "catalog held reason=debounce gallery=${galleryId ?: "none"}",
                     )
                     logTiming("catalog-held", ocrMs, System.currentTimeMillis() - tCat0, System.currentTimeMillis() - t0)
+                    releaseFramedCard()
                     return@withContext false
                 }
             }
@@ -2045,6 +2051,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         autoHold = AutoHold.BUSY
                         app.scanSession.parsed = matched
                         com.scantrader.app.scan.ScanDebug.d("catalog stopped (Scryfall 429)")
+                        releaseFramedCard()
                         return@withContext false
                     } catch (t: Throwable) {
                         com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", t)
@@ -2219,6 +2226,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     recognizedName = top?.name ?: parsed.nameGuess,
                     sameIdentity = false,
                 )
+            } else if (requireMatch) {
+                releaseFramedCard()
             }
             val publishAuto = synchronized(manualCapture) {
                 if (requireMatch && manualCapture.get()) {
@@ -2355,6 +2364,12 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     private enum class AutoHold { NONE, BUSY, UNSTABLE, SPECULATIVE }
 
+    /** Drop the previous framed title when this auto frame ends without a new card. */
+    private fun releaseFramedCard() {
+        if (acceptedLock.key != null) return
+        app.scanSession.noteFramed(sameAsSaved = false, recognizedName = null)
+    }
+
     private fun clearSameCardLock() {
         acceptedLock.clear()
         duplicateGuard.clear()
@@ -2427,6 +2442,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         }
         autoHold = AutoHold.UNSTABLE
         logTiming("skip-$reason", 0, 0, now - startedAt)
+        releaseFramedCard()
         return true
     }
 
