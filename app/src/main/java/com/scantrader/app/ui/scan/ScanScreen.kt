@@ -1322,8 +1322,11 @@ private fun attachAutoAnalyzer(
             if (firstFrame.compareAndSet(false, true)) {
                 ScanDebug.d("autoFrame first")
             }
-            if (!viewModel.canAcceptAutoFrame()) return@setImageAnalysisAnalyzer
+            val blocked = !viewModel.canAcceptAutoFrame()
+            if (blocked && !viewModel.isAutoAnalysisBusy()) return@setImageAnalysisAnalyzer
             val upright = com.scantrader.app.scan.CameraBitmaps.fromImageProxy(proxy)
+            if (blocked) viewModel.noteBusyFrame(upright.bitmap)
+            if (!viewModel.canAcceptAutoFrame()) return@setImageAnalysisAnalyzer
             ScanDebug.d(
                 "autoFrame rot=${upright.reportedRotation} applied=${upright.rotationDegrees} " +
                     "src=${upright.sourceSize.width}x${upright.sourceSize.height} " +

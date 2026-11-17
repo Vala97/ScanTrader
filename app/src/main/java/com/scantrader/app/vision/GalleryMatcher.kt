@@ -9,11 +9,14 @@ import com.scantrader.app.scan.ShotClock
 import com.scantrader.app.network.scryfall.ScryfallCard
 import com.scantrader.app.network.scryfall.ScryfallClient
 import com.scantrader.app.network.tcgdex.TcgdexApi
+import com.scantrader.app.scan.AutoAnalysis
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Full-gallery reverse-image via Milo embeddings + catalog ID lookup (Scryfall / TCGdex).
@@ -22,6 +25,7 @@ class GalleryMatcher(
     private val pack: NeuralPackManager,
     private val scryfall: ScryfallClient,
     private val tcgdex: TcgdexApi,
+    private val hydrateTimeoutMs: Long = AutoAnalysis.GALLERY_HYDRATE_TIMEOUT_MS,
 ) {
     suspend fun matchMtg(
         cardCrop: Bitmap,
@@ -78,19 +82,26 @@ class GalleryMatcher(
         printedLang: String? = null,
     ): List<IdentifiedCard> {
         if (ranked.isEmpty()) return emptyList()
-        return coroutineScope {
-            ranked.map { (id, score) ->
-                async(Dispatchers.IO) {
-                    when (game) {
-                        Game.MTG -> hydrateMtg(id, score, parsed, printedLang)
-                        Game.POKEMON -> hydratePokemon(id, score, parsed)
-                        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA ->
-                            ctFromId(game, id, score, parsed)
-                        Game.RIFTBOUND, Game.OTHER -> null
+        val hydrated = withTimeoutOrNull(hydrateTimeoutMs) {
+            coroutineScope {
+                ranked.map { (id, score) ->
+                    async(Dispatchers.IO) {
+                        when (game) {
+                            Game.MTG -> hydrateMtg(id, score, parsed, printedLang)
+                            Game.POKEMON -> hydratePokemon(id, score, parsed)
+                            Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA ->
+                                ctFromId(game, id, score, parsed)
+                            Game.RIFTBOUND, Game.OTHER -> null
+                        }
                     }
-                }
-            }.awaitAll().filterNotNull()
+                }.awaitAll().filterNotNull()
+            }
         }
+        if (hydrated == null) {
+            com.scantrader.app.scan.ScanDebug.d(AutoAnalysis.GALLERY_TIMEOUT_LOG)
+            return emptyList()
+        }
+        return hydrated
     }
 
     private suspend fun matchGame(
@@ -202,6 +213,7 @@ class GalleryMatcher(
     ): IdentifiedCard? {
         val card = runCatching { scryfall.cardById(id) }
             .onFailure {
+                if (it is CancellationException) throw it
                 com.scantrader.app.scan.ScanDebug.w("gallery: scryfall $id failed", it)
             }
             .getOrNull() ?: return null
@@ -236,6 +248,8 @@ class GalleryMatcher(
         if (lang.isNullOrEmpty() || lang == "en") return identified
         val english = runCatching {
             scryfall.cardBySetNumberLang(card.set, card.collectorNumber, "en")
+        }.onFailure {
+            if (it is CancellationException) throw it
         }.getOrNull() ?: return identified
         return identified.copy(
             catalogName = english.name.takeIf { it.isNotBlank() } ?: identified.catalogName,
@@ -263,6 +277,7 @@ class GalleryMatcher(
         val localized = runCatching {
             scryfall.cardBySetNumberLang(card.set, card.collectorNumber, lang)
         }.onFailure {
+            if (it is CancellationException) throw it
             com.scantrader.app.scan.ScanDebug.w(
                 "gallery: printed $lang ${card.set}/${card.collectorNumber} failed",
                 it,
@@ -282,6 +297,7 @@ class GalleryMatcher(
     ): IdentifiedCard? {
         val card = runCatching { tcgdex.card("en", id) }
             .onFailure {
+                if (it is CancellationException) throw it
                 com.scantrader.app.scan.ScanDebug.w("gallery: tcgdex $id failed", it)
             }
             .getOrNull() ?: return null

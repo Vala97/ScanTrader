@@ -743,6 +743,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         get() = acceptedLock.key
 
     private val autoBusy = AtomicBoolean(false)
+    private val autoFrames = com.scantrader.app.scan.AutoFrameCoordinator()
+    private var inFlightLuma: IntArray? = null
     private val autoHitPending = AtomicBoolean(false)
     private val catalogDebounce = CatalogQueryDebounce()
     private val rejectedSets = RejectedSetCodes()
@@ -1108,6 +1110,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         }
         autoFrameJob?.cancel()
         autoFrameJob = null
+        autoFrames.noteSceneChanged(FrameGate.MOTION_MAX + 1.0)
         autoBusy.set(false)
         cancelSpeculative()
         app.scanSession.ocrGeneration++
@@ -1143,10 +1146,36 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun canAcceptAutoFrame(nowMs: Long = System.currentTimeMillis()): Boolean {
         if (!com.scantrader.app.scan.ManualShutter.allowAutoFrame(autoScan.value, manualCapture.get())) return false
-        if (autoHitPending.get() || autoBusy.get() || processing.value) return false
+        if (autoHitPending.get()) return false
         // The catalog job outlives the frame that started it, so the next OCR can overlap it.
         if (speculativeInFlight.get()) return true
+        val wasBusy = autoFrames.busy
+        if (!autoFrames.canAccept(nowMs)) return false
+        if (wasBusy) processing.value = false
+        autoBusy.set(false)
         return nowMs - lastAutoAttemptMs >= AUTO_COOLDOWN_MS
+    }
+
+    fun isAutoAnalysisBusy(): Boolean = autoFrames.busy
+
+    /**
+     * While a frame is in flight, a real scene change drops that generation
+     * so its late catalog result cannot be saved as the new card.
+     */
+    fun noteBusyFrame(bitmap: android.graphics.Bitmap) {
+        if (!autoFrames.busy) return
+        val luma = runCatching { FrameGate.sampleLuma(bitmap) }.getOrNull() ?: return
+        val baseline = inFlightLuma
+        val motion = if (baseline != null && baseline.size == luma.size) {
+            FrameGate.motionMeanAbs(baseline, luma)
+        } else {
+            null
+        }
+        if (autoFrames.noteSceneChanged(motion)) {
+            autoBusy.set(false)
+            processing.value = false
+            com.scantrader.app.scan.ScanDebug.d("auto frame changed gen=${autoFrames.generation}")
+        }
     }
 
     fun processBitmap(
@@ -1183,18 +1212,24 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     ) {
         val now = System.currentTimeMillis()
         if (!canAcceptAutoFrame(now)) return
-        if (!autoBusy.compareAndSet(false, true)) return
+        val generation = autoFrames.start(now)
+        autoBusy.set(true)
+        inFlightLuma = runCatching { FrameGate.sampleLuma(bitmap) }.getOrNull()
         val job = viewModelScope.launch {
             if (manualCapture.get()) {
+                autoFrames.finish(generation)
                 autoBusy.set(false)
                 return@launch
             }
             processing.value = true
             autoStatus.value = "Analisi in corso…"
+            var settled = false
             try {
                 autoHold = AutoHold.NONE
                 repeatPrinting = false
-                val matched = analyze(bitmap, requireMatch = true)
+                val matched = analyze(bitmap, requireMatch = true, generation = generation)
+                if (!autoFrames.finish(generation)) return@launch
+                settled = true
                 val dismiss = dismissConfirm
                 dismissConfirm = false
                 if (manualCapture.get()) return@launch
@@ -1231,11 +1266,14 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "Inquadra meglio…"
                 }
             } finally {
-                // Cooldown from end of analysis so long OCR doesn't stack extra wait.
-                lastAutoAttemptMs = System.currentTimeMillis()
-                processing.value = false
-                if (!autoHitPending.get()) {
-                    autoBusy.set(false)
+                if (!settled && autoFrames.isCurrent(generation)) autoFrames.finish(generation)
+                if (autoFrames.generation == generation) {
+                    // Cooldown from end of analysis so long OCR doesn't stack extra wait.
+                    lastAutoAttemptMs = System.currentTimeMillis()
+                    processing.value = false
+                    if (!autoHitPending.get()) {
+                        autoBusy.set(false)
+                    }
                 }
             }
         }
@@ -1246,6 +1284,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
     private suspend fun analyze(
         bitmap: android.graphics.Bitmap,
         requireMatch: Boolean,
+        generation: Int = autoFrames.generation,
     ): Boolean {
         app.scanSession.game = game.value
         val autoMode = requireMatch
@@ -1254,6 +1293,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val t0 = System.currentTimeMillis()
             val shot = com.scantrader.app.scan.ShotClock()
             var earlyRank: Deferred<List<Pair<String, Float>>>? = null
+            var galleryHydrate: kotlinx.coroutines.Job? = null
             try {
             com.scantrader.app.scan.ScanDebug.d(
                 "analyze start game=${game.value} requireMatch=$requireMatch " +
@@ -1929,6 +1969,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                         printedLang = printedLang,
                     )
                 }.onFailure {
+                    if (it is CancellationException) throw it
                     com.scantrader.app.scan.ScanDebug.e("gallery hydrate failed", it)
                 }.getOrDefault(emptyList())
             }
@@ -1936,28 +1977,13 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val fetched = if (prefetched != null) {
                 prefetched to emptyList<IdentifiedCard>()
             } else try {
-                coroutineScope {
-                val ocrJob = async {
-                    if (!queryCatalog) {
-                        return@async emptyList()
-                    }
-                    try {
-                        app.catalog.identify(game.value, matched)
-                    } catch (busy: ScryfallBusyException) {
-                        throw busy
-                    } catch (t: Throwable) {
-                        com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", t)
-                        if (game.value == Game.RIFTBOUND || game.value in app.ctGames) app.scanSession.errorMessage = t.message
-                        emptyList()
-                    }
-                }
                 val galleryAlongside = com.scantrader.app.scan.HeavyVision.embedAlongsideCatalog(
                     autoMode = autoMode,
                     cooling = cooling,
                     queryCatalog = queryCatalog,
                     stabilizeByGallery = galleryCanStabilize && !queryCatalog,
                 )
-                val galleryJob = async {
+                val galleryJob = viewModelScope.async(Dispatchers.IO) {
                     if (!galleryAlongside) {
                         com.scantrader.app.scan.ScanDebug.d("gallery skipped (debounce)")
                         earlyRank?.cancel()
@@ -1965,8 +1991,36 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     }
                     embedGallery()
                 }
-                ocrJob.await() to galleryJob.await()
+                galleryHydrate = galleryJob
+                val catalogHits = try {
+                    if (!queryCatalog) {
+                        emptyList()
+                    } else {
+                        app.catalog.identify(game.value, matched)
+                    }
+                } catch (busy: ScryfallBusyException) {
+                    galleryJob.cancel()
+                    throw busy
+                } catch (t: Throwable) {
+                    if (t is CancellationException) {
+                        galleryJob.cancel()
+                        throw t
+                    }
+                    com.scantrader.app.scan.ScanDebug.e("catalog.identify failed", t)
+                    if (game.value == Game.RIFTBOUND || game.value in app.ctGames) {
+                        app.scanSession.errorMessage = t.message
+                    }
+                    emptyList()
                 }
+                val strict = autoMode && com.scantrader.app.scan.AutoAnalysis.strictNameSetCn(
+                    catalogHits,
+                    matched,
+                )
+                catalogHits to com.scantrader.app.scan.CatalogGalleryJoin.afterCatalog(
+                    strict = strict,
+                    gallery = { galleryJob.await() },
+                    cancelGallery = { galleryJob.cancel() },
+                )
             } catch (busy: ScryfallBusyException) {
                 if (!autoMode) throw busy
                 catalogDebounce.invalidateLastQuery()
@@ -2143,6 +2197,10 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val handed = com.scantrader.app.data.catalog.CardLanguageDetector.handedLanguage(
                 resolved?.detection,
             )
+            if (requireMatch && !autoFrames.isCurrent(generation)) {
+                releaseFramedCard()
+                return@withContext false
+            }
             app.scanSession.pendingLanguage = if (handed != null) resolved?.detection else null
             if (handed != null) {
                 app.scanSession.language = handed
@@ -2323,6 +2381,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             if (requireMatch) acceptAuto || chooseVersion else true
             } finally {
                 earlyRank?.let { if (it.isActive) it.cancel() }
+                galleryHydrate?.cancel()
                 com.scantrader.app.scan.ScanDebug.shot(
                     embedMs = shot.embedMs,
                     rotationSkipped = shot.rotationSkipped,
