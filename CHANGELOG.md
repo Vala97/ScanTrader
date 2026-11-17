@@ -5,6 +5,8 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+## [0.5.2] - 2026-11-17
+
 ### Corretto
 - Lo scan automatico torna al collegamento della fotocamera che funzionava prima della cornice nuova: anteprima, scatto e analisi insieme, con il ritaglio di prima.
 - Se nome, set e numero sono già letti, la carta si mostra subito, senza aspettare la galleria. Una galleria lenta si interrompe, e un risultato della carta precedente non viene salvato.
