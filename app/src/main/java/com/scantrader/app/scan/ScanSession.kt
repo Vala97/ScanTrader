@@ -60,8 +60,8 @@ class ScanSession {
     var lensKey: String? = null
 
     /**
-     * First measured scanner view, in pixels. The card guide keeps this
-     * rectangle across confirm → scan so a new preview aspect cannot move it.
+     * Latest settled scanner view, in pixels, after layout and with the
+     * keyboard closed. Replaced when the view settles at a new size.
      * Not cleared by [resetResults].
      */
     var guideViewWidth: Float = 0f
