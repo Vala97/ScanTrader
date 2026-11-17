@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from publish_stcat import attach_latest_set, main
+from publish_stcat import attach_latest_set, index_matches_catalog, main, release_upload_allowed
 
 
 class PublishStcatTest(unittest.TestCase):
@@ -62,6 +62,35 @@ class PublishStcatTest(unittest.TestCase):
             self.assertEqual(magic["updated_at"], "2026-11-16")
             self.assertEqual(by_id["pokemon-en"]["latest_set_name"], "Surging Sparks")
             self.assertEqual(by_id["pokemon-en"]["version"], "2026.10.26")
+            index_matches_catalog(out, "mtg", catalog)
+
+    def test_index_check_rejects_a_size_that_does_not_match_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = root / "pokemon-en.stcat"
+            catalog.write_bytes(b"abc")
+            index = root / "stcat-index.json"
+            index.write_text(
+                json.dumps({
+                    "catalogs": [{
+                        "id": "pokemon-en",
+                        "sha256": "aa",
+                        "size": 99,
+                        "url": "https://example/pokemon-en.stcat",
+                    }]
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                index_matches_catalog(index, "pokemon-en", catalog)
+
+    def test_only_a_validated_catalog_is_uploaded(self):
+        self.assertTrue(release_upload_allowed(event="schedule", dry_run=True, validated=True, added=3))
+        self.assertFalse(release_upload_allowed(event="schedule", dry_run=False, validated=False, added=3))
+        self.assertFalse(release_upload_allowed(event="schedule", dry_run=False, validated=True, added=0))
+        self.assertFalse(release_upload_allowed(event="workflow_dispatch", dry_run=True, validated=True, added=3))
+        self.assertTrue(release_upload_allowed(event="workflow_dispatch", dry_run=False, validated=True, added=3))
+        self.assertFalse(release_upload_allowed(event="pull_request", dry_run=False, validated=True, added=3))
 
 
 if __name__ == "__main__":

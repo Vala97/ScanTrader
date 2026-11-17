@@ -44,6 +44,42 @@ def catalog_spec(spec: str) -> tuple[str, Path]:
     return catalog_id, path
 
 
+def release_upload_allowed(
+    *,
+    event: str,
+    dry_run: bool,
+    validated: bool,
+    added: int,
+) -> bool:
+    """A daily run publishes a validated catalog. A manual run does so only when dry_run is false.
+
+    No new cards, a skipped run, or a failed validation never uploads.
+    """
+    if not validated or added <= 0:
+        return False
+    if event == "schedule":
+        return True
+    if event == "workflow_dispatch":
+        return not dry_run
+    return False
+
+
+def index_matches_catalog(index_path: Path, catalog_id: str, file_path: Path) -> None:
+    """The published row must describe this file. Raise before any upload."""
+    document = json.loads(Path(index_path).read_text(encoding="utf-8"))
+    rows = [row for row in document.get("catalogs") or [] if isinstance(row, dict) and row.get("id") == catalog_id]
+    if len(rows) != 1:
+        raise SystemExit(f"indice senza una sola riga {catalog_id}")
+    data = Path(file_path).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    row = rows[0]
+    if row.get("sha256") != digest or int(row.get("size") or -1) != len(data):
+        raise SystemExit(f"sha256 o size di {catalog_id} non coincidono col file")
+    url = str(row.get("url") or "")
+    if not url.startswith("https://") or not url.endswith("/" + Path(file_path).name):
+        raise SystemExit(f"url di {catalog_id} non punta a questo file")
+
+
 def attach_latest_set(
     entry: dict,
     *,

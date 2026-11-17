@@ -2,8 +2,8 @@ name: Update Pokémon catalog
 
 on:
   schedule:
-    # Daily, after Magic. Stays a dry run unless started by hand with dry_run false.
-    # Shares stcat-publish so the two jobs never clobber the index.
+    # Daily, after Magic. A catalog that passes every check is uploaded.
+    # No new sets is a success with no upload.
     - cron: "30 5 * * *"
   workflow_dispatch:
     inputs:
@@ -20,6 +20,7 @@ on:
 permissions:
   contents: write
 
+# Same group as Magic so the two jobs cannot upload stcat-index.json at once.
 concurrency:
   group: stcat-publish
   cancel-in-progress: false
@@ -48,8 +49,8 @@ jobs:
       - name: Update catalog
         id: build
         env:
-          # A scheduled run is always a dry run. Publishing is a manual dispatch.
-          DRY_RUN: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run }}
+          # Schedule publishes. A manual run uploads only when dry_run is false (default true).
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           SET_IDS: ${{ github.event_name == 'workflow_dispatch' && inputs.set_ids || '' }}
         run: |
           set -euo pipefail
@@ -89,18 +90,29 @@ jobs:
           PY
 
       - name: Upload to the existing stcat release
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false && steps.build.outputs.validated == 'true' && steps.build.outputs.added != '0'
+        if: steps.build.outputs.validated == 'true' && steps.build.outputs.added != '0' && (github.event_name == 'schedule' || inputs.dry_run == false)
         env:
           GH_TOKEN: ${{ github.token }}
+          DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
           set -euo pipefail
           # Never `gh release create`: that replaces the asset list on an existing tag.
+          # pokemon-en.stcat goes up first. The index is uploaded only after that file exists.
+          # No other release, tag, or asset is touched.
           python - <<'PY'
-          import json, os
+          import json, os, sys
           from pathlib import Path
+          sys.path.insert(0, "tools/publish_stcat")
+          from publish_stcat import release_upload_allowed
           result = json.loads(Path(os.environ["RUNNER_TEMP"], "pokemon-catalog", "update-result.json").read_text())
-          if not result.get("validated"):
-              raise SystemExit("refusing to upload: catalog was not validated")
+          dry = os.environ.get("DRY_RUN_INPUT", "false") == "true"
+          if not release_upload_allowed(
+              event=os.environ["GITHUB_EVENT_NAME"],
+              dry_run=dry,
+              validated=bool(result.get("validated")),
+              added=int(result.get("added") or 0),
+          ):
+              raise SystemExit("refusing to upload")
           Path(os.environ["RUNNER_TEMP"], "pokemon-upload-args").write_text(
               result["stcat"] + "\n" + result["index"] + "\n",
               encoding="utf-8",
@@ -108,7 +120,8 @@ jobs:
           PY
           stcat="$(sed -n '1p' "$RUNNER_TEMP/pokemon-upload-args")"
           index="$(sed -n '2p' "$RUNNER_TEMP/pokemon-upload-args")"
-          gh release upload stcat --repo Vala97/ScanTrader --clobber "$stcat" "$index"
+          gh release upload stcat --repo Vala97/ScanTrader --clobber "$stcat"
+          gh release upload stcat --repo Vala97/ScanTrader --clobber "$index"
           prerelease="$(gh release view stcat --repo Vala97/ScanTrader --json isPrerelease --jq .isPrerelease)"
           if [ "$prerelease" != "false" ]; then
             echo "stcat must stay a normal release, not a prerelease."

@@ -20,6 +20,9 @@ import zipfile
 from datetime import date
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "publish_stcat"))
+from publish_stcat import index_matches_catalog  # noqa: E402
+
 import numpy as np
 import requests
 from PIL import Image
@@ -562,6 +565,7 @@ def main(argv: list[str] | None = None) -> int:
         ],
         check=True,
     )
+    index_matches_catalog(new_index, "mtg", npz_path)
     elapsed = time.time() - started
     result = {
         "added": len(added_ids),

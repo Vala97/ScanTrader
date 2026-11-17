@@ -31,6 +31,8 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 PUBLISH = ROOT / "tools" / "publish_stcat" / "publish_stcat.py"
+sys.path.insert(0, str(PUBLISH.parent))
+from publish_stcat import index_matches_catalog  # noqa: E402
 INDEX_URL = "https://github.com/Vala97/ScanTrader/releases/download/stcat/stcat-index.json"
 TCGDEX = "https://api.tcgdex.net/v2/en"
 MILO_URL = "https://huggingface.co/HanClinto/milo/resolve/main/model.onnx"
@@ -473,6 +475,7 @@ def main() -> int:
     included = set(chosen or []) or set(fresh_sets)
     latest = latest_published_set(session, included, entry)
     write_index(args.out, version, index_path, index_out, latest, date.today().isoformat())
+    index_matches_catalog(index_out, CATALOG_ID, args.out)
     write_result({
         "added": len(new_ids),
         "previous": len(old_ids),
