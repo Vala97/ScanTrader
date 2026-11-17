@@ -73,11 +73,16 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          NOTES="$(git tag -l --format='%(contents)' "$TAG" | sed '/^$/d' | head -n 20)"
-          if [ -z "$NOTES" ]; then
-            VERSION_NAME="$(sed -n 's/^VERSION_NAME=//p' app/version.properties | head -n 1)"
-            NOTES="Versione ${VERSION_NAME}."
-          fi
+          # checkout stores the peeled commit at refs/tags/$TAG, so %(contents)
+          # is the commit message. Fetch the tag object itself.
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          KIND="$(git cat-file -t "refs/tags/${TAG}")"
+          VERSION_NAME="$(sed -n 's/^VERSION_NAME=//p' app/version.properties | head -n 1)"
+          git for-each-ref --format='%(contents)' "refs/tags/${TAG}" > "$RUNNER_TEMP/tag-contents.txt"
+          NOTES="$(python3 tools/publish_app_update/release_notes.py \
+            --object-type "$KIND" \
+            --version-name "$VERSION_NAME" \
+            --contents-file "$RUNNER_TEMP/tag-contents.txt")"
           python3 tools/publish_app_update/publish_app_update.py \
             app/build/outputs/apk/release/app-release.apk \
             --notes "$NOTES" \
