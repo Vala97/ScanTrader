@@ -12,6 +12,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.os.Build
 import android.view.HapticFeedbackConstants
+import android.view.Surface
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Toast
@@ -124,9 +125,9 @@ import com.scantrader.app.R
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.scan.AutoScanQuick
 import com.scantrader.app.scan.CameraDevices
+import com.scantrader.app.scan.PreviewFraming
 import com.scantrader.app.scan.ManualShutter
 import com.scantrader.app.scan.PortraitTargetRotation
-import com.scantrader.app.scan.PreviewFraming
 import com.scantrader.app.scan.CardFrameGeometry
 import com.scantrader.app.scan.LensCatalog
 import com.scantrader.app.scan.LensKind
@@ -220,6 +221,21 @@ fun ScanScreen(
         if (granted) viewModel.refreshHardware()
     }
 
+    // One PreviewView for the lifetime of this screen. Reassigning controller
+    // on recomposition calls bindToLifecycle again and freezes the preview.
+    val previewView = remember {
+        PreviewView(context).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            // FILL_CENTER so the guide overlay matches the analysis/capture FOV
+            // (FIT_CENTER letterboxes and misaligns the card-frame crop).
+            // The controller is attached only after this view has a real size.
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+        }
+    }
     val controller = remember {
         LifecycleCameraController(context).apply {
             setEnabledUseCases(
@@ -242,21 +258,6 @@ fun ScanScreen(
     // when the same lens is still attached (confirm → scan).
     var cameraBound by remember { mutableStateOf(false) }
     var boundCameraId by remember { mutableStateOf<String?>(null) }
-    // One PreviewView for the lifetime of this screen. Reassigning controller
-    // on recomposition calls bindToLifecycle again and freezes the preview.
-    val previewView = remember {
-        PreviewView(context).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-            // FILL_CENTER so the guide overlay matches the analysis/capture FOV
-            // (FIT_CENTER letterboxes and misaligns the card-frame crop).
-            // The controller is attached only after this view has a real size.
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-            scaleType = PreviewView.ScaleType.FILL_CENTER
-        }
-    }
     var previewWidth by remember { mutableIntStateOf(0) }
     var previewHeight by remember { mutableIntStateOf(0) }
     var boundWidth by remember { mutableIntStateOf(0) }
@@ -396,16 +397,61 @@ fun ScanScreen(
         viewModel.armZoomRestore()
         previewView.scaleType = PreviewView.ScaleType.FILL_CENTER
         previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-        val viewport = PreviewFraming.sharedViewPort(
-            previewWidth,
-            previewHeight,
-            previewView.layoutDirection,
-        ) ?: return@LaunchedEffect
-        if (previewView.controller !== controller) previewView.controller = controller
-        runCatching { PreviewFraming.installSharedViewPort(controller, viewport) }
-            .onFailure { ScanDebug.w("frame: viewport install failed ${it.javaClass.simpleName}") }
+        val plan = runCatching {
+            // Official viewport: PreviewView.getViewPort(ROTATION_0). setController
+            // installs getViewPort() into the CameraX UseCaseGroup. A null or
+            // throwing viewport must not skip the bind.
+            val official = previewView.getViewPort(Surface.ROTATION_0)
+            if (official == null) PreviewFraming.bindPlanAfterFailure()
+            else PreviewFraming.bindPlan(viewportReady = true)
+        }.getOrElse {
+            ScanDebug.w("frame: viewport setup failed ${it.javaClass.simpleName}")
+            PreviewFraming.bindPlanAfterFailure()
+        }
         controller.cameraSelector = CameraDevices.selectorFor(cameraId)
-        controller.bindToLifecycle(lifecycleOwner)
+        controller.setEnabledUseCases(
+            LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
+        )
+        // setController installs PreviewView.getViewPort() on the CameraX UseCaseGroup.
+        runCatching {
+            if (previewView.controller !== controller) previewView.controller = controller
+        }.onFailure { ScanDebug.w("frame: preview attach failed ${it.javaClass.simpleName}") }
+        try {
+            controller.bindToLifecycle(lifecycleOwner)
+        } catch (error: Throwable) {
+            ScanDebug.w("frame: bind failed ${error.javaClass.simpleName}")
+            controller.setEnabledUseCases(
+                LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
+            )
+            try {
+                controller.bindToLifecycle(lifecycleOwner)
+            } catch (fallback: Throwable) {
+                ScanDebug.w("frame: fallback bind failed ${fallback.javaClass.simpleName}")
+            }
+        }
+        if (!controller.isImageAnalysisEnabled()) {
+            ScanDebug.w("frame: analysis disabled after bind, rebinding")
+            controller.setEnabledUseCases(
+                LifecycleCameraController.IMAGE_CAPTURE or LifecycleCameraController.IMAGE_ANALYSIS,
+            )
+            runCatching { controller.bindToLifecycle(lifecycleOwner) }
+                .onFailure { ScanDebug.w("frame: analysis rebind failed ${it.javaClass.simpleName}") }
+        }
+        ScanDebug.d(
+            "frame: bound ${plan.useCases.joinToString()} viewport=${plan.withViewport} " +
+                "analysis=${controller.isImageAnalysisEnabled()}",
+        )
+        if (autoScan && !confirmVisible) {
+            attachAutoAnalyzer(
+                controller = controller,
+                previewView = previewView,
+                executor = cameraExecutor,
+                mainExecutor = mainExecutor,
+                enabled = true,
+                viewModel = viewModel,
+                onFrame = { bitmap -> viewModel.processAutoFrame(bitmap) { goToConfirm() } },
+            )
+        }
         PortraitTargetRotation.lock(controller)
         viewportReady.set(true)
         cameraBound = true
@@ -1401,8 +1447,12 @@ private fun attachAutoAnalyzer(
         controller.clearImageAnalysisAnalyzer()
         return
     }
+    val firstFrame = AtomicBoolean(false)
     controller.setImageAnalysisAnalyzer(executor) { proxy ->
         try {
+            if (firstFrame.compareAndSet(false, true)) {
+                ScanDebug.d("autoFrame first")
+            }
             if (!viewModel.canAcceptAutoFrame()) return@setImageAnalysisAnalyzer
             val upright = com.scantrader.app.scan.CameraBitmaps.fromImageProxy(proxy)
             val guideW = viewModel.guideViewWidth.value

@@ -13,6 +13,7 @@ import com.scantrader.app.scan.CardOrientation
 import com.scantrader.app.scan.FrameNameGate
 import com.scantrader.app.scan.OcrParser
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -25,6 +26,8 @@ class CatalogLookup(
     private val riftbound: RiftboundCatalog? = null,
     private val ctGames: Map<Game, CtGameCatalog> = emptyMap(),
     private val pokemonExpansionCodes: () -> Set<String> = { emptySet() },
+    private val networkTimeoutMs: Long = CatalogNetwork.TIMEOUT_MS,
+    private val exactTimeoutMs: Long = CatalogNetwork.EXACT_TIMEOUT_MS,
 ) {
     suspend fun identify(game: Game, parsed: ParsedCardText, manualQuery: String? = null): List<IdentifiedCard> {
         val queryName = manualQuery?.trim()?.takeIf { it.isNotBlank() } ?: parsed.nameGuess
@@ -39,10 +42,10 @@ class CatalogLookup(
     }
 
     private suspend fun lookupMtg(parsed: ParsedCardText, name: String?): List<IdentifiedCard> {
-        val setCandidates = OcrParser.setCodeCandidates(parsed.setCode)
+        val rawSets = OcrParser.setCodeCandidates(parsed.setCode)
             .filter { code -> code.any { it.isLetter() } && code.count { it.isDigit() } < 3 }
-            .filter { KnownSetCodes.isKnown(Game.MTG, it) }
             .take(2)
+        val setCandidates = rawSets.filter { KnownSetCodes.isKnown(Game.MTG, it) }
         val number = plausibleMtgCollector(parsed.collectorNumber)
         val nameAttempts = OcrParser.mtgNameAttempts(name)
         if (nameAttempts.isEmpty() && number.isNullOrBlank()) return emptyList()
@@ -51,13 +54,35 @@ class CatalogLookup(
             return hits
         }
         if (scryfall.coolingDown()) throw ScryfallBusyException()
-        val hits = CatalogNetwork.awaitOrNull {
+        val hits = CatalogNetwork.awaitOrNull(networkTimeoutMs) {
             lookupMtgOnline(parsed, name, setCandidates, number, nameAttempts)
         }
         if (hits == null) {
-            com.scantrader.app.scan.ScanDebug.d(
-                "catalog timeout ${CatalogNetwork.TIMEOUT_MS}ms, using local",
-            )
+            val exactSets = exactSetCandidates(rawSets)
+            if (!number.isNullOrBlank() && exactSets.isNotEmpty()) {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "catalog timeout ${networkTimeoutMs}ms, exact set+cn",
+                )
+                val exact = CatalogNetwork.awaitOrNull(exactTimeoutMs) {
+                    lookupMtgExact(parsed, name, exactSets, number)
+                }
+                if (!exact.isNullOrEmpty()) {
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "catalog exact set=${exact.first().setCode} cn=${exact.first().collectorNumber}",
+                    )
+                    rememberSets(Game.MTG, exact)
+                    return exact
+                }
+                if (exact == null) {
+                    com.scantrader.app.scan.ScanDebug.d(
+                        "catalog exact timeout ${exactTimeoutMs}ms, using local",
+                    )
+                }
+            } else {
+                com.scantrader.app.scan.ScanDebug.d(
+                    "catalog timeout ${networkTimeoutMs}ms, using local",
+                )
+            }
             return resolveMtgLocal(parsed, name, setCandidates, number, nameAttempts)
                 ?.also { rememberSets(Game.MTG, it) }
                 .orEmpty()
@@ -65,6 +90,45 @@ class CatalogLookup(
         rememberSets(Game.MTG, hits)
         return hits
     }
+
+    /**
+     * One printing, after the broad lookup timed out.
+     * `/cards/{set}/{cn}/{lang}` first when OCR read a language, then `/cards/{set}/{cn}`.
+     */
+    private suspend fun lookupMtgExact(
+        parsed: ParsedCardText,
+        name: String?,
+        sets: List<String>,
+        number: String,
+    ): List<IdentifiedCard> {
+        val lang = parsed.printedLang?.trim()?.lowercase(Locale.ROOT)
+            ?.takeIf { it.isNotEmpty() && it != "en" }
+        for (set in sets) {
+            if (lang != null) {
+                val local = runCatching {
+                    scryfall.cardBySetNumberLang(set, number, lang)
+                }.orRethrowBusy()
+                if (local != null && mtgIdAgrees(local, name, number)) {
+                    return listOf(local.asIdentified(ocrScore = 0.98f))
+                }
+            }
+            val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.orRethrowBusy()
+                ?: continue
+            if (mtgIdAgrees(card, name, number)) return listOf(card.asIdentified(ocrScore = 0.98f))
+            val localized = localizedIdHit(card, name, parsed.printedLang)
+            if (localized != null) return listOf(localized)
+        }
+        return emptyList()
+    }
+
+    /** Known codes, plus a 3-letter code the local set list does not have yet. */
+    private fun exactSetCandidates(raw: List<String>): List<String> =
+        raw.filter { code ->
+            code.length in 3..5 && (
+                KnownSetCodes.isKnown(Game.MTG, code) ||
+                    (code.length == 3 && code.all { it.isLetter() })
+                )
+        }
 
     private suspend fun lookupMtgOnline(
         parsed: ParsedCardText,
@@ -452,6 +516,7 @@ class CatalogLookup(
 
     private fun <T> Result<T>.orRethrowBusy(): T? {
         val error = exceptionOrNull()
+        if (error is CancellationException) throw error
         if (error is ScryfallBusyException) throw error
         return getOrNull()
     }

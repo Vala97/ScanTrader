@@ -1,5 +1,6 @@
 package com.scantrader.app
 
+import com.scantrader.app.scan.BindUseCase
 import com.scantrader.app.scan.PreviewFraming
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -94,6 +95,21 @@ class PreviewFramingTest {
                 keyboardOpen = false,
             ),
         )
+    }
+
+    @Test
+    fun framingFailureStillBindsAnalysis() {
+        val ready = PreviewFraming.bindPlan(viewportReady = true)
+        val failed = PreviewFraming.bindPlanAfterFailure()
+        assertEquals(
+            listOf(BindUseCase.PREVIEW, BindUseCase.ANALYSIS, BindUseCase.CAPTURE),
+            ready.useCases,
+        )
+        assertEquals(ready.useCases, failed.useCases)
+        assertTrue(ready.useCases.contains(BindUseCase.ANALYSIS))
+        assertTrue(failed.useCases.contains(BindUseCase.ANALYSIS))
+        assertTrue(ready.withViewport)
+        assertFalse(failed.withViewport)
     }
 
     @Test
