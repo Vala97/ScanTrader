@@ -91,6 +91,15 @@ class PublishStcatTest(unittest.TestCase):
         self.assertFalse(release_upload_allowed(event="workflow_dispatch", dry_run=True, validated=True, added=3))
         self.assertTrue(release_upload_allowed(event="workflow_dispatch", dry_run=False, validated=True, added=3))
         self.assertFalse(release_upload_allowed(event="pull_request", dry_run=False, validated=True, added=3))
+        self.assertTrue(release_upload_allowed(
+            event="workflow_dispatch", dry_run=False, validated=True, added=0, force=True, changed=True,
+        ))
+        self.assertFalse(release_upload_allowed(
+            event="workflow_dispatch", dry_run=True, validated=True, added=0, force=True, changed=True,
+        ))
+        self.assertTrue(release_upload_allowed(
+            event="schedule", dry_run=False, validated=True, added=0, changed=True,
+        ))
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ import numpy as np
 from update_pokemon_catalog import (
     catalog_entry,
     choose_latest_set,
+    released_set_details,
+    sets_to_refresh,
     filter_new_cards,
     known_set_ids,
     new_set_ids,
@@ -89,6 +91,23 @@ class SetDiffTests(unittest.TestCase):
             [{"id": "me06", "name": "Mega Evolution", "releaseDate": "2026-11-01"}],
         )
         self.assertEqual(newer, {"name": "Mega Evolution", "code": "me06", "date": "2026-11-01"})
+        preview = choose_latest_set(
+            {"latest_set_name": "Mega Evolution", "latest_set_code": "me06", "latest_set_date": "2026-11-01"},
+            [{"id": "darkhold", "name": "Darkhold", "releaseDate": "2027-04-09"}],
+            today="2026-11-18",
+        )
+        self.assertEqual(preview["code"], "me06")
+        self.assertEqual(preview["date"], "2026-11-01")
+
+    def test_future_sets_are_skipped_until_release_and_card_counts_refresh(self):
+        details = [
+            {"id": "me06", "name": "Mega Evolution", "releaseDate": "2026-11-01", "cardCount": 200},
+            {"id": "nau", "name": "Nauctis", "releaseDate": "2027-02-01", "cardCount": 24},
+            {"id": "sv10", "name": "Existing", "releaseDate": "2025-01-01", "cardCount": 190},
+        ]
+        self.assertEqual({item["id"] for item in released_set_details(details, "2026-11-18")}, {"me06", "sv10"})
+        refresh = sets_to_refresh(details, {"sv10": 180}, "2026-11-18")
+        self.assertEqual(refresh, ["me06", "sv10"])
 
     def test_saved_stcat_must_load_and_not_shrink(self):
         ids = ["base1-1", "base1-2"]

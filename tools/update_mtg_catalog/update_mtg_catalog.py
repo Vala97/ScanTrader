@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 import zipfile
-from datetime import date
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "publish_stcat"))
@@ -69,10 +69,18 @@ def dotted_date(iso_day: str) -> str:
     return f"{int(year)}.{int(month)}.{int(day)}"
 
 
+def utc_today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
 def choose_version(current: str, newest_set_day: str | None, today: str) -> str:
-    """Newest set date, otherwise the run date. Always strictly newer."""
+    """Newest released set date, otherwise today. Never a future day.
+
+    Always strictly newer than the published version, so a catalog whose
+    version was inflated by a preview set still updates.
+    """
     candidates = []
-    if newest_set_day:
+    if newest_set_day and newest_set_day <= today:
         candidates.append(dotted_date(newest_set_day))
     candidates.append(dotted_date(today))
     for candidate in candidates:
@@ -234,20 +242,109 @@ def version_to_iso(version: str) -> str:
     return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
 
 
-def new_paper_sets(sets: list[dict], version: str) -> list[str] | None:
-    """Paper set codes released after the published catalog version.
+def released_paper_sets(sets: list[dict], today: str) -> list[dict]:
+    """Paper sets already released on `today` (UTC, YYYY-MM-DD). Previews stay out."""
+    found: list[dict] = []
+    for item in sets:
+        if not isinstance(item, dict) or item.get("digital") is True:
+            continue
+        code = str(item.get("code") or "").strip().lower()
+        released = str(item.get("released_at") or "")
+        if code and released and released <= today:
+            found.append(item)
+    return found
+
+
+def sets_to_refresh(released_counts: dict[str, int], known_counts: dict[str, int]) -> list[str]:
+    """Released set codes missing from the catalog, or whose card count changed.
+
+    `released_counts` must already exclude previews. Comparison is by code and
+    count, not by the newest release date, so a future set cannot hide an
+    older one or new cards inside a set that is already published.
+    """
+    return sorted(
+        code for code, count in released_counts.items()
+        if known_counts.get(code, 0) != count
+    )
+
+
+def partition_catalog_cards(
+    cards,
+    known: set[str],
+    released_codes: set[str],
+) -> tuple[list[dict], set[str], set[str], dict[str, int], dict[str, int]]:
+    """Cards to embed, unreleased ids to drop, kept set codes, and card counts.
+
+    English paper cards only. A set code outside `released_codes` is a preview
+    or a digital set: its rows are removed and no new row is added.
+    The two count maps are released-set code to english paper printings in the
+    bulk, and how many of those are already in the catalog.
+    """
+    to_add: list[dict] = []
+    drop_ids: set[str] = set()
+    present: set[str] = set()
+    seen: set[str] = set()
+    released_counts: dict[str, int] = {}
+    known_counts: dict[str, int] = {}
+    for card in cards:
+        if not isinstance(card, dict) or not paper_english(card):
+            continue
+        code = str(card.get("set") or "").strip().lower()
+        card_id = str(card.get("id") or "")
+        if not card_id or not code:
+            continue
+        if code not in released_codes:
+            if card_id in known:
+                drop_ids.add(card_id)
+            continue
+        if card_id in seen:
+            continue
+        seen.add(card_id)
+        released_counts[code] = released_counts.get(code, 0) + 1
+        if card_id in known:
+            known_counts[code] = known_counts.get(code, 0) + 1
+            present.add(code)
+            continue
+        to_add.append(card)
+        present.add(code)
+    return to_add, drop_ids, present, released_counts, known_counts
+
+
+def latest_released_set(
+    sets: list[dict],
+    today: str,
+    present_codes: set[str] | None = None,
+) -> dict[str, str]:
+    """Newest paper set on or before today. Future previews are not the last set."""
+    best_date = ""
+    best = {"name": "", "code": "", "date": ""}
+    for item in released_paper_sets(sets, today):
+        code = str(item.get("code") or "").strip().lower()
+        released = str(item.get("released_at") or "")
+        if present_codes is not None and code not in present_codes:
+            continue
+        if released >= best_date:
+            best_date = released
+            best = {
+                "name": str(item.get("name") or "").strip(),
+                "code": code,
+                "date": released,
+            }
+    return best
+
+
+def new_paper_sets(sets: list[dict], version: str, today: str | None = None) -> list[str] | None:
+    """Released paper codes that are newer than the catalog version and not in the future.
 
     None means the version is not a date, so the caller must not skip the build.
-    Magic rows are Scryfall ids, not set codes, and the index version is the
-    newest set day already included.
+    A preview dated after `today` is omitted even when it is after the version.
     """
     cutoff = version_to_iso(version)
     if not cutoff:
         return None
+    day = today or utc_today()
     found: list[str] = []
-    for item in sets:
-        if not isinstance(item, dict) or item.get("digital") is True:
-            continue
+    for item in released_paper_sets(sets, day):
         code = str(item.get("code") or "").strip().lower()
         released = str(item.get("released_at") or "")
         if code and released > cutoff:
@@ -391,6 +488,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache" / "scantrader")
     parser.add_argument("--set", dest="set_code", default="", help="Solo questo set, es. trk")
     parser.add_argument("--dry-run", action="store_true", help="Scrive i file in locale e non va oltre")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Ricostruisce e valida anche se nessun set rilasciato è cambiato",
+    )
     parser.add_argument("--index-url", default=INDEX_URL)
     args = parser.parse_args(argv)
 
@@ -408,33 +510,34 @@ def main(argv: list[str] | None = None) -> int:
     log(f"Catalogo pubblicato {entry.get('url')} versione {current}")
 
     set_code = args.set_code.strip().lower() or None
+    today = utc_today()
     sets_payload = request_json(session, f"{SCRYFALL}/sets", pace)
     upstream_sets = sets_payload.get("data") if isinstance(sets_payload, dict) else None
     if not isinstance(upstream_sets, list):
         raise SystemExit("Scryfall /sets senza data")
-    fresh_sets = None if set_code else new_paper_sets(upstream_sets, current)
-    if fresh_sets is not None:
-        log(f"Set di carte paper più nuovi di {current}: {len(fresh_sets)}")
-    if fresh_sets == []:
-        log("Nessun set nuovo. Nessun bulk e nessun embedding.")
+    released_codes = {
+        str(item.get("code") or "").strip().lower()
+        for item in released_paper_sets(upstream_sets, today)
+    }
+    if set_code and set_code not in released_codes:
+        log(f"Il set {set_code} non è un set paper già uscito il {today}. Nessuna carta aggiunta.")
         args.out_dir.mkdir(parents=True, exist_ok=True)
-        result = {
-            "added": 0,
-            "version": current,
-            "unchanged": True,
-            "skipped": True,
-            "validated": False,
-            "new_sets": [],
-            "dry_run": bool(args.dry_run),
-        }
-        (args.out_dir / "update-result.json").write_text(json.dumps(result) + "\n", encoding="utf-8")
+        (args.out_dir / "update-result.json").write_text(
+            json.dumps({
+                "added": 0,
+                "version": current,
+                "unchanged": True,
+                "skipped": True,
+                "validated": False,
+                "changed": False,
+                "force": bool(args.force),
+                "new_sets": [],
+                "dry_run": bool(args.dry_run),
+            }) + "\n",
+            encoding="utf-8",
+        )
         return 0
-
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        log("Manca onnxruntime. pip install -r tools/update_mtg_catalog/requirements.txt")
-        return 1
+    log(f"Set paper usciti entro il {today}: {len(released_codes)}")
 
     catalog_path = args.cache / Path(str(entry["url"]).split("?")[0]).name
     download_file(session, entry["url"], catalog_path, pace, expected_sha=str(entry.get("sha256") or "") or None)
@@ -447,39 +550,62 @@ def main(argv: list[str] | None = None) -> int:
     else:
         bulk_path = args.cache / "scryfall-default-cards.json"
         source = iter_bulk(session, pace, bulk_path)
-    new_cards = missing_cards(source, known, set_code)
-    if not new_cards:
-        log("Nessuna carta nuova. Nessun file scritto.")
+    allowed = {set_code} if set_code else released_codes
+    new_cards, drop_ids, present_codes, released_counts, known_counts = partition_catalog_cards(
+        source, known, allowed,
+    )
+    refresh = sets_to_refresh(released_counts, known_counts)
+    log(f"Set da aggiornare: {len(refresh)}. Carte da togliere (non ancora uscite): {len(drop_ids)}.")
+    if not args.force and not new_cards and not drop_ids:
+        log("Nessun set rilasciato è cambiato. Nessun file scritto.")
         args.out_dir.mkdir(parents=True, exist_ok=True)
         (args.out_dir / "update-result.json").write_text(
             json.dumps({
                 "added": 0,
+                "removed": 0,
                 "version": current,
                 "unchanged": True,
-                "skipped": False,
+                "skipped": True,
                 "validated": False,
-                "new_sets": fresh_sets or ([set_code] if set_code else []),
+                "changed": False,
+                "force": False,
+                "new_sets": [],
                 "dry_run": bool(args.dry_run),
             }) + "\n",
             encoding="utf-8",
         )
         return 0
 
-    model_path = args.cache / "milo.onnx"
-    download_file(session, MODEL_URL, model_path, pace, expected_sha=MODEL_SHA256)
-    if sha256_file(model_path) != MODEL_SHA256:
-        raise SystemExit("model.onnx sha256 diverso da MODEL_SHA256")
+    if drop_ids:
+        keep = [index for index, card_id in enumerate(old_ids) if card_id not in drop_ids]
+        old_embeddings = old_embeddings[keep]
+        old_ids = [old_ids[index] for index in keep]
+        known = set(old_ids)
+        log(f"Tolte {len(drop_ids)} carte di set non ancora usciti. Restano {len(old_ids)}.")
 
-    log(f"Embedding di {len(new_cards)} carte nuove…")
-    ort_session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
-    input_name = ort_session.get_inputs()[0].name
+    latest = latest_released_set(upstream_sets, today, present_codes or None)
+    latest_set_name = latest["name"]
+    latest_set_code = latest["code"]
+    latest_set_date = latest["date"]
+
     vectors: list[np.ndarray] = []
     added_ids: list[str] = []
-    newest_day = ""
-    latest_set_name = str(entry.get("latest_set_name") or "")
-    latest_set_code = str(entry.get("latest_set_code") or "")
-    latest_set_date = str(entry.get("latest_set_date") or "")
     check_images: list[Image.Image] = []
+    ort_session = None
+    input_name = ""
+    if new_cards:
+        model_path = args.cache / "milo.onnx"
+        download_file(session, MODEL_URL, model_path, pace, expected_sha=MODEL_SHA256)
+        if sha256_file(model_path) != MODEL_SHA256:
+            raise SystemExit("model.onnx sha256 diverso da MODEL_SHA256")
+        log(f"Embedding di {len(new_cards)} carte nuove…")
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            log("Manca onnxruntime. pip install -r tools/update_mtg_catalog/requirements.txt")
+            return 1
+        ort_session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        input_name = ort_session.get_inputs()[0].name
     for card in new_cards:
         url = front_image_url(card)
         if url is None:
@@ -496,36 +622,28 @@ def main(argv: list[str] | None = None) -> int:
             image.close()
             continue
         added_ids.append(str(card["id"]))
-        released = str(card.get("released_at") or "")
-        if released > newest_day:
-            newest_day = released
-        if released and released >= latest_set_date:
-            latest_set_date = released
-            code = str(card.get("set") or "").strip()
-            name = str(card.get("set_name") or "").strip()
-            if code:
-                latest_set_code = code
-            if name:
-                latest_set_name = name
         if len(check_images) < 3:
             check_images.append(image.copy())
         image.close()
         if len(added_ids) % 25 == 0:
             log(f"  {len(added_ids)}/{len(new_cards)}")
 
-    if not added_ids:
+    if not added_ids and not drop_ids and not args.force:
         log("Nessuna carta nuova incorporata.")
         return 0
 
-    fresh = np.stack(vectors, axis=0).astype(np.float32)
-    self_match(ort_session, input_name, fresh[: len(check_images)], check_images)
-    for image in check_images:
-        image.close()
-
-    embeddings = np.concatenate([old_embeddings, fresh], axis=0)
-    ids = old_ids + added_ids
+    if added_ids:
+        fresh = np.stack(vectors, axis=0).astype(np.float32)
+        self_match(ort_session, input_name, fresh[: len(check_images)], check_images)
+        for image in check_images:
+            image.close()
+        embeddings = np.concatenate([old_embeddings, fresh], axis=0)
+        ids = old_ids + added_ids
+    else:
+        embeddings = old_embeddings
+        ids = list(old_ids)
     sanity(len(old_ids), embeddings, ids)
-    version = choose_version(current, newest_day or None, date.today().isoformat())
+    version = choose_version(current, latest_set_date or None, today)
     filename = f"milo1-scryfall-mtg-{version.replace('.', '-')}.npz"
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -560,7 +678,7 @@ def main(argv: list[str] | None = None) -> int:
             "--latest-set-date",
             latest_set_date,
             "--updated-at",
-            date.today().isoformat(),
+            today,
             f"mtg={npz_path}",
         ],
         check=True,
@@ -581,7 +699,10 @@ def main(argv: list[str] | None = None) -> int:
         "set": set_code or "",
         "skipped": False,
         "validated": True,
-        "new_sets": fresh_sets or ([set_code] if set_code else []),
+        "changed": True,
+        "force": bool(args.force),
+        "removed": len(drop_ids),
+        "new_sets": refresh,
     }
     (out_dir / "update-result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     log(

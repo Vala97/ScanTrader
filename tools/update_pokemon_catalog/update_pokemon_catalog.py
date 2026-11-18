@@ -22,7 +22,7 @@ import struct
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -101,6 +101,48 @@ def set_id_of(card_id: str) -> str:
 
 def known_set_ids(card_ids: list[str]) -> set[str]:
     return {set_id_of(card_id) for card_id in card_ids if set_id_of(card_id)}
+
+
+def utc_today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def released_set_details(details: list[dict], today: str) -> list[dict]:
+    """Sets with no release date, or a release date on or before today."""
+    found: list[dict] = []
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        set_id = str(item.get("id") or "").strip()
+        if not set_id:
+            continue
+        released = str(item.get("releaseDate") or "")
+        if released and released > today:
+            continue
+        found.append(item)
+    return found
+
+
+def sets_to_refresh(details: list[dict], known_counts: dict[str, int], today: str) -> list[str]:
+    """Released sets missing from the catalog, or whose card count changed.
+
+    A preview dated after today is ignored, so it cannot become the watermark
+    and it is picked up on the day it releases. `cardCount` is the upstream
+    total; a change means newly revealed cards of a set already published.
+    """
+    found: list[str] = []
+    for item in released_set_details(details, today):
+        set_id = str(item.get("id") or "").strip()
+        raw_count = item.get("cardCount", item.get("card_count"))
+        previous = known_counts.get(set_id)
+        if previous is None:
+            found.append(set_id)
+            continue
+        if raw_count is None:
+            continue
+        if int(raw_count) != int(previous):
+            found.append(set_id)
+    return found
 
 
 def new_set_ids(upstream: list[dict], known: set[str]) -> list[str]:
@@ -284,15 +326,23 @@ def validate_saved_stcat(path: Path, previous_count: int) -> None:
         raise SystemExit("validation: an embedding is not finite")
 
 
-def choose_latest_set(previous: dict, details: list[dict]) -> dict:
-    """Keep the previous latest set unless a detail has a newer release date."""
+def choose_latest_set(previous: dict, details: list[dict], today: str | None = None) -> dict:
+    """Keep the previous latest set unless a released detail is newer.
+
+    A release date after today is a preview and is ignored.
+    """
+    day = today or utc_today()
     best_name = str(previous.get("latest_set_name") or "")
     best_code = str(previous.get("latest_set_code") or "")
     best_date = str(previous.get("latest_set_date") or "")
+    if best_date > day:
+        best_name, best_code, best_date = "", "", ""
     for detail in details:
         if not isinstance(detail, dict):
             continue
         released = str(detail.get("releaseDate") or "")
+        if released and released > day:
+            continue
         name = str(detail.get("name") or "").strip()
         code = str(detail.get("id") or "").strip()
         if released and released >= best_date:
@@ -360,6 +410,11 @@ def main() -> int:
     parser.add_argument("--sets", default="")
     parser.add_argument("--newest", type=int, default=0, help="Only cards from the N newest TCGdex sets")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rebuild and validate even when no released set changed",
+    )
     parser.add_argument("--index", default=INDEX_URL)
     parser.add_argument("--result", type=Path, default=None, help="Where to write update-result.json")
     args = parser.parse_args()
@@ -391,10 +446,34 @@ def main() -> int:
     listing = get_json(session, f"{TCGDEX}/sets")
     if not isinstance(listing, list):
         raise SystemExit("TCGdex /sets did not return a list")
-    fresh_sets = new_set_ids(listing, known_set_ids(old_ids))
-    log(f"TCGdex sets not in the published catalog: {len(fresh_sets)}")
+    today = utc_today()
+    details: list[dict] = []
+    for brief in listing:
+        if not isinstance(brief, dict) or not brief.get("id"):
+            continue
+        if brief.get("releaseDate") or brief.get("cardCount") is not None:
+            details.append(brief)
+            continue
+        detail = get_json(session, f"{TCGDEX}/sets/{brief['id']}")
+        if isinstance(detail, dict):
+            details.append(detail)
+    known_counts: dict[str, int] = {}
+    for card_id in old_ids:
+        set_id = set_id_of(card_id)
+        if set_id:
+            known_counts[set_id] = known_counts.get(set_id, 0) + 1
+    fresh_sets = sets_to_refresh(details, known_counts, today)
+    log(f"Released TCGdex sets to refresh: {len(fresh_sets)}")
+    future_ids = {
+        str(item.get("id") or "").strip()
+        for item in details
+        if isinstance(item, dict)
+        and str(item.get("releaseDate") or "") > today
+        and str(item.get("id") or "").strip()
+    }
     forced = {part.strip() for part in args.sets.split(",") if part.strip()}
-    if not forced and args.newest <= 0 and not fresh_sets:
+    forced = {set_id for set_id in forced if set_id not in future_ids}
+    if not args.force and not forced and args.newest <= 0 and not fresh_sets:
         log("No new sets. No card list and no embeddings.")
         write_result({
             "added": 0,
@@ -402,22 +481,29 @@ def main() -> int:
             "unchanged": True,
             "skipped": True,
             "validated": False,
+            "changed": False,
+            "force": False,
             "new_sets": [],
             "dry_run": bool(args.dry_run),
         })
         return 0
+    released_ids = {str(item.get("id") or "") for item in released_set_details(details, today)}
     if forced:
         chosen = forced
     elif args.newest > 0:
-        chosen = resolve_sets(session, "", args.newest)
+        chosen = resolve_sets(session, "", args.newest) or set()
+        chosen = {set_id for set_id in chosen if set_id in released_ids}
+    elif args.force:
+        chosen = released_ids
     else:
         chosen = set(fresh_sets)
-        log(f"Embedding only new sets: {sorted(chosen)}")
+        log(f"Embedding only changed released sets: {sorted(chosen)}")
     cards = get_json(session, f"{TCGDEX}/cards")
     missing = filter_new_cards(cards, set(old_ids), chosen)
     log(f"Missing cards to embed: {len(missing)}")
     version = next_version(current)
-    if not missing:
+    has_future = any(set_id_of(card_id) in future_ids for card_id in old_ids)
+    if not missing and not args.force and not has_future:
         log(f"Nothing new. Index stays at {current}.")
         write_result({
             "added": 0,
@@ -425,6 +511,8 @@ def main() -> int:
             "unchanged": True,
             "skipped": False,
             "validated": False,
+            "changed": False,
+            "force": False,
             "new_sets": sorted(chosen or fresh_sets),
             "dry_run": bool(args.dry_run),
         })
@@ -439,7 +527,7 @@ def main() -> int:
     log(f"Milo sha256 ok ({MODEL_SHA256[:12]}…)")
     ort_session = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])
     new_ids, new_vectors = embed_missing(session, ort_session, missing)
-    if not new_ids:
+    if not new_ids and not args.force and not has_future:
         log("No embeddable cards. Index unchanged.")
         write_result({
             "added": 0,
@@ -447,12 +535,22 @@ def main() -> int:
             "unchanged": True,
             "skipped": False,
             "validated": False,
+            "changed": False,
+            "force": False,
             "new_sets": sorted(chosen or fresh_sets),
             "dry_run": bool(args.dry_run),
         })
         return 0
-    ids = old_ids + new_ids
-    vectors = np.concatenate([old_vectors, new_vectors], axis=0)
+    keep = [index for index, card_id in enumerate(old_ids) if set_id_of(card_id) not in future_ids]
+    if len(keep) != len(old_ids):
+        old_ids = [old_ids[index] for index in keep]
+        old_vectors = old_vectors[keep]
+    if new_ids:
+        ids = old_ids + new_ids
+        vectors = np.concatenate([old_vectors, new_vectors], axis=0)
+    else:
+        ids = list(old_ids)
+        vectors = old_vectors
     write_stcat(args.out, ids, vectors)
     try:
         validate_saved_stcat(args.out, len(old_ids))
@@ -474,7 +572,7 @@ def main() -> int:
     index_out = args.out.with_name("stcat-index.json")
     included = set(chosen or []) or set(fresh_sets)
     latest = latest_published_set(session, included, entry)
-    write_index(args.out, version, index_path, index_out, latest, date.today().isoformat())
+    write_index(args.out, version, index_path, index_out, latest, today)
     index_matches_catalog(index_out, CATALOG_ID, args.out)
     write_result({
         "added": len(new_ids),
@@ -488,6 +586,8 @@ def main() -> int:
         "unchanged": False,
         "skipped": False,
         "validated": True,
+        "changed": True,
+        "force": bool(args.force),
         "new_sets": sorted(chosen or fresh_sets),
         "dry_run": bool(args.dry_run),
     })
