@@ -11,9 +11,13 @@ from update_mtg_catalog import (
     choose_version,
     front_image_url,
     iter_cards_file,
+    latest_released_set,
     new_paper_sets,
     paper_english,
+    partition_catalog_cards,
+    released_paper_sets,
     save_catalog,
+    sets_to_refresh,
     validate_saved_catalog,
     version_greater,
 )
@@ -48,7 +52,9 @@ class UpdateMtgCatalogTest(unittest.TestCase):
     def test_version_is_strictly_newer(self):
         self.assertTrue(version_greater("2026.11.13", "2026.07.09"))
         self.assertFalse(version_greater("2026.07.09", "2026.07.09"))
-        self.assertEqual(choose_version("2026.07.09", "2026-11-13", "2026-11-12"), "2026.11.13")
+        self.assertEqual(choose_version("2026.07.09", "2026-11-13", "2026-11-18"), "2026.11.13")
+        self.assertEqual(choose_version("2026.07.09", "2027-04-09", "2026-11-18"), "2026.11.18")
+        self.assertEqual(choose_version("2027.4.9", "2026-11-17", "2026-11-18"), "2027.4.10")
         self.assertEqual(choose_version("2026.11.13", "2026-11-13", "2026-11-12"), "2026.11.14")
 
     def test_bulk_prefers_legacy_uri_and_reads_json_and_jsonl(self):
@@ -89,8 +95,40 @@ class UpdateMtgCatalogTest(unittest.TestCase):
             {"code": "arena", "released_at": "2026-11-02", "digital": True},
         ]
         self.assertEqual(new_paper_sets(sets, "2026.07.09"), ["trk"])
-        self.assertEqual(new_paper_sets(sets, "2026.11.01"), [])
-        self.assertIsNone(new_paper_sets(sets, "not-a-date"))
+        self.assertEqual(new_paper_sets(sets, "2026.11.01", today="2026-11-18"), [])
+        self.assertIsNone(new_paper_sets(sets, "not-a-date", today="2026-11-18"))
+
+    def test_preview_sets_do_not_hide_released_sets_or_new_cards(self):
+        sets = [
+            {"code": "lcc", "name": "Lost Caverns Commander", "released_at": "2023-11-17", "digital": False, "card_count": 10},
+            {"code": "nau", "name": "Nauctis", "released_at": "2027-02-01", "digital": False, "card_count": 24},
+            {"code": "mdd", "name": "Marvel: Darkhold Destiny", "released_at": "2027-04-09", "digital": False, "card_count": 12},
+            {"code": "trk", "name": "Star Trek", "released_at": "2026-11-13", "digital": False, "card_count": 300},
+        ]
+        released = released_paper_sets(sets, "2026-11-18")
+        self.assertEqual({item["code"] for item in released}, {"lcc", "trk"})
+        # Catalog already has lcc (10) and nothing of trk. A later reveal bumps lcc to 12.
+        refresh = sets_to_refresh({"lcc": 12, "trk": 300}, {"lcc": 10})
+        self.assertEqual(refresh, ["lcc", "trk"])
+        self.assertEqual(
+            latest_released_set(sets, "2026-11-18"),
+            {"name": "Star Trek", "code": "trk", "date": "2026-11-13"},
+        )
+        cards = [
+            {"id": "old-1", "lang": "en", "set": "lcc", "games": ["paper"], "image_uris": {"large": "https://example/a.jpg"}},
+            {"id": "new-1", "lang": "en", "set": "lcc", "games": ["paper"], "image_uris": {"large": "https://example/b.jpg"}},
+            {"id": "preview", "lang": "en", "set": "mdd", "games": ["paper"], "image_uris": {"large": "https://example/c.jpg"}},
+            {"id": "trek", "lang": "en", "set": "trk", "games": ["paper"], "image_uris": {"large": "https://example/d.jpg"}},
+        ]
+        to_add, drop_ids, present, released_counts, known_counts = partition_catalog_cards(
+            cards,
+            {"old-1", "preview"},
+            {"lcc", "trk"},
+        )
+        self.assertEqual([card["id"] for card in to_add], ["new-1", "trek"])
+        self.assertEqual(drop_ids, {"preview"})
+        self.assertEqual(present, {"lcc", "trk"})
+        self.assertEqual(sets_to_refresh(released_counts, known_counts), ["lcc", "trk"])
 
     def test_saved_catalog_must_load_and_not_shrink(self):
         ids = ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]

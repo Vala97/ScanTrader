@@ -5,6 +5,9 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+### Corretto
+- Il catalogo Magic (e Pokémon) include solo i set già usciti. La versione e l'ultimo set non usano le anteprime future, e un set già pubblicato si aggiorna se arrivano carte nuove. Una esecuzione manuale può ripubblicare anche senza un set nuovo.
+
 ## [0.5.2] - 2026-11-17
 
 ### Corretto

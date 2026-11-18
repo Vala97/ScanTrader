@@ -15,6 +15,10 @@ on:
         type: string
         default: ""
         required: false
+      force:
+        description: Rebuild and publish even when no released set changed
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -51,11 +55,15 @@ jobs:
           # Schedule publishes. A manual run uploads only when dry_run is false (default true).
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           SET_CODE: ${{ github.event_name == 'workflow_dispatch' && inputs.set_code || '' }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
         run: |
           set -euo pipefail
           args=(--out-dir "$RUNNER_TEMP/mtg-catalog" --cache "$HOME/.cache/scantrader")
           if [ "$DRY_RUN" = "true" ]; then
             args+=(--dry-run)
+          fi
+          if [ "$FORCE" = "true" ]; then
+            args+=(--force)
           fi
           if [ -n "$SET_CODE" ]; then
             args+=(--set "$SET_CODE")
@@ -72,6 +80,8 @@ jobs:
               handle.write(f"unchanged={str(bool(result.get('unchanged'))).lower()}\n")
               handle.write(f"validated={str(bool(result.get('validated'))).lower()}\n")
               handle.write(f"skipped={str(bool(result.get('skipped'))).lower()}\n")
+              handle.write(f"changed={str(bool(result.get('changed'))).lower()}\n")
+              handle.write(f"force={str(bool(result.get('force'))).lower()}\n")
               handle.write(f"new_sets={sets_text}\n")
           summary = [
               "### Magic catalog",
@@ -84,10 +94,11 @@ jobs:
           PY
 
       - name: Upload to the existing stcat release
-        if: steps.build.outputs.validated == 'true' && steps.build.outputs.added != '0' && (github.event_name == 'schedule' || inputs.dry_run == false)
+        if: steps.build.outputs.validated == 'true' && (steps.build.outputs.changed == 'true' || steps.build.outputs.force == 'true') && (github.event_name == 'schedule' || inputs.dry_run == false)
         env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          FORCE_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
         run: |
           set -euo pipefail
           # Never `gh release create`: that replaces the asset list on an existing tag.
@@ -101,11 +112,14 @@ jobs:
           result = json.loads(Path(os.environ["RUNNER_TEMP"], "mtg-catalog", "update-result.json").read_text())
           event = os.environ["GITHUB_EVENT_NAME"]
           dry = os.environ.get("DRY_RUN_INPUT", "false") == "true"
+          force = os.environ.get("FORCE_INPUT", "false") == "true"
           if not release_upload_allowed(
               event=event,
               dry_run=dry,
               validated=bool(result.get("validated")),
               added=int(result.get("added") or 0),
+              force=force,
+              changed=bool(result.get("changed")),
           ):
               raise SystemExit("refusing to upload")
           Path(os.environ["RUNNER_TEMP"], "mtg-upload-args").write_text(result["npz"] + "\n")

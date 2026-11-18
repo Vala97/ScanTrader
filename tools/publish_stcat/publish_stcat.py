@@ -50,17 +50,24 @@ def release_upload_allowed(
     dry_run: bool,
     validated: bool,
     added: int,
+    force: bool = False,
+    changed: bool | None = None,
 ) -> bool:
-    """A daily run publishes a validated catalog. A manual run does so only when dry_run is false.
+    """A daily run publishes a validated catalog that changed.
 
-    No new cards, a skipped run, or a failed validation never uploads.
+    A manual run does so only when dry_run is false. `force` publishes that
+    manual run even when no new set was detected. A failed validation never uploads.
     """
-    if not validated or added <= 0:
+    if changed is None:
+        changed = added > 0
+    if not validated:
         return False
     if event == "schedule":
-        return True
+        return bool(changed)
     if event == "workflow_dispatch":
-        return not dry_run
+        if dry_run:
+            return False
+        return bool(force or changed)
     return False
 
 
