@@ -56,6 +56,10 @@ class UpdateMtgCatalogTest(unittest.TestCase):
         self.assertEqual(choose_version("2026.07.09", "2027-04-09", "2026-11-18"), "2026.11.18")
         self.assertEqual(choose_version("2027.4.9", "2026-11-17", "2026-11-18"), "2027.4.10")
         self.assertEqual(choose_version("2026.11.13", "2026-11-13", "2026-11-12"), "2026.11.14")
+        # The live catalog is already 2027.4.10. The app only updates on a
+        # strictly greater dotted version, so a republish cannot go back to
+        # 2026.11.13 even though that is the real last-set date.
+        self.assertEqual(choose_version("2027.4.10", "2026-11-13", "2026-11-20"), "2027.4.11")
 
     def test_bulk_prefers_legacy_uri_and_reads_json_and_jsonl(self):
         self.assertEqual(
@@ -142,6 +146,37 @@ class UpdateMtgCatalogTest(unittest.TestCase):
             save_catalog(short, vectors[:1], ids[:1], 36)
             with self.assertRaises(SystemExit):
                 validate_saved_catalog(short, previous_count=2)
+
+    def test_latest_set_prefers_main_set_over_tokens_on_the_same_day(self):
+        sets = [
+            {"code": "ttrk", "name": "Star Trek Tokens", "released_at": "2026-11-13", "digital": False, "set_type": "token", "parent_set_code": "trk", "card_count": 27},
+            {"code": "atrk", "name": "Star Trek Art Series", "released_at": "2026-11-13", "digital": False, "set_type": "memorabilia", "parent_set_code": "trk", "card_count": 54},
+            {"code": "trc", "name": "Star Trek Commander", "released_at": "2026-11-13", "digital": False, "set_type": "commander", "parent_set_code": "trk", "card_count": 556},
+            {"code": "sds", "name": "Stardates", "released_at": "2026-11-13", "digital": False, "set_type": "masterpiece", "parent_set_code": "trk", "card_count": 30},
+            {"code": "punk", "name": "Prismatic Pride", "released_at": "2026-11-13", "digital": False, "set_type": "funny", "parent_set_code": "unk", "card_count": 20},
+            {"code": "trk", "name": "Star Trek", "released_at": "2026-11-13", "digital": False, "set_type": "expansion", "card_count": 587},
+            {"code": "lcc", "name": "Lost Caverns Commander", "released_at": "2023-11-17", "digital": False, "set_type": "commander", "card_count": 10},
+        ]
+        expected = {"name": "Star Trek", "code": "trk", "date": "2026-11-13"}
+        self.assertEqual(latest_released_set(sets, "2026-11-20"), expected)
+        self.assertEqual(latest_released_set(list(reversed(sets)), "2026-11-20"), expected)
+
+    def test_latest_set_prefers_commander_over_tokens_when_parent_is_absent(self):
+        sets = [
+            {"code": "ttrk", "name": "Star Trek Tokens", "released_at": "2026-11-13", "digital": False, "set_type": "token", "parent_set_code": "trk", "card_count": 27},
+            {"code": "ttrc", "name": "Star Trek Commander Tokens", "released_at": "2026-11-13", "digital": False, "set_type": "token", "parent_set_code": "trc", "card_count": 14},
+            {"code": "trc", "name": "Star Trek Commander", "released_at": "2026-11-13", "digital": False, "set_type": "commander", "parent_set_code": "trk", "card_count": 556},
+            {"code": "atrk", "name": "Star Trek Art Series", "released_at": "2026-11-13", "digital": False, "set_type": "memorabilia", "parent_set_code": "trk", "card_count": 54},
+        ]
+        self.assertEqual(
+            latest_released_set(sets, "2026-11-20"),
+            {"name": "Star Trek Commander", "code": "trc", "date": "2026-11-13"},
+        )
+        # Tokens first in the input, parent still wins over its own tokens.
+        self.assertEqual(
+            latest_released_set(list(reversed(sets)), "2026-11-20", {"ttrc", "trc"}),
+            {"name": "Star Trek Commander", "code": "trc", "date": "2026-11-13"},
+        )
 
 
 if __name__ == "__main__":

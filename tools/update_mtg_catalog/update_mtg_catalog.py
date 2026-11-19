@@ -76,8 +76,11 @@ def utc_today() -> str:
 def choose_version(current: str, newest_set_day: str | None, today: str) -> str:
     """Newest released set date, otherwise today. Never a future day.
 
-    Always strictly newer than the published version, so a catalog whose
-    version was inflated by a preview set still updates.
+    Always strictly newer than the published version. The app decides a
+    catalog is an update only when the dotted version compares greater
+    (PokemonCatalogIndex.isUpdate); sha256 is an integrity check after
+    the download, not the update gate. A version inflated by a preview
+    set must therefore keep climbing, not jump back to a real set date.
     """
     candidates = []
     if newest_set_day and newest_set_day <= today:
@@ -310,27 +313,101 @@ def partition_catalog_cards(
     return to_add, drop_ids, present, released_counts, known_counts
 
 
+# Higher prefers a main product when several sets share a release day.
+# Unknown Scryfall set_type values sit in the middle, above tokens/promos.
+SET_TYPE_PRIORITY = {
+    "expansion": 100,
+    "core": 100,
+    "masters": 90,
+    "draft_innovation": 90,
+    "commander": 80,
+    "funny": 80,
+    "masterpiece": 70,
+    "from_the_vault": 70,
+    "spellbook": 70,
+    "arsenal": 70,
+    "premium_deck": 70,
+    "starter": 70,
+    "planechase": 70,
+    "archenemy": 70,
+    "box": 60,
+    "duels": 60,
+    "alchemy": 10,
+    "art_series": 10,
+    "memorabilia": 10,
+    "minigame": 10,
+    "promo": 10,
+    "token": 10,
+    "treasure_chest": 10,
+    "vanguard": 10,
+}
+DEFAULT_SET_TYPE_PRIORITY = 50
+
+
+def set_type_priority(item: dict) -> int:
+    kind = str(item.get("set_type") or "").strip().lower()
+    return SET_TYPE_PRIORITY.get(kind, DEFAULT_SET_TYPE_PRIORITY)
+
+
+def preferred_released_set(items: list[dict]) -> dict | None:
+    """The last-set label among `items`. Later released_at wins.
+
+    On a shared date, a set loses to its parent when that parent is also
+    a candidate, then a higher Scryfall set_type, then a set without a
+    parent, then a larger card_count. The input order does not matter.
+    """
+    dated: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip().lower()
+        released = str(item.get("released_at") or "")
+        if code and released:
+            dated.append(item)
+    if not dated:
+        return None
+    best_date = max(str(item.get("released_at") or "") for item in dated)
+    group = [item for item in dated if str(item.get("released_at") or "") == best_date]
+    codes = {str(item.get("code") or "").strip().lower() for item in group}
+    narrowed = [
+        item for item in group
+        if str(item.get("parent_set_code") or "").strip().lower() not in codes
+    ] or group
+    narrowed.sort(
+        key=lambda item: (
+            -set_type_priority(item),
+            1 if str(item.get("parent_set_code") or "").strip() else 0,
+            -int(item.get("card_count") or 0),
+            str(item.get("code") or "").strip().lower(),
+        )
+    )
+    return narrowed[0]
+
+
 def latest_released_set(
     sets: list[dict],
     today: str,
     present_codes: set[str] | None = None,
 ) -> dict[str, str]:
-    """Newest paper set on or before today. Future previews are not the last set."""
-    best_date = ""
-    best = {"name": "", "code": "", "date": ""}
+    """Newest paper set on or before today. Future previews are not the last set.
+
+    When several released sets share that date, prefer the main set over
+    tokens, promos, art series, and other secondary products.
+    """
+    candidates: list[dict] = []
     for item in released_paper_sets(sets, today):
         code = str(item.get("code") or "").strip().lower()
-        released = str(item.get("released_at") or "")
         if present_codes is not None and code not in present_codes:
             continue
-        if released >= best_date:
-            best_date = released
-            best = {
-                "name": str(item.get("name") or "").strip(),
-                "code": code,
-                "date": released,
-            }
-    return best
+        candidates.append(item)
+    best = preferred_released_set(candidates)
+    if not best:
+        return {"name": "", "code": "", "date": ""}
+    return {
+        "name": str(best.get("name") or "").strip(),
+        "code": str(best.get("code") or "").strip().lower(),
+        "date": str(best.get("released_at") or ""),
+    }
 
 
 def new_paper_sets(sets: list[dict], version: str, today: str | None = None) -> list[str] | None:
