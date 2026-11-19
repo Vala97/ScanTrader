@@ -1,6 +1,7 @@
 package com.scantrader.app.ui.confirm
 
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.data.model.Game
 
 /**
  * Once the language wait ends, the card that was scheduled is saved.
@@ -46,6 +47,21 @@ object AutoSaveCommit {
         if (spanishClue) return CardLanguage.SPANISH
         return lastSaved ?: session ?: fallback
     }
+
+    /**
+     * Magic language the card did not show (no collector code, no printed words,
+     * or the two disagree): propose the previous card's language and do not
+     * auto-save it. The user picks, then saves by hand.
+     */
+    fun languageBlocksAutoSave(game: Game, detectEnabled: Boolean, recognized: Boolean): Boolean =
+        game == Game.MTG && detectEnabled && !recognized
+
+    /** The previous card's language: last saved, then the session, then the settings default. */
+    fun previousCardLanguage(
+        lastSaved: CardLanguage?,
+        session: CardLanguage?,
+        fallback: CardLanguage,
+    ): CardLanguage = lastSaved ?: session ?: fallback
 
     /** ñ, or a Spanish function word. A bare `ES` token is not a clue. */
     fun spanishClue(ocrName: String?, ocrText: String?): Boolean {

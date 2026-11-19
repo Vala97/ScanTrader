@@ -94,6 +94,16 @@ class CardOcr {
         }
     }
 
+    /** Japanese and Chinese recognizers only (Magic script check). Both run together. */
+    suspend fun recognizeCjk(bitmap: Bitmap): String = coroutineScope {
+        listOf(japanese, chinese).map { client ->
+            async { runCatching { recognizeOne(client, bitmap) }.getOrDefault("") }
+        }.awaitAll()
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString("\n")
+    }
+
     private suspend fun recognizeOne(client: TextRecognizer, bitmap: Bitmap): String =
         suspendCancellableCoroutine { cont ->
             val image = InputImage.fromBitmap(bitmap, 0)

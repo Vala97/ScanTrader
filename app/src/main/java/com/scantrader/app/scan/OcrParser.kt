@@ -241,6 +241,24 @@ object OcrParser {
         bottomPriorityText: String?,
         namePriorityText: String?,
     ): ParsedCardText {
+        val parsed = parseMtgIdentity(rawText, bottomPriorityText, namePriorityText)
+        val top = namePriorityText?.takeIf { it.isNotBlank() }
+        val bottom = bottomPriorityText?.takeIf { it.isNotBlank() }
+        val source = if (top != null && CardOrientation.collectorInTitleBand(top)) {
+            listOfNotNull(top, bottom, rawText.takeIf { it.isNotBlank() }).joinToString("\n")
+        } else {
+            bottom ?: rawText
+        }
+        // Language only: set, number and printedLang above stay exactly as they were.
+        val code = parsed.printedLang ?: mtgCollectorLanguage(normalizeMtgBottomOcr(source))
+        return if (code == null) parsed else parsed.copy(collectorLang = code)
+    }
+
+    private fun parseMtgIdentity(
+        rawText: String,
+        bottomPriorityText: String?,
+        namePriorityText: String?,
+    ): ParsedCardText {
         val top = namePriorityText?.takeIf { it.isNotBlank() }
         val bottom = bottomPriorityText?.takeIf { it.isNotBlank() }
         // A landscape crop puts the collector line (`O65`, `HOB*EN`) in the title band.
@@ -289,6 +307,44 @@ object OcrParser {
             printedLang = glued?.lang,
         )
     }
+
+    /**
+     * Language code beside the set on the modern collector line: `LCC • IT`,
+     * `DMU*ES`, `NEO JP`, `LCCIT`. Only after a plausible set code and on the same
+     * line, so a stray `IT` elsewhere does not count. `1T` / `lT` are an OCR `IT`.
+     * The set must be a known Magic set, or a 3-letter code followed by a printed bullet.
+     */
+    fun mtgCollectorLanguage(prepared: String): String? {
+        if (prepared.isBlank()) return null
+        for (match in mtgCollectorLangToken.findAll(prepared)) {
+            val set = match.groupValues[1]
+            val gap = match.groupValues[2]
+            val code = match.groupValues[3]
+            if (set.uppercase() in LANGUAGE_CODES) continue
+            if (!isPlausibleMtgSet(set)) continue
+            val known = com.scantrader.app.data.catalog.KnownSetCodes.isKnown(Game.MTG, set)
+            // A set not in the bundled list still counts with a printed bullet (`ABC • IT`).
+            val bullet = gap.any { it in "•·●" } && set.length == 3
+            if (!known && !bullet) continue
+            return when (code) {
+                "JP", "JA" -> "ja"
+                "SP", "ES" -> "es"
+                "CS", "ZHS" -> "zhs"
+                "CT", "ZHT" -> "zht"
+                "KR", "KO" -> "ko"
+                "1T", "lT", "|T" -> "it"
+                else -> code.lowercase()
+            }
+        }
+        return null
+    }
+
+    private val LANGUAGE_CODES = setOf("EN", "IT", "ES", "SP", "DE", "FR", "PT", "JP", "JA", "KO", "KR", "CS", "CT", "ZHS", "ZHT")
+
+    private val mtgCollectorLangToken = Regex(
+        """(?<![A-Za-z0-9])([A-Z0-9]{3,5}?)([^\S\n]*[•·●*+.,/|\-–—]?[^\S\n]*)""" +
+            """(ZHS|ZHT|EN|IT|ES|SP|DE|FR|PT|JP|JA|KO|KR|CS|CT|1T|lT|\|T)(?![A-Za-z0-9])""",
+    )
 
     /**
      * Riftbound prints its identity bottom-left: `OGN • 001/298`, alternate art `007a/298`,

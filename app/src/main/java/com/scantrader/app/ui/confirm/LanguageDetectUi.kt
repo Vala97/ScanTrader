@@ -7,7 +7,20 @@ enum class LanguageDetectStatus {
     Analyzing,
     Recognized,
     NotFound,
+
+    /** Magic: no collector code or printed words, or they disagree. [LanguageDetectUi.language] is the proposal. */
+    Unrecognized,
 }
+
+/**
+ * Result of the confirm-screen language wait. [recognized] false means the
+ * card itself did not show its language and [language] is only the proposal
+ * (the previous card's language). Magic does not auto-save that.
+ */
+data class LanguageVerdict(
+    val language: CardLanguage,
+    val recognized: Boolean,
+)
 
 data class LanguageDetectUi(
     val status: LanguageDetectStatus,
@@ -18,9 +31,18 @@ data class LanguageDetectUi(
         LanguageDetectStatus.Recognized ->
             "Lingua: riconosciuta · ${language?.label ?: "—"}"
         LanguageDetectStatus.NotFound -> "Lingua: non trovata"
+        LanguageDetectStatus.Unrecognized ->
+            "Lingua non riconosciuta · scegli tu (proposta: ${language?.label ?: "—"})"
     }
 
     companion object {
+        fun fromVerdict(verdict: LanguageVerdict): LanguageDetectUi =
+            if (verdict.recognized) {
+                LanguageDetectUi(LanguageDetectStatus.Recognized, verdict.language)
+            } else {
+                LanguageDetectUi(LanguageDetectStatus.Unrecognized, verdict.language)
+            }
+
         fun fromDetection(detected: CardLanguage?): LanguageDetectUi =
             if (detected != null) {
                 LanguageDetectUi(LanguageDetectStatus.Recognized, detected)
