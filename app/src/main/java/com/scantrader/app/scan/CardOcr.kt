@@ -48,6 +48,49 @@ object CjkSkip {
     }
 }
 
+/**
+ * Releases a bitmap only after every ML Kit task that reads it has finished.
+ * A cancelled coroutine returns at once while ML Kit keeps reading the bitmap;
+ * recycling it then logs "getConfig() on a recycle()'d bitmap". [close] marks
+ * the caller done; [release] runs once, when closed and nothing is in flight.
+ */
+class OcrBitmapLease(private val release: () -> Unit) {
+    private var inFlight = 0
+    private var closed = false
+    private var released = false
+
+    @Synchronized
+    fun begin() {
+        inFlight++
+    }
+
+    fun end() {
+        if (markEnd()) release()
+    }
+
+    fun close() {
+        if (markClosed()) release()
+    }
+
+    @Synchronized
+    private fun markEnd(): Boolean {
+        if (inFlight > 0) inFlight--
+        return shouldRelease()
+    }
+
+    @Synchronized
+    private fun markClosed(): Boolean {
+        closed = true
+        return shouldRelease()
+    }
+
+    private fun shouldRelease(): Boolean {
+        if (!closed || inFlight > 0 || released) return false
+        released = true
+        return true
+    }
+}
+
 class CardOcr {
     private val latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private val japanese by lazy {
@@ -69,18 +112,20 @@ class CardOcr {
         enhanceScale: Float = 2.5f,
     ): String {
         val input = if (enhance) enhanceForOcr(bitmap, enhanceScale) else bitmap
+        // The enhanced copy is ours: free it once ML Kit is done with it, even on cancel.
+        val lease = if (input !== bitmap) OcrBitmapLease { input.recycle() } else null
         return try {
             if (!cjk) {
-                recognizeOne(latin, input)
+                recognizeOne(latin, input, lease)
             } else {
-                val latinText = recognizeOne(latin, input)
+                val latinText = recognizeOne(latin, input, lease)
                 if (CjkSkip.latinCoversTitleSetAndNumber(latinText)) {
                     ScanDebug.d("ocr: cjk skipped (latin title+set+number)")
                     latinText
                 } else {
                     val extras = coroutineScope {
                         listOf(japanese, chinese).map { client ->
-                            async { runCatching { recognizeOne(client, input) }.getOrDefault("") }
+                            async { runCatching { recognizeOne(client, input, lease) }.getOrDefault("") }
                         }.awaitAll()
                     }
                     (listOf(latinText) + extras)
@@ -90,30 +135,53 @@ class CardOcr {
                 }
             }
         } finally {
-            if (input !== bitmap) input.recycle()
+            lease?.close()
         }
     }
 
-    /** Japanese and Chinese recognizers only (Magic script check). Both run together. */
-    suspend fun recognizeCjk(bitmap: Bitmap): String = coroutineScope {
-        listOf(japanese, chinese).map { client ->
-            async { runCatching { recognizeOne(client, bitmap) }.getOrDefault("") }
-        }.awaitAll()
-            .filter { it.isNotBlank() }
-            .distinct()
-            .joinToString("\n")
+    /**
+     * Japanese and Chinese recognizers only (Magic script check). Both run together.
+     * With [recycleWhenDone] the bitmap is recycled after both ML Kit tasks finish,
+     * also when the caller is cancelled first.
+     */
+    suspend fun recognizeCjk(bitmap: Bitmap, recycleWhenDone: Boolean = false): String {
+        val lease = if (recycleWhenDone) OcrBitmapLease { bitmap.recycle() } else null
+        return try {
+            coroutineScope {
+                listOf(japanese, chinese).map { client ->
+                    async { runCatching { recognizeOne(client, bitmap, lease) }.getOrDefault("") }
+                }.awaitAll()
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                    .joinToString("\n")
+            }
+        } finally {
+            lease?.close()
+        }
     }
 
-    private suspend fun recognizeOne(client: TextRecognizer, bitmap: Bitmap): String =
+    private suspend fun recognizeOne(
+        client: TextRecognizer,
+        bitmap: Bitmap,
+        lease: OcrBitmapLease? = null,
+    ): String =
         suspendCancellableCoroutine { cont ->
             val image = InputImage.fromBitmap(bitmap, 0)
-            client.process(image)
+            lease?.begin()
+            val task = try {
+                client.process(image)
+            } catch (t: Throwable) {
+                lease?.end()
+                throw t
+            }
+            task
                 .addOnSuccessListener { result ->
                     if (cont.isActive) cont.resume(result.text)
                 }
                 .addOnFailureListener { error ->
                     if (cont.isActive) cont.resumeWithException(error)
                 }
+                .addOnCompleteListener { lease?.end() }
         }
 
     /** Upscale + mild contrast for small collector numbers. Default 2.5×; the One Piece corner uses 4×. */

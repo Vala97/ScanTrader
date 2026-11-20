@@ -2594,7 +2594,8 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         app.scanSession.rulesPending = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val script = runCatching { app.ocr.recognizeCjk(source) }.getOrDefault("")
+                // CardOcr recycles [source] once both ML Kit tasks are done, even on cancel.
+                val script = runCatching { app.ocr.recognizeCjk(source, recycleWhenDone = true) }.getOrDefault("")
                 if (app.scanSession.ocrGeneration == gen && script.isNotBlank()) {
                     val existing = app.scanSession.ocrText
                     // Before the bottom block, so it is read as card text.
@@ -2607,7 +2608,6 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 }
                 com.scantrader.app.scan.ScanDebug.d("lang: script pass chars=${script.length}")
             } finally {
-                source.recycle()
                 if (app.scanSession.ocrGeneration == gen) {
                     app.scanSession.rulesPending = false
                 }
