@@ -123,12 +123,40 @@ def released_set_details(details: list[dict], today: str) -> list[dict]:
     return found
 
 
+def parse_card_count(raw) -> int | None:
+    """Upstream card count. A TCGdex object uses total, then official.
+
+    None means the count cannot be compared and the caller should skip
+    that comparison instead of crashing.
+    """
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float) and raw.is_integer():
+        return int(raw)
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text.isdigit() or (text.startswith("-") and text[1:].isdigit()):
+            return int(text)
+        return None
+    if isinstance(raw, dict):
+        for key in ("total", "official"):
+            parsed = parse_card_count(raw.get(key))
+            if parsed is not None:
+                return parsed
+        return None
+    return None
+
+
 def sets_to_refresh(details: list[dict], known_counts: dict[str, int], today: str) -> list[str]:
     """Released sets missing from the catalog, or whose card count changed.
 
     A preview dated after today is ignored, so it cannot become the watermark
-    and it is picked up on the day it releases. `cardCount` is the upstream
-    total; a change means newly revealed cards of a set already published.
+    and it is picked up on the day it releases. `cardCount` may be an int or
+    a TCGdex object (`total`, then `official`). An unreadable count is skipped
+    so it cannot crash the run; a set missing from the catalog is still
+    refreshed. A change means newly revealed cards of a set already published.
     """
     found: list[str] = []
     for item in released_set_details(details, today):
@@ -138,9 +166,10 @@ def sets_to_refresh(details: list[dict], known_counts: dict[str, int], today: st
         if previous is None:
             found.append(set_id)
             continue
-        if raw_count is None:
+        count = parse_card_count(raw_count)
+        if count is None:
             continue
-        if int(raw_count) != int(previous):
+        if count != int(previous):
             found.append(set_id)
     return found
 
@@ -451,6 +480,7 @@ def main() -> int:
     for brief in listing:
         if not isinstance(brief, dict) or not brief.get("id"):
             continue
+        # A dict cardCount is still a present count; do not fetch every set.
         if brief.get("releaseDate") or brief.get("cardCount") is not None:
             details.append(brief)
             continue

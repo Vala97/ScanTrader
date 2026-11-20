@@ -9,6 +9,7 @@ import numpy as np
 from update_pokemon_catalog import (
     catalog_entry,
     choose_latest_set,
+    parse_card_count,
     released_set_details,
     sets_to_refresh,
     filter_new_cards,
@@ -121,6 +122,58 @@ class SetDiffTests(unittest.TestCase):
             write_stcat(short, ids[:1], vectors[:1])
             with self.assertRaises(SystemExit):
                 validate_saved_stcat(short, previous_count=2)
+
+    def test_card_count_parses_int_or_tcgdex_object(self):
+        self.assertEqual(parse_card_count(141), 141)
+        self.assertEqual(parse_card_count("141"), 141)
+        self.assertEqual(
+            parse_card_count({"total": 141, "official": 103}),
+            141,
+        )
+        self.assertEqual(
+            parse_card_count({"official": 182, "holo": 119}),
+            182,
+        )
+        self.assertEqual(
+            parse_card_count({"firstEd": 0, "holo": 119, "normal": 152, "official": 182, "reverse": 165, "total": 244}),
+            244,
+        )
+        self.assertIsNone(parse_card_count(None))
+        self.assertIsNone(parse_card_count({}))
+        self.assertIsNone(parse_card_count({"official": "n/a"}))
+        self.assertIsNone(parse_card_count(["141"]))
+        self.assertIsNone(parse_card_count("cards"))
+
+    def test_sets_to_refresh_accepts_tcgdex_card_count_objects(self):
+        details = [
+            {"id": "me06", "name": "Delta Reign", "releaseDate": "2026-11-06", "cardCount": {"total": 141, "official": 103}},
+            {"id": "sv10", "name": "Destined Rivals", "releaseDate": "2025-05-30", "cardCount": {"total": 244, "official": 182}},
+            {"id": "svp", "name": "SVP Black Star Promos", "releaseDate": "2023-03-31", "cardCount": {"official": 225}},
+            {"id": "weird", "name": "Broken", "releaseDate": "2025-01-01", "cardCount": {"holo": 10}},
+            {"id": "nau", "name": "Nauctis", "releaseDate": "2027-02-01", "cardCount": {"total": 24}},
+        ]
+        known = {"me06": 141, "sv10": 180, "svp": 225, "weird": 10}
+        # me06 matches total; sv10 total changed; svp official-only matches;
+        # weird is unreadable so the comparison is skipped; nau is a preview.
+        self.assertEqual(sets_to_refresh(details, known, "2026-11-20"), ["sv10"])
+        # A set missing from the catalog is still refreshed, even with a dict count.
+        self.assertEqual(
+            sets_to_refresh(details, {"sv10": 244, "svp": 225, "weird": 10}, "2026-11-20"),
+            ["me06"],
+        )
+        # Unreadable or missing counts do not crash and do not refresh a known set.
+        self.assertEqual(
+            sets_to_refresh(
+                [
+                    {"id": "sv10", "releaseDate": "2025-05-30", "cardCount": None},
+                    {"id": "svp", "releaseDate": "2023-03-31"},
+                    {"id": "bad", "releaseDate": "2025-01-01", "cardCount": {"holo": 1}},
+                ],
+                {"sv10": 180, "svp": 225, "bad": 1},
+                "2026-11-20",
+            ),
+            [],
+        )
 
 
 if __name__ == "__main__":
