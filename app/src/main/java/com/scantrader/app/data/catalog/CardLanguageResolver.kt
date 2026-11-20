@@ -1,5 +1,6 @@
 package com.scantrader.app.data.catalog
 
+import com.scantrader.app.data.catalog.language.LanguageStrategies
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
@@ -39,14 +40,13 @@ class CardLanguageResolver(
         ocrText: String? = null,
         collectorLang: String? = null,
     ): CardLanguageDetector.Detection {
-        val pokemon = card.game == Game.POKEMON
         val local = localNames(card)
-        return CardLanguageDetector.explain(
+        return CardLanguageDetector.explainFor(
+            card.game,
             ocrName,
             local.first,
             local.second,
             ocrText,
-            pokemon,
             collectorLang,
         )
     }
@@ -59,6 +59,7 @@ class CardLanguageResolver(
     ): CardLanguageDetector.Detection {
         val fromLocal = explainLocal(card, ocrName, ocrText, collectorLang)
         if (fromLocal.language != null) return fromLocal
+        if (!LanguageStrategies.forGame(card.game).usesPrintedNameLookup) return fromLocal
         return explainPrinted(card, ocrName, ocrText, collectorLang)
     }
 
@@ -73,14 +74,17 @@ class CardLanguageResolver(
         ocrText: String? = null,
         collectorLang: String? = null,
     ): CardLanguageDetector.Detection {
-        val pokemon = card.game == Game.POKEMON
+        // Magic never lets the name decide, so the per-language download is skipped.
+        if (!LanguageStrategies.forGame(card.game).usesPrintedNameLookup) {
+            return explainLocal(card, ocrName, ocrText, collectorLang)
+        }
         val (english, printed) = when (card.game) {
             Game.MTG -> mtgNames(card)
             Game.POKEMON -> pokemonNames(card)
             Game.RIFTBOUND, Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA, Game.OTHER ->
                 card.name to emptyMap()
         }
-        return CardLanguageDetector.explain(ocrName, english, printed, ocrText, pokemon, collectorLang)
+        return CardLanguageDetector.explainFor(card.game, ocrName, english, printed, ocrText, collectorLang)
     }
 
     private fun localNames(card: IdentifiedCard): Pair<String?, Map<CardLanguage, String>> {

@@ -58,9 +58,17 @@ class CardLanguageResolverTest {
             catalogLang = "en",
             priceEur = "0.40",
         )
-        val detection = resolver.explain(card, "Druido del Suolo Avvizzito", null)
+        // Magic: the title alone never decides, and no printed-name download is made.
+        val nameOnly = resolver.explain(card, "Druido del Suolo Avvizzito", null)
+        assertEquals(null, nameOnly.language)
+        assertEquals(0, calls)
+        val detection = resolver.explain(
+            card,
+            "Druido del Suolo Avvizzito",
+            "Druido del Suolo Avvizzito\nCreatura — Elfo Druido\nTAPpa: Aggiungi un mana verde.",
+        )
         assertEquals(CardLanguage.ITALIAN, detection.language)
-        assertTrue(detection.evidence.contains("not-en"))
+        assertTrue(detection.evidence.contains("text=it"))
         assertTrue(detection.logLine().startsWith("lang: Italiano evidence="))
         assertEquals(0, calls)
     }

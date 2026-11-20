@@ -62,7 +62,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.scantrader.app.data.catalog.CardLanguageDetector
 import com.scantrader.app.scan.ScanDebug
 import com.scantrader.app.data.catalog.ListingAverage
 import com.scantrader.app.data.model.CardCondition
@@ -207,6 +206,8 @@ fun ConfirmScreen(
         }
     }
     val languageDetectUi = remember { mutableStateOf<LanguageDetectUi?>(null) }
+    // Magic card whose language the scan could not read: never auto-saved.
+    val languageBlockedKey = remember { mutableStateOf<String?>(null) }
     val shownKey = selected?.identityKey()
     LaunchedEffect(selected?.identityKey(), defaults.detectCardLanguage) {
         if (languageTouched || !defaults.detectCardLanguage) {
@@ -217,17 +218,21 @@ fun ConfirmScreen(
         val locked = viewModel.autoMatchCardKey
         if (locked != null && card.identityKey() != locked) return@LaunchedEffect
         languageDetectUi.value = LanguageDetectUi(LanguageDetectStatus.Analyzing)
-        val detected = viewModel.detectCardLanguage(card)
+        val verdict = viewModel.detectCardLanguage(card)
         autoSaveCancelledState.value = AutoSaveControl.onProgrammaticUpdate(
             autoSaveCancelledState.value,
             AutoSaveControl.Program.DETECTED_LANGUAGE,
         )
-        language = CardLanguageDetector.choose(
-            detectEnabled = true,
-            detected = detected,
-            lastChosen = viewModel.sessionLanguage ?: defaults.language,
-        )
-        languageDetectUi.value = LanguageDetectUi.fromDetection(detected)
+        language = verdict.language
+        languageDetectUi.value = LanguageDetectUi.fromVerdict(verdict)
+        if (AutoSaveCommit.languageBlocksAutoSave(card.game, detectEnabled = true, recognized = verdict.recognized)) {
+            languageBlockedKey.value = card.identityKey()
+            if (!autoSaveCancelledState.value) ScanDebug.d("autosave: blocked (lingua non riconosciuta)")
+            autoSaveCancelledState.value = true
+            secondsLeft = 0
+        } else if (languageBlockedKey.value == card.identityKey()) {
+            languageBlockedKey.value = null
+        }
     }
     val liveLanguage by viewModel.liveLanguage.collectAsStateWithLifecycle()
     LaunchedEffect(liveLanguage, shownKey) {
@@ -316,6 +321,25 @@ fun ConfirmScreen(
             }
             if (autoSaveCancelledState.value) return@launch
             secondsLeftState.intValue = 0
+            // Magic: the language must be read off the card before an auto-save.
+            if (card.game == com.scantrader.app.data.model.Game.MTG && defaults.detectCardLanguage) {
+                var settle = 0L
+                while (languageDetectUi.value?.status == LanguageDetectStatus.Analyzing &&
+                    settle < AutoSaveSchedule.LANGUAGE_WAIT_CAP_MS
+                ) {
+                    delay(50)
+                    settle += 50
+                }
+                val status = languageDetectUi.value?.status
+                if (languageBlockedKey.value == key ||
+                    status == LanguageDetectStatus.Analyzing ||
+                    status == LanguageDetectStatus.Unrecognized
+                ) {
+                    ScanDebug.d("autosave: blocked (lingua non riconosciuta)")
+                    autoSaveCancelledState.value = true
+                    return@launch
+                }
+            }
             val target = collectionIdState.value
             val shown = selectedState.value?.identityKey()
             val pickedOther = userPickedState.value && shown != null && shown != key
