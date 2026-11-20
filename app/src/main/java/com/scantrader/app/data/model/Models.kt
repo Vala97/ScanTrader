@@ -162,6 +162,11 @@ data class IdentifiedCard(
     val ocrScore: Float? = null,
     /** On-device art similarity vs scan crop in 0..1. */
     val visualScore: Float? = null,
+    /**
+     * Neural gallery (Milo) similarity when this card came from the image search,
+     * not from the art fingerprint ranker. Magic: gallery + collector decide the card.
+     */
+    val galleryScore: Float? = null,
     /** Fused confidence used for ranking and auto-scan. */
     val matchConfidence: Float? = null,
     /**
