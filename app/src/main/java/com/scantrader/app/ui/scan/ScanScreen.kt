@@ -350,11 +350,11 @@ fun ScanScreen(
         viewModel.armZoomRestore()
         controller.cameraSelector = CameraDevices.selectorFor(cameraId)
         controller.bindToLifecycle(lifecycleOwner)
-        com.scantrader.app.scan.PortraitTargetRotation.lock(controller)
+        com.scantrader.app.scan.SensorPortrait.refresh(controller)
         cameraBound = true
         boundCameraId = cameraId
         controller.initializationFuture.addListener({
-            com.scantrader.app.scan.PortraitTargetRotation.lock(controller)
+            com.scantrader.app.scan.SensorPortrait.refresh(controller)
             // Control is up. Apply only if zoomState was already observed;
             // otherwise the zoom observer applies on the first real sample.
             val state = controller.cameraInfo?.zoomState?.value
@@ -837,6 +837,7 @@ fun ScanScreen(
                     ScanDebug.d("manual: tap")
                     panelExpanded = false
                     if (fromAutoButton) controller.clearImageAnalysisAnalyzer()
+                    val sensorPortrait = com.scantrader.app.scan.SensorPortrait.refresh(controller)
                     val photo = File(context.cacheDir, "scan-capture.jpg")
                     val options = ImageCapture.OutputFileOptions.Builder(photo).build()
                     ScanDebug.d("manual: capture start")
@@ -845,9 +846,17 @@ fun ScanScreen(
                         cameraExecutor,
                         object : ImageCapture.OnImageSavedCallback {
                             override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                val bitmap = com.scantrader.app.scan.CameraBitmaps.fromJpegFile(
+                                val still = com.scantrader.app.scan.CameraBitmaps.fromJpegFile(
                                     photo.absolutePath,
+                                    sensorPortrait,
                                 )
+                                still?.let {
+                                    ScanDebug.d(
+                                        "manual: rotation exif=${it.exifDegrees} sensor=${sensorPortrait ?: "unknown"} " +
+                                            "applied=${it.rotationDegrees} bmp=${it.bitmap.width}x${it.bitmap.height}",
+                                    )
+                                }
+                                val bitmap = still?.bitmap
                                 mainExecutor.execute {
                                     if (bitmap != null) {
                                         viewModel.processBitmap(bitmap) {
@@ -1317,6 +1326,8 @@ private fun attachAutoAnalyzer(
         return
     }
     val firstFrame = AtomicBoolean(false)
+    // Main thread here: read the sensor mounting once for the analyzer thread.
+    com.scantrader.app.scan.SensorPortrait.refresh(controller)
     controller.setImageAnalysisAnalyzer(executor) { proxy ->
         try {
             if (firstFrame.compareAndSet(false, true)) {
@@ -1324,11 +1335,13 @@ private fun attachAutoAnalyzer(
             }
             val blocked = !viewModel.canAcceptAutoFrame()
             if (blocked && !viewModel.isAutoAnalysisBusy()) return@setImageAnalysisAnalyzer
-            val upright = com.scantrader.app.scan.CameraBitmaps.fromImageProxy(proxy)
+            val sensorPortrait = com.scantrader.app.scan.SensorPortrait.degrees
+            val upright = com.scantrader.app.scan.CameraBitmaps.fromImageProxy(proxy, sensorPortrait)
             if (blocked) viewModel.noteBusyFrame(upright.bitmap)
             if (!viewModel.canAcceptAutoFrame()) return@setImageAnalysisAnalyzer
             ScanDebug.d(
-                "autoFrame rot=${upright.reportedRotation} applied=${upright.rotationDegrees} " +
+                "autoFrame rot=${upright.reportedRotation} sensor=${sensorPortrait ?: "unknown"} " +
+                    "applied=${upright.rotationDegrees} " +
                     "src=${upright.sourceSize.width}x${upright.sourceSize.height} " +
                     "bmp=${upright.bitmap.width}x${upright.bitmap.height} " +
                     "cropApplied=${upright.cropApplied}",
