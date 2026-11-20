@@ -1347,11 +1347,17 @@ object OcrParser {
     private fun isSetAndLangLine(line: String): Boolean {
         val flat = line.trim().replace(Regex("""[•·●*+.,/|\\-–—]"""), " ")
             .replace(Regex("""\s+"""), " ")
-        if (Regex("""(?i)^[A-Z0-9]{2,5}\s+(?:EN|IT|DE|FR|ES|JP|JA|PH|KO)$""").matches(flat)) {
+        // Printed collector codes are upper case. `Glade` (GLA+DE), `Happen`
+        // (HAPP+EN) or `Tear It` are titles, not a set and a language.
+        if (Regex("""^[A-Z0-9]{2,5}\s+(?:EN|IT|DE|FR|ES|JP|JA|PH|KO)$""").matches(flat)) {
             return true
         }
-        if (!mtgSetNearLang.containsMatchIn(line)) return false
-        val rest = mtgSetNearLang.replace(line, " ")
+        val codes = mtgSetNearLang.findAll(line)
+            .filter { match -> match.value.filter { it.isLetter() }.all { it.isUpperCase() } }
+            .toList()
+        if (codes.isEmpty()) return false
+        var rest = line
+        for (code in codes) rest = rest.replace(code.value, " ")
         return !Regex("""[A-Za-z]{4,}""").containsMatchIn(rest)
     }
 
@@ -1420,6 +1426,7 @@ object OcrParser {
                 collectorFraction.find(line) == null &&
                 line.count { it.isLetter() } >= 3 &&
                 !isSetAndLangLine(line) &&
+                !CardOrientation.isCreditLine(line) &&
                 !CardOrientation.implausibleTitle(cleaned)
         }
         return cleanMtgNameGuess(candidates.firstOrNull()?.trim())

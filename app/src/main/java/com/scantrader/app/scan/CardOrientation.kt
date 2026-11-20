@@ -14,14 +14,44 @@ object CardOrientation {
         "land", "basic",
     )
 
-    /** Short lowercase fragment (`nchar`) or a rules word (`life`, `target`). */
+    private val creditPatterns = listOf(
+        // ™ / © / ® and the OCR spellings of `TM & ©` (`M&C`, `H&C`, `w&C`, `TM&C`).
+        Regex("""[™©®]"""),
+        Regex("""(?i)(?:^|\s)[a-z]{0,2}\s*&\s*[c©]\b"""),
+        // `Wizards of the Coast`, also mangled (`Wnds ofth Co`, `Wids od the Coas`, `Wirards of the Coat`).
+        Regex("""(?i)\bw[a-z]{1,6}\s+o[fd]\s*th?e?\s+c[o0]a?s?t?\b"""),
+        Regex("""(?i)\bcoast\b"""),
+        // Artist credit.
+        Regex("""(?i)\billus\b"""),
+        // A copyright year (not a collector fraction `2021/281`).
+        Regex("""(?<![\d/])(?:19|20)\d{2}(?![\d/])"""),
+        // Collector number with rarity or total (`214/281 U`, `214 U`).
+        Regex("""\b\d{1,4}\s*/\s*\d{1,4}\b"""),
+        Regex("""^\s*\d{1,4}\s*[CURMSLTP]?\s*$"""),
+        // Set + language from the collector line (`AFR • EN`, `AFR EN`), upper case only.
+        Regex("""\b[A-Z0-9]{3,5}(?:\s+|\s*[•·●*+.\-]\s*)(?:EN|IT|ES|SP|FR|DE|PT|JP|JA|CS|CT|ZHS|ZHT|KO|RU|PH)\b"""),
+    )
+
+    /**
+     * Copyright, artist, year, collector or set+language line. These sit at
+     * the bottom of a Magic card and are never its title (`M&C 2021 Wzards of the Coast`).
+     */
+    fun isCreditLine(line: String?): Boolean {
+        val text = line?.trim()?.takeIf { it.isNotBlank() } ?: return false
+        return creditPatterns.any { it.containsMatchIn(text) }
+    }
+
+    /** Short lowercase fragment (`nchar`), a rules word (`life`, `target`), or a credit line. */
     fun implausibleTitle(name: String?): Boolean {
         val cleaned = name?.trim()?.takeIf { it.isNotBlank() } ?: return true
+        if (isCreditLine(cleaned)) return true
         val words = cleaned.lowercase().split(Regex("""[^a-z]+""")).filter { it.length >= 3 }
         if (words.isEmpty() || words.all { it in rulesWords }) return true
         val letters = cleaned.filter { it.isLetter() }
         if (letters.length < 4) return true
         if (words.size == 1 && letters.length <= 12 && letters.none { it.isUpperCase() }) return true
+        // A title starts with a capital. A single word like `fEHR` is an OCR crumb.
+        if (words.size == 1 && letters.first().isLowerCase()) return true
         return false
     }
 
