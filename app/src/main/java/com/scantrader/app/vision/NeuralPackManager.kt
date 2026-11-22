@@ -27,6 +27,8 @@ import okhttp3.Request
 class NeuralPackManager(
     private val context: Context,
     baseHttp: OkHttpClient,
+    /** False only in JVM tests: no ONNX session is opened, galleries still load. */
+    private val openSession: Boolean = true,
 ) {
     private val http: OkHttpClient = baseHttp.newBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -39,7 +41,13 @@ class NeuralPackManager(
     private val mtgCatalogFile = File(root, "mtg.stcat")
     private val pokemonCatalogFile = File(root, "pokemon.stcat")
     private val pokemonCountFile = File(root, "pokemon.count")
+    private val lastGameFile = File(root, "gallery-game.txt")
     private val mutex = Mutex()
+
+    /** Game whose gallery may stay in memory. Every other gallery is dropped. */
+    @Volatile
+    var activeGame: Game? = null
+        private set
 
     private val _mtgState = MutableStateFlow(inspectGame(Game.MTG))
     val mtgState: StateFlow<NeuralPackState> = _mtgState.asStateFlow()
@@ -112,27 +120,69 @@ class NeuralPackManager(
         }
     }
 
+    /**
+     * Loads the gallery for [game] and drops every other one. With null it
+     * loads the game in use, or the last one saved (Magic by default).
+     */
     suspend fun ensureLoaded(game: Game? = null): Boolean = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            val targets = when (game) {
-                Game.MTG -> listOf(Game.MTG)
-                Game.POKEMON -> listOf(Game.POKEMON)
-                Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> return@withLock loadCtLocked(game)
-                Game.RIFTBOUND, Game.OTHER -> emptyList()
-                null -> listOf(Game.MTG, Game.POKEMON)
+        mutex.withLock { loadOnlyLocked(game ?: activeGame ?: lastGame()) }
+    }
+
+    /** The user picked [game]: keep only its gallery in memory. */
+    suspend fun useOnly(game: Game): Boolean = ensureLoaded(game)
+
+    /**
+     * Gallery for a scan. Waits at most [waitMs] for another load to finish,
+     * then gives up so the scan goes on without the image match. The caller
+     * keeps the returned reference even if the game changes meanwhile.
+     */
+    suspend fun catalogWithin(game: Game, waitMs: Long): EmbeddingCatalog? =
+        withContext(Dispatchers.IO) {
+            GalleryResidency.lockedWithin(mutex, waitMs) {
+                if (loadOnlyLocked(game)) catalogOrNull(game) else null
             }
-            var any = false
-            for (g in targets) {
-                if (loadGameLocked(g)) any = true
+        }
+
+    /** Last game saved, Magic when none. Read by the startup warm-up. */
+    fun lastGame(): Game =
+        GalleryResidency.warmGame(runCatching { lastGameFile.readText() }.getOrNull())
+
+    private fun loadOnlyLocked(game: Game): Boolean = when (game) {
+        Game.MTG, Game.POKEMON -> loadGameLocked(game)
+        Game.ONE_PIECE, Game.DRAGON_BALL, Game.YUGIOH, Game.UNION_ARENA -> loadCtLocked(game)
+        Game.RIFTBOUND, Game.OTHER -> {
+            keepOnlyLocked(game)
+            false
+        }
+    }
+
+    private fun loadedGames(): Set<Game> = buildSet {
+        if (mtgCatalog != null) add(Game.MTG)
+        if (pokemonCatalog != null) add(Game.POKEMON)
+        addAll(ctCatalogs.keys)
+    }
+
+    /** Drops every gallery but [game]'s before it is loaded, and remembers it. */
+    private fun keepOnlyLocked(game: Game) {
+        for (other in GalleryResidency.toDrop(game, loadedGames())) {
+            when (other) {
+                Game.MTG -> forgetLoaded(magic = true, pokemon = false)
+                Game.POKEMON -> forgetLoaded(magic = false, pokemon = true)
+                else -> ctCatalogs.remove(other)
             }
-            any
+            com.scantrader.app.scan.ScanDebug.d("neural: dropped game=$other keep=$game")
+        }
+        if (activeGame != game) {
+            activeGame = game
+            runCatching { lastGameFile.writeText(game.name) }
         }
     }
 
     private val providerFile = File(root, "milo-provider.txt")
 
     /** Reopens the session when [MiloEmbedder.forceCpuOnly] changed. */
-    private fun openEmbedder(): MiloEmbedder {
+    private fun openEmbedder(): MiloEmbedder? {
+        if (!openSession) return null
         val current = embedder
         if (current != null && current.matchesPreference()) return current
         if (current != null) {
@@ -191,6 +241,7 @@ class NeuralPackManager(
 
     private fun loadGameLocked(game: Game): Boolean {
         if (game == Game.POKEMON) return loadPokemonLocked()
+        keepOnlyLocked(game)
         val catalogFile = catalogFile(game)
         val stateFlow = stateFlow(game)
         if (!modelFile.exists() || !catalogFile.exists()) {
@@ -232,6 +283,7 @@ class NeuralPackManager(
      * is skipped so the others still load.
      */
     private fun loadPokemonLocked(): Boolean {
+        keepOnlyLocked(Game.POKEMON)
         val files = pokemonCatalogFiles()
         if (files.isEmpty()) {
             pokemonCatalog = null
@@ -286,7 +338,13 @@ class NeuralPackManager(
                     downloadTo(MODEL_URL, modelFile, MODEL_SHA256) { }
                 }
                 pokemonCatalog = null
-                loadPokemonLocked()
+                if (GalleryResidency.reloadAfterChange(Game.POKEMON, activeGame)) {
+                    loadPokemonLocked()
+                } else {
+                    // Another game is in use: Pokémon loads when it is chosen.
+                    _pokemonState.value = inspectGame(Game.POKEMON)
+                    true
+                }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (t: Throwable) {
@@ -299,7 +357,12 @@ class NeuralPackManager(
     suspend fun reloadPokemonCatalog(): Boolean = withContext(Dispatchers.IO) {
         mutex.withLock {
             pokemonCatalog = null
-            loadPokemonLocked()
+            if (GalleryResidency.reloadAfterChange(Game.POKEMON, activeGame)) {
+                loadPokemonLocked()
+            } else {
+                _pokemonState.value = inspectGame(Game.POKEMON)
+                true
+            }
         }
     }
 
@@ -367,6 +430,9 @@ class NeuralPackManager(
 
                 _mtgState.value = NeuralPackState.Downloading(0.90f, "Conversione catalogo…")
                 onProgress("Conversione catalogo…")
+                // Only the new Magic gallery stays in memory.
+                keepOnlyLocked(Game.MTG)
+                mtgCatalog = null
                 val converted = if (extension == ".npz") {
                     EmbeddingCatalog.fromNpz(part)
                 } else {
@@ -554,6 +620,7 @@ class NeuralPackManager(
     private val ctChecked = java.util.Collections.synchronizedSet(mutableSetOf<Game>())
 
     private fun loadCtLocked(game: Game): Boolean {
+        keepOnlyLocked(game)
         ctCatalogs[game]?.let { if (embedder?.matchesPreference() == true) return true }
         val file = ctFile(game)
         if (!modelFile.exists() || !file.exists()) return false

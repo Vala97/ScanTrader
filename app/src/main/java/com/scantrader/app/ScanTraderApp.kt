@@ -217,7 +217,7 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
             scanSession.lensKey = defaults.lensKey
             scanSession.language = defaults.language
             scanSession.condition = defaults.condition
-            // Warm neural pack if already downloaded (no network).
+            // Warm only the last game's gallery if already downloaded (no network).
             neuralPack.ensureLoaded()
         }
     }
