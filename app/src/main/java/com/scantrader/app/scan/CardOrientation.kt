@@ -20,13 +20,14 @@ object CardOrientation {
         Regex("""(?i)(?:^|\s)[a-z]{0,2}\s*&\s*[c©]\b"""),
         // `Wizards of the Coast`, also mangled (`Wnds ofth Co`, `Wids od the Coas`, `Wirards of the Coat`).
         Regex("""(?i)\bw[a-z]{1,6}\s+o[fd]\s*th?e?\s+c[o0]a?s?t?\b"""),
-        Regex("""(?i)\bcoast\b"""),
+        // `of the Coast` only: a land like `Stormcarved Coast` is a real title.
+        Regex("""(?i)\bo[fd]\s*th?e?\s+c[o0]ast\b"""),
         // Artist credit.
         Regex("""(?i)\billus\b"""),
         // A copyright year (not a collector fraction `2021/281`).
         Regex("""(?<![\d/])(?:19|20)\d{2}(?![\d/])"""),
-        // Collector number with rarity or total (`214/281 U`, `214 U`).
-        Regex("""\b\d{1,4}\s*/\s*\d{1,4}\b"""),
+        // Collector number with rarity or total (`214/281 U`, `214/281U`, `214 U`).
+        Regex("""(?<!\d)\d{1,4}\s*/\s*\d{1,4}(?!\d)"""),
         Regex("""^\s*\d{1,4}\s*[CURMSLTP]?\s*$"""),
         // Set + language from the collector line (`AFR • EN`, `AFR EN`), upper case only.
         Regex("""\b[A-Z0-9]{3,5}(?:\s+|\s*[•·●*+.\-]\s*)(?:EN|IT|ES|SP|FR|DE|PT|JP|JA|CS|CT|ZHS|ZHT|KO|RU|PH)\b"""),
