@@ -198,7 +198,9 @@ class NeuralPackManager(
             return false
         }
         val existing = catalogOrNull(game)
-        if (embedder?.matchesPreference() == true && existing != null) {
+        // Same file already in memory: only (re)open the embedder. Reloading it
+        // held two catalog copies on the heap until the old one was dropped.
+        if (existing != null && runCatching { openEmbedder() }.isSuccess) {
             stateFlow.value = NeuralPackState.Ready(existing.size)
             return true
         }
@@ -241,7 +243,7 @@ class NeuralPackManager(
             return false
         }
         val existing = pokemonCatalog
-        if (embedder?.matchesPreference() == true && existing != null) {
+        if (existing != null && runCatching { openEmbedder() }.isSuccess) {
             _pokemonState.value = NeuralPackState.Ready(existing.size)
             return true
         }

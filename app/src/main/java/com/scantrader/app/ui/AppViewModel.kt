@@ -1198,7 +1198,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 if (t is CancellationException) throw t
                 com.scantrader.app.scan.ScanDebug.d("manual: result null")
                 noteManualConfirm()
-                app.scanSession.errorMessage = t.message ?: "Errore durante lo scan"
+                app.scanSession.errorMessage = com.scantrader.app.scan.ScanErrors.message(t)
                 onDone(true)
             } finally {
                 processing.value = false
@@ -1294,6 +1294,14 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             val shot = com.scantrader.app.scan.ShotClock()
             var earlyRank: Deferred<List<Pair<String, Float>>>? = null
             var galleryHydrate: kotlinx.coroutines.Job? = null
+            // Manual stills: photo, crops and the 180° copy are freed when the scan ends.
+            val lease = if (autoMode) {
+                null
+            } else {
+                com.scantrader.app.scan.ScanBitmapLease<android.graphics.Bitmap> {
+                    if (!it.isRecycled) it.recycle()
+                }
+            }
             try {
             com.scantrader.app.scan.ScanDebug.d(
                 "analyze start game=${game.value} requireMatch=$requireMatch " +
@@ -1312,6 +1320,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 viewWidth = app.scanSession.guideViewWidth,
                 viewHeight = app.scanSession.guideViewHeight,
             )
+            lease?.track(bitmap, oriented, croppedFull)
             if (autoMode && pauseSamePrinting(croppedFull)) {
                 return@withContext false
             }
@@ -1321,13 +1330,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             if (app.neuralPack.isInstalled(game.value)) {
                 com.scantrader.app.scan.ScanDebug.d("gallery started with ocr")
                 earlyRank = viewModelScope.async(Dispatchers.Default) {
-                    app.galleryMatcher.rankFromGuide(
-                        game = game.value,
-                        source = oriented,
-                        viewWidth = app.scanSession.guideViewWidth,
-                        viewHeight = app.scanSession.guideViewHeight,
-                        shot = shot,
-                    )
+                    rankGuideOrEmpty(oriented, shot)
                 }
             }
             val isMtg = game.value == Game.MTG
@@ -1356,6 +1359,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 return bottom to title
             }
             var (cropped, titleCard) = scaled(croppedFull)
+            lease?.track(cropped, titleCard)
             com.scantrader.app.scan.ScanDebug.d(
                 "crop ${cropped.width}x${cropped.height} title ${titleCard.width}x${titleCard.height} " +
                     "from ${oriented.width}x${oriented.height}" +
@@ -1490,6 +1494,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                             recycleSource = false,
                         )
                         val (flippedBottom, flippedTitle) = scaled(flippedFull)
+                        lease?.track(flippedFull, flippedBottom, flippedTitle)
                         val newTop = runCatching {
                             app.ocr.recognize(
                                 com.scantrader.app.scan.CardFrameGeometry.topNameStrip(
@@ -1945,13 +1950,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
 
             // The embed started with OCR. This only hydrates the ids it already ranked.
             suspend fun embedGallery(): List<IdentifiedCard> {
-                val ranked = earlyRank?.await() ?: app.galleryMatcher.rankFromGuide(
-                    game = game.value,
-                    source = oriented,
-                    viewWidth = app.scanSession.guideViewWidth,
-                    viewHeight = app.scanSession.guideViewHeight,
-                    shot = shot,
-                )
+                val ranked = earlyRank?.await() ?: rankGuideOrEmpty(oriented, shot)
                 if (ranked.isEmpty()) {
                     if (app.scanSession.guideViewWidth <= 1f || app.scanSession.guideViewHeight <= 1f) {
                         com.scantrader.app.scan.ScanDebug.d("gallery skipped (no guide crop)")
@@ -2382,6 +2381,20 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             } finally {
                 earlyRank?.let { if (it.isActive) it.cancel() }
                 galleryHydrate?.cancel()
+                if (lease != null) {
+                    if (!isActive) {
+                        // Cancelled: ML Kit may still read a crop. The GC frees them.
+                        lease.abandon()
+                    } else {
+                        val rank = earlyRank
+                        val hydrate = galleryHydrate
+                        viewModelScope.launch {
+                            rank?.join()
+                            hydrate?.join()
+                            lease.releaseAll()
+                        }
+                    }
+                }
                 com.scantrader.app.scan.ScanDebug.shot(
                     embedMs = shot.embedMs,
                     rotationSkipped = shot.rotationSkipped,
@@ -2545,6 +2558,26 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         cancelSpeculativeJob()
         lastLuma = null
         lastLumaAtMs = 0L
+    }
+
+    /**
+     * Gallery rank of the guide quad. Out of memory here only drops the image
+     * match: OCR and the catalog still give candidates.
+     */
+    private suspend fun rankGuideOrEmpty(
+        oriented: android.graphics.Bitmap,
+        shot: com.scantrader.app.scan.ShotClock,
+    ): List<Pair<String, Float>> = com.scantrader.app.scan.ScanErrors.orOnOutOfMemory(
+        fallback = emptyList(),
+        onOom = { com.scantrader.app.scan.ScanDebug.w("gallery out of memory, image match skipped", it) },
+    ) {
+        app.galleryMatcher.rankFromGuide(
+            game = game.value,
+            source = oriented,
+            viewWidth = app.scanSession.guideViewWidth,
+            viewHeight = app.scanSession.guideViewHeight,
+            shot = shot,
+        )
     }
 
     /** Attack / rules text for language keywords. Runs after the match is already shown. */

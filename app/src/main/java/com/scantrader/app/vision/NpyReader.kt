@@ -18,11 +18,7 @@ object NpyReader {
         val rows = header.shape[0]
         val cols = header.shape[1]
         val count = rows * cols
-        val bytes = input.readNBytesExact(count * 4)
-        val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
-        val data = FloatArray(count)
-        buf.get(data)
-        return FloatArray2D(rows, cols, data)
+        return FloatArray2D(rows, cols, readFloats(input, count))
     }
 
     fun readUnicode1D(input: InputStream): Array<String> {
@@ -34,11 +30,10 @@ object NpyReader {
         val count = header.shape[0]
         val bytesPerChar = 4
         val rowBytes = width * bytesPerChar
-        val raw = input.readNBytesExact(count * rowBytes)
         val charset = Charset.forName("UTF-32LE")
-        return Array(count) { i ->
-            val offset = i * rowBytes
-            val slice = raw.copyOfRange(offset, offset + rowBytes)
+        val slice = ByteArray(rowBytes)
+        return Array(count) {
+            input.readFully(slice)
             // Trim trailing NUL code points.
             var end = slice.size
             while (end >= 4 &&
@@ -50,6 +45,34 @@ object NpyReader {
                 end -= 4
             }
             String(slice, 0, end, charset)
+        }
+    }
+
+    /**
+     * Little-endian float32s read in 64 KB chunks straight into the result, so a
+     * 60 MB catalog does not also need a 60 MB byte copy on the heap.
+     */
+    internal fun readFloats(input: InputStream, count: Int, chunkBytes: Int = 64 * 1024): FloatArray {
+        val data = FloatArray(count)
+        val chunk = ByteArray((chunkBytes / 4).coerceAtLeast(1) * 4)
+        val view = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN)
+        var done = 0
+        while (done < count) {
+            val n = minOf(count - done, chunk.size / 4)
+            input.readFully(chunk, n * 4)
+            view.clear()
+            view.asFloatBuffer().get(data, done, n)
+            done += n
+        }
+        return data
+    }
+
+    private fun InputStream.readFully(buffer: ByteArray, length: Int = buffer.size) {
+        var off = 0
+        while (off < length) {
+            val read = read(buffer, off, length - off)
+            if (read < 0) error("Unexpected EOF ($off/$length)")
+            off += read
         }
     }
 

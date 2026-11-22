@@ -622,6 +622,28 @@ class LocalSetCatalogTest {
         override suspend fun card(lang: String, id: String): TcgdexCard = error("unused")
     }
 
+    @Test
+    fun onlyTheLastEightSetsStayInMemoryAndTheRestReloadFromDisk() {
+        val dir = Files.createTempDirectory("set-catalog-lru").toFile()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        try {
+            val local = LocalSetCatalog(dir, errorMtg(), errorPokemon(), scope)
+            val codes = ('a'..'l').map { "tz$it" }
+            for (code in codes) {
+                local.installMtg(code, listOf(shock("1").copy(id = "$code-1", set = code)))
+            }
+            assertEquals(LocalSetCatalog.MEMORY_SETS, local.mtgSetsInMemory)
+            // Evicted sets are still on disk and come back.
+            for (code in codes) {
+                assertEquals("$code-1", local.mtgSnapshot(code)?.cards?.single()?.id)
+            }
+            assertTrue(local.mtgSetsInMemory <= LocalSetCatalog.MEMORY_SETS)
+        } finally {
+            scope.cancel()
+            dir.deleteRecursively()
+        }
+    }
+
     private fun errorMtg(): MtgSetSource = object : MtgSetSource {
         override suspend fun download(setCode: String): DownloadedMtgSet = error("mtg download $setCode")
     }

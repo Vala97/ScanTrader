@@ -72,7 +72,7 @@ object CameraBitmaps {
     }
 
     fun fromJpegFile(path: String): Bitmap? {
-        val bitmap = BitmapFactory.decodeFile(path) ?: return null
+        val bitmap = decodeSampled(path) ?: return null
         val degrees = when (
             ExifInterface(path).getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
@@ -147,5 +147,29 @@ object CameraBitmaps {
             right = maxOf(mapped.left, mapped.right),
             bottom = maxOf(mapped.top, mapped.bottom),
         )
+    }
+
+    /** Long side a manual still is decoded to. OCR caps at 1400, the embedder at 900. */
+    const val STILL_TARGET_LONG_SIDE = 2000
+
+    /**
+     * Power-of-two [BitmapFactory.Options.inSampleSize] that keeps the long side
+     * at least [target]: 4080×3072 decodes at 2040×1536 instead of 12.5 MP.
+     */
+    fun sampleSizeFor(width: Int, height: Int, target: Int = STILL_TARGET_LONG_SIDE): Int {
+        val longest = maxOf(width, height)
+        if (longest <= 0 || target <= 0) return 1
+        var sample = 1
+        while (longest / (sample * 2) >= target) sample *= 2
+        return sample
+    }
+
+    private fun decodeSampled(path: String): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight)
+        }
+        return BitmapFactory.decodeFile(path, options)
     }
 }

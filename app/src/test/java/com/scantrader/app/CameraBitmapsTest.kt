@@ -9,6 +9,21 @@ import org.junit.Test
 
 class CameraBitmapsTest {
     @Test
+    fun manualStillsDecodeAroundTwoThousandPixels() {
+        assertEquals(2, CameraBitmaps.sampleSizeFor(4080, 3072))
+        assertEquals(2, CameraBitmaps.sampleSizeFor(3072, 4080))
+        assertEquals(4, CameraBitmaps.sampleSizeFor(8160, 6144))
+        assertEquals(1, CameraBitmaps.sampleSizeFor(1280, 960))
+        assertEquals(1, CameraBitmaps.sampleSizeFor(3999, 3000))
+        assertEquals(1, CameraBitmaps.sampleSizeFor(0, 0))
+        // Never below the target long side.
+        for (w in listOf(2000, 2500, 4000, 4080, 6000, 8160, 12000)) {
+            val s = CameraBitmaps.sampleSizeFor(w, w * 3 / 4)
+            assertTrue("$w/$s", w / s >= CameraBitmaps.STILL_TARGET_LONG_SIDE)
+        }
+    }
+
+    @Test
     fun mapsCropRectThrough90DegreeRotation() {
         // Buffer 1280x960, crop full frame → after 90° CW becomes 960x1280 space.
         val mapped = CameraBitmaps.mapCropRect(
