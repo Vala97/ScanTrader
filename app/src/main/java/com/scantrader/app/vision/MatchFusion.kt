@@ -561,6 +561,28 @@ object MatchFusion {
             cardSet == set || cardSet.startsWith(set) || set.startsWith(cardSet)
         }
 
+        // Image + collector (and set, when read) decide. The OCR title is a tiebreak
+        // only and never vetoes them: not a name conflict, whatever the strip read.
+        // Rules text in the title strip (`er. If`) means the frame is off and the
+        // collector may come from rules too, so that read does not count as an id.
+        // A copyright line there is only a flipped crop: the collector still counts.
+        val rulesStrip = looksLikeMtgRulesNoise(nameGuess) &&
+            !com.scantrader.app.scan.CardOrientation.isCreditLine(nameGuess)
+        if (namePresent && !nameOk && !rulesStrip && confidence >= 0.58f &&
+            FrameNameGate.galleryAndCollectorAgree(top, parsed)
+        ) {
+            val fromNameSearch = ocr >= 0.85f && ocr < 0.95f
+            return AutoMatchDecision(
+                accepted = true,
+                strict = confidence >= AUTO_CONFIDENCE_MIN,
+                reason = if (fromNameSearch) "scryfallName" else "cn+neural",
+                nameOk = false,
+                nameConflict = false,
+                cnOk = cnOk,
+                setOk = setOk,
+                confidence = confidence,
+            )
+        }
         val nameConflict = namePresent && !nameOk && !looksLikeMtgRulesNoise(nameGuess)
         // Italian OCR title vs English Scryfall name is common. Never trust set+cn alone
         // when the OCR title clearly disagrees (e.g. Divinatrice → Emrakul from +1/+1→cn=1).

@@ -1,6 +1,7 @@
 package com.scantrader.app
 
 import com.scantrader.app.data.model.CardLanguage
+import com.scantrader.app.data.model.Game
 import com.scantrader.app.ui.confirm.AutoSaveCommit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -126,5 +127,28 @@ class AutoSaveCommitTest {
                 fallback = CardLanguage.ENGLISH,
             ),
         )
+    }
+
+    @Test
+    fun unrecognizedMagicLanguageBlocksAutoSaveOnlyForMagic() {
+        assertTrue(AutoSaveCommit.languageBlocksAutoSave(Game.MTG, detectEnabled = true, recognized = false))
+        assertFalse(AutoSaveCommit.languageBlocksAutoSave(Game.MTG, detectEnabled = true, recognized = true))
+        // Detection switched off in settings: the old behaviour.
+        assertFalse(AutoSaveCommit.languageBlocksAutoSave(Game.MTG, detectEnabled = false, recognized = false))
+        // Pokémon and the other games are unchanged.
+        assertFalse(AutoSaveCommit.languageBlocksAutoSave(Game.POKEMON, detectEnabled = true, recognized = false))
+    }
+
+    @Test
+    fun theProposalIsThePreviousCardsLanguage() {
+        assertEquals(
+            CardLanguage.SPANISH,
+            AutoSaveCommit.previousCardLanguage(CardLanguage.SPANISH, CardLanguage.ITALIAN, CardLanguage.ENGLISH),
+        )
+        assertEquals(
+            CardLanguage.ITALIAN,
+            AutoSaveCommit.previousCardLanguage(null, CardLanguage.ITALIAN, CardLanguage.ENGLISH),
+        )
+        assertEquals(CardLanguage.ENGLISH, AutoSaveCommit.previousCardLanguage(null, null, CardLanguage.ENGLISH))
     }
 }

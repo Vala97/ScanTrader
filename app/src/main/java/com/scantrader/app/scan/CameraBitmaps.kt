@@ -25,22 +25,52 @@ object CameraBitmaps {
     )
 
     /**
-     * Landscape sensor buffers become portrait at 90° or 270°. That is the
-     * rotation the upright scans used (`rot=90`, `bmp=574x1280`).
-     * 0° and 180° leave the buffer landscape: CameraX took them from the
-     * accelerometer while the phone was flat, not from the portrait preview.
+     * The UI is locked to portrait 0°. The rotation that stands a landscape
+     * sensor buffer up to match that preview is the sensor mounting relative to
+     * [android.view.Surface.ROTATION_0] (`cameraInfo.getSensorRotationDegrees(ROTATION_0)`):
+     * 90 for the Pixel back camera, usually 270 for a front camera.
+     *
+     * [reportedDegrees] ([androidx.camera.core.ImageInfo.getRotationDegrees] or the JPEG
+     * EXIF tag) follows the accelerometer when CameraX is not pinned. Held over a
+     * table it can read the phone as upside down and report 270 on a 90 sensor,
+     * which turns the card 180°. With a known [sensorPortraitDegrees] that reading
+     * is ignored. Without one, the old guess stays (0/180 → 90, 90/270 kept).
      */
-    fun rotationForPortrait(reportedDegrees: Int, sourceWidth: Int, sourceHeight: Int): Int {
+    fun rotationForPortrait(
+        reportedDegrees: Int,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        sensorPortraitDegrees: Int? = null,
+    ): Int {
         val reported = Math.floorMod(reportedDegrees, 360)
         if (sourceWidth <= sourceHeight) return reported
+        val sensor = sensorPortraitDegrees?.let { Math.floorMod(it, 360) }
+        if (sensor == 90 || sensor == 270) return sensor
         return if (reported == 90 || reported == 270) reported else 90
     }
 
-    fun fromImageProxy(proxy: ImageProxy): Upright {
+    /**
+     * Rotation for a saved still. The decoded pixels ignore EXIF. A landscape
+     * JPEG gets the sensor portrait rotation, never the tilt-driven EXIF tag.
+     * A JPEG the camera already stood up (portrait pixels) is kept as is.
+     * Without a known sensor rotation the EXIF tag is used as before.
+     */
+    fun rotationForStill(
+        exifDegrees: Int,
+        pixelWidth: Int,
+        pixelHeight: Int,
+        sensorPortraitDegrees: Int?,
+    ): Int {
+        val sensor = sensorPortraitDegrees?.let { Math.floorMod(it, 360) }
+        if (sensor != 90 && sensor != 270) return Math.floorMod(exifDegrees, 360)
+        return if (pixelWidth > pixelHeight) sensor else 0
+    }
+
+    fun fromImageProxy(proxy: ImageProxy, sensorPortraitDegrees: Int? = null): Upright {
         val reported = proxy.imageInfo.rotationDegrees
         val source = proxy.toBitmap()
         val sourceSize = Size(source.width, source.height)
-        val rotation = rotationForPortrait(reported, source.width, source.height)
+        val rotation = rotationForPortrait(reported, source.width, source.height, sensorPortraitDegrees)
         val upright = rotate(source, rotation)
         val rect = proxy.cropRect
         val fullBuffer = rect.left <= 0 &&
@@ -71,9 +101,11 @@ object CameraBitmaps {
         return finish(cropped, rotation, reported, sourceSize, cropApplied = true)
     }
 
-    fun fromJpegFile(path: String): Bitmap? {
+    data class Still(val bitmap: Bitmap, val exifDegrees: Int, val rotationDegrees: Int)
+
+    fun fromJpegFile(path: String, sensorPortraitDegrees: Int? = null): Still? {
         val bitmap = BitmapFactory.decodeFile(path) ?: return null
-        val degrees = when (
+        val exif = when (
             ExifInterface(path).getAttributeInt(
                 ExifInterface.TAG_ORIENTATION,
                 ExifInterface.ORIENTATION_NORMAL,
@@ -84,7 +116,8 @@ object CameraBitmaps {
             ExifInterface.ORIENTATION_ROTATE_270 -> 270
             else -> 0
         }
-        return ensurePortrait(rotate(bitmap, degrees))
+        val degrees = rotationForStill(exif, bitmap.width, bitmap.height, sensorPortraitDegrees)
+        return Still(ensurePortrait(rotate(bitmap, degrees)), exif, degrees)
     }
 
     /** A landscape analysis or still buffer is stood up before the card crop. */
