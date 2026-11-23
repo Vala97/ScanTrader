@@ -30,11 +30,14 @@ class LocalSetCatalog(
     private val log: (String) -> Unit = { ScanDebug.d(it) },
 ) {
     private val gson = Gson()
-    private val memoryMtg = ConcurrentHashMap<String, MtgSetSnapshot>()
-    private val memoryPokemon = ConcurrentHashMap<String, PokemonSetSnapshot>()
+    private val memoryMtg = BoundedCache<String, MtgSetSnapshot>(MEMORY_SETS)
+    private val memoryPokemon = BoundedCache<String, PokemonSetSnapshot>(MEMORY_SETS)
     private val inflight = ConcurrentHashMap<String, Job>()
     private val failedAt = ConcurrentHashMap<String, Long>()
-    private val nameCache = ConcurrentHashMap<String, Pair<Long, List<String>>>()
+    private val nameCache = BoundedCache<String, Pair<Long, List<String>>>(NAME_CACHE_ENTRIES)
+
+    /** Magic set snapshots currently held in memory (tests). */
+    internal val mtgSetsInMemory: Int get() = memoryMtg.size
 
     fun mtgSnapshot(setCode: String): MtgSetSnapshot? {
         val code = canonicalMtg(setCode) ?: return null
@@ -347,7 +350,7 @@ class LocalSetCatalog(
         val stamp = files.maxOfOrNull { it.lastModified() } ?: 0L
         val key = "pkm:$id"
         nameCache[key]?.takeIf { it.first == stamp }?.let { return it.second }
-        val fromMemory = memoryPokemon.values
+        val fromMemory = memoryPokemon.values()
             .filter { it.setId == id }
             .map { it.setName }
         val fromDisk = files.mapNotNull { file ->
@@ -374,6 +377,9 @@ class LocalSetCatalog(
         const val SOFT_MS = 14L * 24 * 60 * 60 * 1000
         const val HARD_MS = 30L * 24 * 60 * 60 * 1000
         private const val FAIL_BACKOFF_MS = 60_000L
+        /** Set snapshots kept in memory (LRU). Others are read from disk again. */
+        const val MEMORY_SETS = 8
+        private const val NAME_CACHE_ENTRIES = 64
         private const val VERSION = 1
 
         fun canonicalMtg(raw: String?): String? {

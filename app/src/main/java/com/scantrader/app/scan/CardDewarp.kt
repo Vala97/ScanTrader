@@ -46,6 +46,60 @@ object CardDewarp {
     }
 
     /**
+     * Part of the source the guide quad needs: its bounding box, scaled down so
+     * the long side is at most [maxSide]. A full-size still (3072×4080) is never
+     * copied whole into the heap; an analysis frame keeps scale 1.
+     */
+    data class SourceRegion(
+        val left: Int,
+        val top: Int,
+        val width: Int,
+        val height: Int,
+        /** Region pixels per source pixel (≤ 1). */
+        val scale: Float,
+    ) {
+        val scaledWidth: Int get() = (width * scale).roundToInt().coerceAtLeast(2)
+        val scaledHeight: Int get() = (height * scale).roundToInt().coerceAtLeast(2)
+
+        /** [corners] moved into a region image of [imageWidth]×[imageHeight]. */
+        fun mapCorners(
+            corners: FloatArray,
+            imageWidth: Int = scaledWidth,
+            imageHeight: Int = scaledHeight,
+        ): FloatArray {
+            val sx = imageWidth.toFloat() / width
+            val sy = imageHeight.toFloat() / height
+            return FloatArray(corners.size) { i ->
+                if (i % 2 == 0) (corners[i] - left) * sx else (corners[i] - top) * sy
+            }
+        }
+    }
+
+    fun sourceRegion(corners: FloatArray, sourceWidth: Int, sourceHeight: Int, maxSide: Int = MAX_SIDE): SourceRegion {
+        require(corners.size == 8)
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        for (i in 0 until 4) {
+            minX = minOf(minX, corners[i * 2])
+            maxX = maxOf(maxX, corners[i * 2])
+            minY = minOf(minY, corners[i * 2 + 1])
+            maxY = maxOf(maxY, corners[i * 2 + 1])
+        }
+        val left = kotlin.math.floor(minX).toInt().coerceIn(0, sourceWidth - 1)
+        val top = kotlin.math.floor(minY).toInt().coerceIn(0, sourceHeight - 1)
+        // +1: bilinear sampling at the far corner also reads the next pixel.
+        val right = (kotlin.math.ceil(maxX).toInt() + 1).coerceIn(left + 1, sourceWidth)
+        val bottom = (kotlin.math.ceil(maxY).toInt() + 1).coerceIn(top + 1, sourceHeight)
+        val width = right - left
+        val height = bottom - top
+        val longest = maxOf(width, height)
+        val scale = if (longest > maxSide) maxSide.toFloat() / longest else 1f
+        return SourceRegion(left, top, width, height, scale)
+    }
+
+    /**
      * Guide quad on [source], or null when the preview size is unknown.
      * Does not fall back to [CardFrameGeometry.cropBitmap].
      */
@@ -61,9 +115,35 @@ object CardDewarp {
             viewWidth,
             viewHeight,
         ) ?: return null
-        val pixels = IntArray(source.width * source.height)
-        source.getPixels(pixels, 0, source.width, 0, 0, source.width, source.height)
-        val warped = warp(Image(source.width, source.height, pixels), corners)
+        val region = sourceRegion(corners, source.width, source.height)
+        val image = if (region.scale < 1f) {
+            val scaled = Bitmap.createBitmap(
+                source,
+                region.left,
+                region.top,
+                region.width,
+                region.height,
+                android.graphics.Matrix().apply {
+                    setScale(
+                        region.scaledWidth.toFloat() / region.width,
+                        region.scaledHeight.toFloat() / region.height,
+                    )
+                },
+                true,
+            )
+            try {
+                val pixels = IntArray(scaled.width * scaled.height)
+                scaled.getPixels(pixels, 0, scaled.width, 0, 0, scaled.width, scaled.height)
+                Image(scaled.width, scaled.height, pixels)
+            } finally {
+                if (scaled !== source) scaled.recycle()
+            }
+        } else {
+            val pixels = IntArray(region.width * region.height)
+            source.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)
+            Image(region.width, region.height, pixels)
+        }
+        val warped = warp(image, region.mapCorners(corners, image.width, image.height))
         var bitmap = Bitmap.createBitmap(
             warped.pixels,
             warped.width,
@@ -183,5 +263,9 @@ object CardDewarp {
         return (mix(24) shl 24) or (mix(16) shl 16) or (mix(8) shl 8) or mix(0)
     }
 
-    private const val MAX_SIDE = 2048
+    /**
+     * Longest side the straightened card may have. Milo embeds at 448 px, so
+     * 900 keeps detail while a full-size still stays a few MB on the heap.
+     */
+    const val MAX_SIDE = 900
 }
