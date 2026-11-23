@@ -133,10 +133,11 @@ class EmbeddingCatalog private constructor(
                 require(version == VERSION) { "Unsupported stcat version $version" }
                 val count = input.readInt()
                 val dim = input.readInt()
-                val embeddings = FloatArray(count * dim)
-                for (i in embeddings.indices) {
-                    embeddings[i] = input.readFloat()
+                require(count >= 0 && dim > 0 && count.toLong() * dim <= Int.MAX_VALUE) {
+                    "Bad stcat size $count x $dim"
                 }
+                // Bulk read: one readFloat per value took ~14 s for Magic.
+                val embeddings = NpyReader.readFloats(input, count * dim, order = java.nio.ByteOrder.BIG_ENDIAN)
                 val ids = Array(count) {
                     val len = input.readUnsignedShort()
                     val bytes = ByteArray(len)

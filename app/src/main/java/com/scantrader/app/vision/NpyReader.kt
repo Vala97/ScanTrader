@@ -52,10 +52,15 @@ object NpyReader {
      * Little-endian float32s read in 64 KB chunks straight into the result, so a
      * 60 MB catalog does not also need a 60 MB byte copy on the heap.
      */
-    internal fun readFloats(input: InputStream, count: Int, chunkBytes: Int = 64 * 1024): FloatArray {
+    internal fun readFloats(
+        input: InputStream,
+        count: Int,
+        chunkBytes: Int = 64 * 1024,
+        order: ByteOrder = ByteOrder.LITTLE_ENDIAN,
+    ): FloatArray {
         val data = FloatArray(count)
         val chunk = ByteArray((chunkBytes / 4).coerceAtLeast(1) * 4)
-        val view = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN)
+        val view = ByteBuffer.wrap(chunk).order(order)
         var done = 0
         while (done < count) {
             val n = minOf(count - done, chunk.size / 4)

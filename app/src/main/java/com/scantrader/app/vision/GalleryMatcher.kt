@@ -123,12 +123,9 @@ class GalleryMatcher(
         shot: ShotClock?,
     ): List<Pair<String, Float>> = withContext(Dispatchers.Default) {
         val t0 = System.currentTimeMillis()
-        if (!pack.ensureLoaded(game)) {
-            com.scantrader.app.scan.ScanDebug.w("gallery: neural pack ensureLoaded=false game=$game")
-            return@withContext emptyList()
-        }
+        // Local reference: a game switch during the scan cannot pull it away.
+        val catalog = pack.catalogWithin(game, GalleryResidency.SCAN_WAIT_MS)
         val embedder = pack.embedderOrNull()
-        val catalog = pack.catalogOrNull(game)
         if (embedder == null || catalog == null) {
             com.scantrader.app.scan.ScanDebug.w("gallery: embedder/catalog null after load game=$game")
             return@withContext emptyList()

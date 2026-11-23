@@ -33,6 +33,41 @@ class EmbeddingCatalogStcatTest {
     }
 
     @Test
+    fun bulkLoadReadsTheSameValuesAcrossChunks() {
+        // 300 x 128 floats = 150 KB: several 64 KB chunks and a partial one.
+        val rows = 300
+        val dim = EmbeddingCatalog.EMBED_DIM
+        fun value(i: Int) = ((i * 37) % 1001 - 500) / 97f
+        val tmp = File.createTempFile("bulk", ".stcat")
+        try {
+            java.io.DataOutputStream(tmp.outputStream().buffered()).use { out ->
+                out.write("STCAT10\u0000".toByteArray(Charsets.US_ASCII))
+                out.writeInt(1)
+                out.writeInt(rows)
+                out.writeInt(dim)
+                for (i in 0 until rows * dim) out.writeFloat(value(i))
+                for (r in 0 until rows) {
+                    val bytes = "id-$r".toByteArray(Charsets.UTF_8)
+                    out.writeShort(bytes.size)
+                    out.write(bytes)
+                }
+            }
+            val loaded = EmbeddingCatalog.load(tmp)
+            assertEquals(rows, loaded.size)
+            assertEquals("id-299", loaded.cardIds.last())
+            for (col in listOf(0, 1, 63, 127)) {
+                val query = FloatArray(dim) { if (it == col) 1f else 0f }
+                val scores = loaded.search(query, topK = rows).associate { it.cardId to it.score }
+                for (r in 0 until rows) {
+                    assertEquals(value(r * dim + col), scores.getValue("id-$r"), 0f)
+                }
+            }
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    @Test
     fun loadsSmokePokemonStcatIfPresent() {
         val smoke = File("../tools/build_pokemon_stcat/pokemon-smoke.stcat")
             .takeIf { it.isFile }

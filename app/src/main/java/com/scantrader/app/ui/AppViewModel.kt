@@ -582,7 +582,7 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
 
     fun loadNeuralPack() {
         viewModelScope.launch {
-            app.neuralPack.ensureLoaded()
+            // Settings only reads the status: galleries load for the chosen game.
             app.neuralPack.refreshMtgIndex()
         }
     }
@@ -881,6 +881,9 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         // One Piece, Dragon Ball, Yu-Gi-Oh!, Union Arena: galleria visiva in background (resta sul telefono)
         if (value in app.ctGames && com.scantrader.app.BuildConfig.CT_GALLERY_URL.isNotBlank()) {
             viewModelScope.launch { app.neuralPack.ensureCtGallery(value, com.scantrader.app.BuildConfig.CT_GALLERY_URL) }
+        } else {
+            // Only the chosen game's gallery stays in memory; the others are dropped.
+            viewModelScope.launch { app.neuralPack.useOnly(value) }
         }
     }
 
