@@ -5,8 +5,26 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it-IT/1.1.0/).
 
 ## [Non rilasciato]
 
+## [0.6] - 2026-11-23
+
+### Aggiunto
+- Magic: la lingua si riconosce per gioco, dalla sigla accanto al numero di collezione (`0309 R / LCC • IT`) e dalle parole stampate nel tipo e nel testo delle regole (IT/EN/ES, in parte FR/DE/PT, diciture delle carte vecchie comprese). Giapponese e cinese si riconoscono dalla scrittura. Il nome da solo non decide la lingua e non si scaricano più i nomi in tutte le lingue. Senza segnali chiari la conferma mostra «Lingua non riconosciuta · scegli tu» e la carta non si salva da sola (#44).
+- Interruttore «Log diagnostici» in Impostazioni, spento di default (#48).
+
+### Cambiato
+- Magic: decidono l'immagine, il set e il numero; il nome letto serve solo a sciogliere un pareggio (#44).
+- In memoria resta solo la galleria del gioco scelto. All'avvio si carica solo l'ultimo gioco usato, le Impostazioni non caricano gallerie e i cataloghi `.stcat` si leggono a blocchi: la galleria Magic si carica in circa 3 s invece di 14 (#47).
+- Nella release restano nel log solo la riga `decision`, gli avvisi e gli errori; il resto torna con «Log diagnostici» (#48).
+- Il backup di Android e il trasferimento tra telefoni escludono token e password cifrati, pack e gallerie (`vision/`), cataloghi Riftbound e CardTrader, lo stato del DLS Tracker e il database di WorkManager. Collezione e impostazioni restano nel backup (#48).
+
 ### Corretto
-- Il catalogo Magic (e Pokémon) include solo i set già usciti. La versione e l'ultimo set non usano le anteprime future, e un set già pubblicato si aggiorna se arrivano carte nuove. Una esecuzione manuale può ripubblicare anche senza un set nuovo.
+- Le carte inquadrate in verticale non vengono più lette capovolte nell'APK firmato: la rotazione arriva dal montaggio del sensore (#44).
+- Magic: il titolo non viene mai preso da copyright, artista, anno, numero di collezione o riga set+lingua (#44).
+- OCR: le immagini si liberano solo dopo che ML Kit ha finito (#44).
+- La scansione manuale non esaurisce più la memoria: raddrizzamento su un'immagine più piccola, foto decodificate a circa 2000 px, ritagli liberati, cache limitate e un messaggio chiaro se la memoria finisce lo stesso (#46).
+- Il catalogo Magic (e Pokémon) include solo i set già usciti. La versione e l'ultimo set non usano le anteprime future, e un set già pubblicato si aggiorna se arrivano carte nuove. Una esecuzione manuale può ripubblicare anche senza un set nuovo (#42).
+- «Ultimo set» di Magic preferisce il set principale quando più set escono lo stesso giorno (Star Trek invece di Star Trek Tokens) (#43).
+- L'aggiornamento giornaliero del catalogo Pokémon non si interrompe più sul formato del conteggio carte di TCGdex (#45).
 
 ## [0.5.2] - 2026-11-17
 
