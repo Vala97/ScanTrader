@@ -524,6 +524,11 @@ class SettingsViewModel(private val app: ScanTraderApp) : ViewModel() {
         viewModelScope.launch { app.prefs.setShowDebugInfo(enabled) }
     }
 
+    fun setDiagnosticLogs(enabled: Boolean) {
+        com.scantrader.app.scan.ScanDebug.diagnosticLogs = enabled
+        viewModelScope.launch { app.prefs.setDiagnosticLogs(enabled) }
+    }
+
     fun setRecognitionSound(enabled: Boolean) {
         viewModelScope.launch { app.prefs.setRecognitionSound(enabled) }
     }
@@ -2320,7 +2325,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                     "cnOk=${gate.cnOk} setOk=${gate.setOk} countOk=${gate.countOk} " +
                     "shortCn=${gate.shortCn} conf=${gate.confidence}",
             )
-            com.scantrader.app.scan.ScanDebug.d(
+            com.scantrader.app.scan.ScanDebug.decision(
                 "decision ocr=${parsed.nameGuess.orEmpty()} candidate=${top?.name.orEmpty()} " +
                     "set=${top?.setCode.orEmpty()} cn=${top?.collectorNumber.orEmpty()} " +
                     "reason=${gate.reason} autosave=${requireMatch && acceptAuto}",

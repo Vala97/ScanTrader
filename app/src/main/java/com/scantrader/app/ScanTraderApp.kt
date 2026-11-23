@@ -126,6 +126,10 @@ class ScanTraderApp : Application(), ImageLoaderFactory {
         scryfallEur = ScryfallEurPrices(scryfall)
         secrets = SecretStore(this)
         prefs = UserPreferences(this)
+        // «Log diagnostici»: detailed logcat lines in release follow the saved switch.
+        appScope.launch {
+            prefs.defaults.collect { com.scantrader.app.scan.ScanDebug.diagnosticLogs = it.diagnosticLogs }
+        }
         val cardTraderApi = NetworkModule.retrofit(
             "https://api.cardtrader.com/api/v2/",
             NetworkModule.cardTraderClient { secrets.getCardTraderToken() },

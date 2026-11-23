@@ -38,6 +38,7 @@ class UserPreferences(private val context: Context) {
                 ?.takeIf { it in AUTO_SAVE_CONFIDENCE_RANGE }
                 ?: AUTO_SAVE_CONFIDENCE_DEFAULT,
             showDebugInfo = prefs[SHOW_DEBUG_INFO] ?: false,
+            diagnosticLogs = prefs[DIAGNOSTIC_LOGS] ?: false,
             neuralPromptShown = prefs[NEURAL_PROMPT_SHOWN] ?: false,
             onboardingCompleted = prefs[ONBOARDING_COMPLETED] ?: false,
             autoUpdateCheck = prefs[AUTO_UPDATE_CHECK] ?: true,
@@ -86,6 +87,10 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setShowDebugInfo(enabled: Boolean) {
         context.dataStore.edit { it[SHOW_DEBUG_INFO] = enabled }
+    }
+
+    suspend fun setDiagnosticLogs(enabled: Boolean) {
+        context.dataStore.edit { it[DIAGNOSTIC_LOGS] = enabled }
     }
 
     suspend fun setRecognitionSound(enabled: Boolean) {
@@ -197,6 +202,7 @@ class UserPreferences(private val context: Context) {
         val DETECT_LANGUAGE = booleanPreferencesKey("detect_card_language")
         val AUTO_SAVE_CONFIDENCE = intPreferencesKey("auto_save_confidence_percent")
         val SHOW_DEBUG_INFO = booleanPreferencesKey("show_debug_info")
+        val DIAGNOSTIC_LOGS = booleanPreferencesKey("diagnostic_logs")
         val NEURAL_PROMPT_SHOWN = booleanPreferencesKey("neural_prompt_shown")
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val AUTO_UPDATE_CHECK = booleanPreferencesKey("auto_update_check")
@@ -237,6 +243,8 @@ data class ScanDefaults(
     val autoSaveConfidencePercent: Int = AUTO_SAVE_CONFIDENCE_DEFAULT,
     /** Technical confirm copy, such as the «Conferma a mano» banner. */
     val showDebugInfo: Boolean = false,
+    /** Detailed `ScanTrader` logcat lines in release builds. Debug builds always log. */
+    val diagnosticLogs: Boolean = false,
     /** The first-launch pack dialog was answered. Skips the introduction. */
     val neuralPromptShown: Boolean = false,
     /** The introduction was finished, skipped, or replaced an answered pack prompt. */
