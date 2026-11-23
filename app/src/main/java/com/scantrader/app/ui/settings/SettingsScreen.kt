@@ -189,6 +189,26 @@ fun SettingsScreen(
                         onCheckedChange = viewModel::setShowDebugInfo,
                     )
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Log diagnostici")
+                        Text(
+                            "Scrive nel log di sistema (logcat) tutti i dettagli di ogni scansione, " +
+                                "per capire un riconoscimento sbagliato. Spento: solo la decisione, " +
+                                "avvisi ed errori. Mai token, prezzi o collezione.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = defaults.diagnosticLogs,
+                        onCheckedChange = viewModel::setDiagnosticLogs,
+                    )
+                }
                 if (appUpdate.githubSelfUpdate) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),

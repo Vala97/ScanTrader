@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older (fullBackupContent). Keep in sync with data_extraction_rules.xml. -->
+<full-backup-content>
+    <!-- Everything else is kept, including the collection (scantrader.db) and the settings (datastore/). -->
+    <!-- Encrypted with a Keystore key that never leaves the phone. -->
+    <exclude domain="sharedpref" path="scantrader_secrets.xml" />
+    <!-- Packs, galleries and catalogs: large and downloaded again. Tracker state stays on this phone. -->
+    <exclude domain="file" path="vision" />
+    <exclude domain="file" path="riftbound" />
+    <exclude domain="file" path="tracker" />
+    <exclude domain="file" path="catalogo-onepiece" />
+    <exclude domain="file" path="catalogo-dragonball" />
+    <exclude domain="file" path="catalogo-yugioh" />
+    <exclude domain="file" path="catalogo-unionarena" />
+    <exclude domain="database" path="androidx.work.workdb" />
+    <exclude domain="database" path="androidx.work.workdb-wal" />
+    <exclude domain="database" path="androidx.work.workdb-shm" />
+</full-backup-content>
