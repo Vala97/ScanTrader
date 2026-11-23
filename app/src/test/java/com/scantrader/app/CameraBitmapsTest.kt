@@ -63,7 +63,9 @@ class CameraBitmapsTest {
         assertEquals(90, CameraBitmaps.rotationForPortrait(180, 1280, 960))
         assertEquals(90, CameraBitmaps.rotationForPortrait(0, 1280, 960))
         assertEquals(90, CameraBitmaps.rotationForPortrait(90, 1280, 960))
-        assertEquals(270, CameraBitmaps.rotationForPortrait(270, 1280, 960))
+        // 270 on a 90° back sensor is the tilt sensor reading the phone upside down.
+        // The portrait lock uses the sensor mounting, so the card is not turned 180°.
+        assertEquals(90, CameraBitmaps.rotationForPortrait(270, 1280, 960, sensorPortraitDegrees = 90))
         // Already portrait: keep the reported quarter turn.
         assertEquals(180, CameraBitmaps.rotationForPortrait(180, 574, 1280))
 

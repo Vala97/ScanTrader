@@ -313,6 +313,48 @@ class CatalogLookupTest {
     }
 
     @Test
+    fun setAndNumberHitIsKeptForTheImageWhenTheOcrNameFindsNothing() = runBlocking {
+        val glade = ScryfallCard(
+            id = "f9ae7693-a6b5-42f8-9f05-c0643b95a710",
+            name = "You Happen On a Glade",
+            set = "afr",
+            setName = "Adventures in the Forgotten Realms",
+            collectorNumber = "214",
+        )
+        val api = object : ScryfallApi {
+            override suspend fun cardBySetAndNumber(set: String, number: String): ScryfallCard {
+                if (set == "afr" && number == "214") return glade
+                throw notFound()
+            }
+
+            override suspend fun cardBySetNumberLang(set: String, number: String, lang: String): ScryfallCard =
+                throw notFound()
+
+            override suspend fun cardById(id: String): ScryfallCard = error("unused")
+
+            override suspend fun search(query: String, unique: String): ScryfallSearchResponse = throw notFound()
+
+            override suspend fun namedFuzzy(fuzzy: String): ScryfallCard = throw notFound()
+
+            override suspend fun namedFuzzyInSet(fuzzy: String, set: String): ScryfallCard = throw notFound()
+        }
+        val lookup = CatalogLookup(
+            ScryfallClient(api, ScryfallGate(minSpacingMs = 0L, now = { 0L })),
+            emptyTcgdex(),
+        )
+        // The OCR title names another card. Set+number is not vetoed: it stays, at
+        // the low id-only score, so the gallery can confirm it.
+        val hits = lookup.identify(
+            Game.MTG,
+            ParsedCardText(nameGuess = "Ravening Warg", collectorNumber = "214", setCode = "afr"),
+        )
+        assertEquals(1, hits.size)
+        assertEquals("You Happen On a Glade", hits.first().name)
+        assertEquals("214", hits.first().collectorNumber)
+        assertTrue((hits.first().ocrScore ?: 1f) < 0.8f)
+    }
+
+    @Test
     fun goblinTownUsesHob65AndDoesNotSearchNchar() = runBlocking {
         val idCalls = mutableListOf<String>()
         val fuzzyCalls = mutableListOf<String>()
@@ -402,7 +444,10 @@ class CatalogLookupTest {
             Game.MTG,
             ParsedCardText(nameGuess = "nchar", collectorNumber = "65", setCode = "hob"),
         )
-        assertTrue(fragment.isEmpty())
+        // `nchar` is not a title. The hob/65 printing is not dropped for it: it comes
+        // back at the low id-only score and the gallery / gate decide.
+        assertTrue(fragment.size <= 1)
+        assertTrue(fragment.all { it.collectorNumber == "65" && (it.ocrScore ?: 1f) < 0.8f })
         assertTrue(fuzzyCalls.none { it.equals("nchar", ignoreCase = true) })
         assertTrue(fuzzySetCalls.none { it.contains("nchar") })
     }

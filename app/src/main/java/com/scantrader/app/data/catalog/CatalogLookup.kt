@@ -19,6 +19,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import retrofit2.HttpException
 
+/** Set+number hit whose title disagrees with OCR: below every name or id score, image decides. */
+private const val ID_NAME_MISMATCH_SCORE = 0.70f
+
 class CatalogLookup(
     private val scryfall: ScryfallClient,
     private val tcgdex: TcgdexApi,
@@ -83,7 +86,7 @@ class CatalogLookup(
                     "catalog timeout ${networkTimeoutMs}ms, using local",
                 )
             }
-            return resolveMtgLocal(parsed, name, setCandidates, number, nameAttempts)
+            return resolveMtgLocal(parsed, name, setCandidates, number, nameAttempts, useIdFallback = true)
                 ?.also { rememberSets(Game.MTG, it) }
                 .orEmpty()
         }
@@ -103,6 +106,7 @@ class CatalogLookup(
     ): List<IdentifiedCard> {
         val lang = parsed.printedLang?.trim()?.lowercase(Locale.ROOT)
             ?.takeIf { it.isNotEmpty() && it != "en" }
+        var idFallback: IdentifiedCard? = null
         for (set in sets) {
             if (lang != null) {
                 val local = runCatching {
@@ -117,8 +121,9 @@ class CatalogLookup(
             if (mtgIdAgrees(card, name, number)) return listOf(card.asIdentified(ocrScore = 0.98f))
             val localized = localizedIdHit(card, name, parsed.printedLang)
             if (localized != null) return listOf(localized)
+            if (idFallback == null) idFallback = idHitDespiteName(card.asIdentified(ocrScore = ID_NAME_MISMATCH_SCORE), name)
         }
-        return emptyList()
+        return listOfNotNull(idFallback)
     }
 
     /** Known codes, plus a 3-letter code the local set list does not have yet. */
@@ -140,6 +145,7 @@ class CatalogLookup(
         // Set + collector only when the returned title agrees with OCR.
         // hob/36 is Elrond when the card reads Ravening Warg — do not keep it.
         var preferNumber = number
+        var idFallback: IdentifiedCard? = null
         for (set in setCandidates) {
             if (number.isNullOrBlank()) break
             val card = runCatching { scryfall.cardBySetAndNumber(set, number) }.orRethrowBusy()
@@ -149,6 +155,7 @@ class CatalogLookup(
             // on card_faces.printed_name (`Maestro di Spada Invaghito`).
             val localized = localizedIdHit(card, name, parsed.printedLang)
             if (localized != null) return listOf(localized)
+            if (idFallback == null) idFallback = idHitDespiteName(card.asIdentified(ocrScore = ID_NAME_MISMATCH_SCORE), name)
             preferNumber = null
         }
 
@@ -161,7 +168,7 @@ class CatalogLookup(
             )
             if (found.isNotEmpty()) return found
         }
-        return emptyList()
+        return listOfNotNull(idFallback)
     }
 
     /**
@@ -175,6 +182,7 @@ class CatalogLookup(
         setCandidates: List<String>,
         number: String?,
         nameAttempts: List<String>,
+        useIdFallback: Boolean = false,
     ): List<IdentifiedCard>? {
         val local = localSets ?: return null
         if (setCandidates.isEmpty()) return null
@@ -184,6 +192,7 @@ class CatalogLookup(
             snapshots += local.mtgSnapshot(set) ?: return null
         }
         var preferNumber = number
+        var idFallback: IdentifiedCard? = null
         if (!number.isNullOrBlank()) {
             for (snap in snapshots) {
                 val card = snap.defaultPrint(number)
@@ -197,6 +206,9 @@ class CatalogLookup(
                     local.logHit(snap.setCode, System.currentTimeMillis() - started)
                     return listOf(localized)
                 }
+                if (idFallback == null) {
+                    idFallback = card.asIdentifiedFromCache(snap.cards, ID_NAME_MISMATCH_SCORE)
+                }
                 preferNumber = null
             }
         }
@@ -204,6 +216,11 @@ class CatalogLookup(
             val found = nameFromCache(snapshots, searchName, preferNumber) ?: continue
             local.logHit(found.setCode, System.currentTimeMillis() - started)
             return listOf(found)
+        }
+        // Offline / timed out: the set+number printing still goes to the image
+        // check instead of being dropped for its title.
+        if (useIdFallback && idFallback != null) {
+            return listOf(idHitDespiteName(idFallback, name))
         }
         return null
     }
@@ -446,6 +463,20 @@ class CatalogLookup(
             )
         }
         return null
+    }
+
+    /**
+     * Set+number printing whose title does not match the OCR name. The name is a
+     * tiebreak, not a veto: the hit is kept at a low score, only when no name
+     * search found anything, and the gallery / gate decide whether it is the card
+     * (FrameNameGate.galleryAndCollectorAgree). With no image agreement it stays a conflict.
+     */
+    private fun idHitDespiteName(hit: IdentifiedCard, ocrName: String?): IdentifiedCard {
+        com.scantrader.app.scan.ScanDebug.d(
+            "catalog id kept despite name set=${hit.setCode} cn=${hit.collectorNumber} " +
+                "card=${hit.name} ocr=${ocrName.orEmpty()}",
+        )
+        return hit
     }
 
     private fun mtgIdAgrees(card: ScryfallCard, ocrName: String?, number: String? = null): Boolean {

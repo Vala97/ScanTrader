@@ -364,6 +364,7 @@ class GalleryMatcher(
             finish = com.scantrader.app.scan.CardFinish.from(finishes, frameEffects, promoTypes),
             ocrScore = ocrScore,
             visualScore = visualScore,
+            galleryScore = visualScore,
         )
 
     private fun formatEur(value: Double?): String? {
@@ -404,6 +405,8 @@ fun mergeHybridCandidates(
                 .takeIf { (existing.visualScore != null || card.visualScore != null) },
             ocrScore = maxOf(existing.ocrScore ?: 0f, card.ocrScore ?: 0f)
                 .takeIf { (existing.ocrScore != null || card.ocrScore != null) },
+            galleryScore = maxOf(existing.galleryScore ?: 0f, card.galleryScore ?: 0f)
+                .takeIf { (existing.galleryScore != null || card.galleryScore != null) },
             imageUrl = existing.imageUrl ?: card.imageUrl,
             priceEur = existing.priceEur ?: card.priceEur,
             priceEurFoil = existing.priceEurFoil ?: card.priceEurFoil,
