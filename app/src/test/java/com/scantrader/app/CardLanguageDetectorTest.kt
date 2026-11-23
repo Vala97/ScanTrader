@@ -39,6 +39,7 @@ class CardLanguageDetectorTest {
                 priceEur = "0.40",
             ),
             "Druido del Suolo Avvizzito",
+            ocrText = "Druido del Suolo Avvizzito\nCreatura — Elfo Druido\nTAPpa: Aggiungi un mana verde.",
         )
         assertEquals("it", stamped.printedLang)
         assertEquals("Blightsoil Druid", stamped.catalogName)

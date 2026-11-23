@@ -2188,7 +2188,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
                 com.scantrader.app.data.catalog.CardLanguageDetector.resolveCopyLanguage(
                     it,
                     ocrTitle,
-                    matched.printedLang,
+                    matched.collectorLang ?: matched.printedLang,
                     ocrText = text,
                 )
             }
@@ -2210,7 +2210,7 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             ) {
                 com.scantrader.app.scan.ScanDebug.d(
                     "${resolved.detection.logLine()} ocr=${ocrTitle.orEmpty()} " +
-                        "token=${matched.printedLang.orEmpty()} " +
+                        "token=${(matched.collectorLang ?: matched.printedLang).orEmpty()} " +
                         "printed=${copyTop?.printedLang} catalog=${copyTop?.catalogLang}",
                 )
             }
@@ -2376,6 +2376,17 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
             }
             if (requireMatch && acceptAuto && isPokemon) {
                 scheduleRulesOcr(croppedFull)
+            }
+            // Magic: no Latin words and no collector code may be a Japanese or Chinese
+            // print. One CJK read after the match, never on the scan path.
+            if (isMtg && handed == null && (!requireMatch || acceptAuto) && copyTop != null &&
+                com.scantrader.app.data.catalog.language.MagicLanguageStrategy.needsScriptPass(
+                    ocrTitle,
+                    app.scanSession.ocrText,
+                    matched.collectorLang ?: matched.printedLang,
+                )
+            ) {
+                scheduleScriptOcr(croppedFull)
             }
             if (requireMatch) acceptAuto || chooseVersion else true
             } finally {
@@ -2603,6 +2614,40 @@ class ScanViewModel(private val app: ScanTraderApp) : ViewModel() {
         }
     }
 
+    /** Japanese and Chinese recognizers on the whole card, for Magic script detection. Off the scan path. */
+    private fun scheduleScriptOcr(cardCrop: android.graphics.Bitmap) {
+        // Own copy: the scan may recycle its crop once this frame is done.
+        val scaled = downscaleForOcr(cardCrop, AUTO_FULL_MAX_SIDE)
+        val source = if (scaled === cardCrop) {
+            cardCrop.copy(android.graphics.Bitmap.Config.ARGB_8888, false) ?: return
+        } else {
+            scaled
+        }
+        val gen = ++app.scanSession.ocrGeneration
+        app.scanSession.rulesPending = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // CardOcr recycles [source] once both ML Kit tasks are done, even on cancel.
+                val script = runCatching { app.ocr.recognizeCjk(source, recycleWhenDone = true) }.getOrDefault("")
+                if (app.scanSession.ocrGeneration == gen && script.isNotBlank()) {
+                    val existing = app.scanSession.ocrText
+                    // Before the bottom block, so it is read as card text.
+                    val marker = "\n--- bottom ---\n"
+                    app.scanSession.ocrText = if (existing.contains(marker)) {
+                        existing.replaceFirst(marker, "\n" + script + marker)
+                    } else {
+                        existing + "\n" + script
+                    }
+                }
+                com.scantrader.app.scan.ScanDebug.d("lang: script pass chars=${script.length}")
+            } finally {
+                if (app.scanSession.ocrGeneration == gen) {
+                    app.scanSession.rulesPending = false
+                }
+            }
+        }
+    }
+
     private fun logTiming(stage: String, ocrMs: Long, catalogMs: Long, totalMs: Long) {
         com.scantrader.app.scan.ScanDebug.d(
             "timing: stage=$stage ocrMs=$ocrMs catalogMs=$catalogMs totalMs=$totalMs",
@@ -2722,15 +2767,16 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
     val liveLanguage = MutableStateFlow<CardLanguage?>(null)
     private val languageFrozen = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    suspend fun detectCardLanguage(card: IdentifiedCard): CardLanguage? {
+    suspend fun detectCardLanguage(card: IdentifiedCard): com.scantrader.app.ui.confirm.LanguageVerdict {
         // Yu-Gi-Oh!: la lingua e' nel codice stampato (POTD-IT003)
         if (card.game == Game.YUGIOH) {
             val printed = app.scanSession.parsed?.printedLang?.let { CardLanguage.fromCatalogCode(it) }
             if (printed != null) {
                 com.scantrader.app.scan.ScanDebug.d("autosave: wait lang 0ms source=printed")
-                return printed
+                return com.scantrader.app.ui.confirm.LanguageVerdict(printed, recognized = true)
             }
         }
+        if (card.game == Game.MTG) return detectMagicLanguage(card)
         val started = System.currentTimeMillis()
         fun elapsed() = System.currentTimeMillis() - started
         fun left() = (com.scantrader.app.ui.confirm.AutoSaveSchedule.LANGUAGE_WAIT_CAP_MS - elapsed()).coerceAtLeast(0)
@@ -2786,7 +2832,53 @@ class ConfirmViewModel(private val app: ScanTraderApp) : ViewModel() {
         )
         app.scanSession.language = best
         liveLanguage.value = best
-        return best
+        return com.scantrader.app.ui.confirm.LanguageVerdict(best, recognized = true)
+    }
+
+    /**
+     * Magic: collector code and printed words only, no printed-name download.
+     * Waits only while a script pass is in flight (capped). A miss proposes the
+     * previous card's language and reports it as not recognized.
+     */
+    private suspend fun detectMagicLanguage(card: IdentifiedCard): com.scantrader.app.ui.confirm.LanguageVerdict {
+        liveLanguage.value = null
+        val started = System.currentTimeMillis()
+        fun elapsed() = System.currentTimeMillis() - started
+        val cap = com.scantrader.app.ui.confirm.AutoSaveSchedule.LANGUAGE_WAIT_CAP_MS
+        var local = app.explainLocalLanguage(card)
+        while (
+            elapsed() < cap &&
+            local.language == null &&
+            com.scantrader.app.data.catalog.CardLanguageDetector.shouldWaitForRules(
+                game = card.game,
+                ocrName = app.scanSession.parsed?.nameGuess,
+                ocrText = app.scanSession.ocrText,
+                rulesPending = app.scanSession.rulesPending,
+                waitedMs = elapsed(),
+                capMs = cap,
+            )
+        ) {
+            delay(40)
+            local = app.explainLocalLanguage(card)
+        }
+        val recognized = local.language
+        val chosen = recognized ?: com.scantrader.app.ui.confirm.AutoSaveCommit.previousCardLanguage(
+            lastSaved = app.scanSession.lastSaved.value?.language,
+            session = app.scanSession.language,
+            fallback = defaults.value.language,
+        )
+        val parsedLang = app.scanSession.parsed
+        com.scantrader.app.scan.ScanDebug.d(
+            "autosave: wait lang ${elapsed()}ms source=${if (recognized != null) "ocr" else "unrecognized"} " +
+                "lang=${chosen.label} ocr=${parsedLang?.nameGuess.orEmpty()} " +
+                "token=${(parsedLang?.collectorLang ?: parsedLang?.printedLang).orEmpty()} " +
+                "evidence=${local.evidence.ifBlank { "none" }}",
+        )
+        if (recognized != null) {
+            app.scanSession.language = recognized
+            app.scanSession.languageEvidence = local.evidence
+        }
+        return com.scantrader.app.ui.confirm.LanguageVerdict(chosen, recognized = recognized != null)
     }
 
     private fun publishLateLanguage(detection: com.scantrader.app.data.catalog.CardLanguageDetector.Detection) {
@@ -2883,7 +2975,7 @@ private fun ScanTraderApp.explainLocalLanguage(
 ): com.scantrader.app.data.catalog.CardLanguageDetector.Detection {
     val ocrName = scanSession.parsed?.nameGuess
     val ocrText = scanSession.ocrText
-    val token = if (card.game == Game.MTG) scanSession.parsed?.printedLang else null
+    val token = if (card.game == Game.MTG) scanSession.parsed?.let { it.collectorLang ?: it.printedLang } else null
     return languageResolver.explainLocal(card, ocrName, ocrText, token)
 }
 
@@ -2895,7 +2987,7 @@ private suspend fun ScanTraderApp.detectLanguagePrinted(
     if (local.language != null) return local
     val ocrName = scanSession.parsed?.nameGuess
     val ocrText = scanSession.ocrText
-    val token = if (card.game == Game.MTG) scanSession.parsed?.printedLang else null
+    val token = if (card.game == Game.MTG) scanSession.parsed?.let { it.collectorLang ?: it.printedLang } else null
     val detection = try {
         languageResolver.explainPrinted(card, ocrName, ocrText, token)
     } catch (cancel: CancellationException) {

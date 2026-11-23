@@ -62,10 +62,48 @@ object FrameNameGate {
         ) {
             return true
         }
+        // Image + collector decide a Magic card; the OCR title is only a tiebreak.
+        // Gallery top and the same collector (and set, when read) is the card,
+        // whatever the title strip says (Italian title, copyright line, OCR crumbs).
+        // An id hit with no gallery score (Ravening Warg vs Elrond) stays a conflict.
         // Italian OCR vs the English gallery title is the same card when the
-        // collector matches. An English title that names a different card
-        // (Ravening Warg vs Elrond, no gallery score) stays a conflict.
-        return foreignGalleryAgrees(card, frame, frameName)
+        // collector matches (art score from either source, as before).
+        return galleryAndCollectorAgree(card, frame) || foreignGalleryAgrees(card, frame, frameName)
+    }
+
+    /**
+     * `Maestro di Spada Invaghi` is not an English title. When the gallery
+     * already picked this collector, that OCR is not a different card.
+     */
+    private fun foreignGalleryAgrees(
+        card: IdentifiedCard,
+        frame: ParsedCardText,
+        frameName: String,
+    ): Boolean {
+        if (card.game != Game.MTG) return false
+        val visual = card.visualScore ?: return false
+        // Same floor as GalleryMatcher.MIN_SCORE. Below it the hit is not the gallery top.
+        if (visual < 0.55f) return false
+        if (!looksLikeForeignTitle(frameName)) return false
+        return collectorMatches(card.collectorNumber, frame.collectorNumber)
+    }
+
+    /**
+     * Magic: the neural gallery picked this card ([IdentifiedCard.galleryScore] at
+     * or above the embedder floor; the art fingerprint ranker does not count) and
+     * the collector number read on the frame is its number. When a set code was
+     * read it has to agree too. The OCR name never vetoes this.
+     */
+    fun galleryAndCollectorAgree(card: IdentifiedCard, frame: ParsedCardText): Boolean {
+        if (card.game != Game.MTG) return false
+        val visual = card.galleryScore ?: return false
+        // Same floor as GalleryMatcher.MIN_SCORE. Below it the hit is not the gallery top.
+        if (visual < 0.55f) return false
+        if (!collectorMatches(card.collectorNumber, frame.collectorNumber)) return false
+        val sets = OcrParser.setCodeCandidates(frame.setCode)
+        if (sets.isEmpty()) return true
+        val cardSet = card.setCode.lowercase()
+        return sets.any { set -> cardSet == set || cardSet.startsWith(set) || set.startsWith(cardSet) }
     }
 
     /**
@@ -118,23 +156,6 @@ object FrameNameGate {
         if (raw.isNullOrBlank()) return emptyList()
         val parts = raw.split(Regex("""\s*//\s*""")).map { it.trim() }.filter { it.isNotBlank() }
         return if (parts.size <= 1) listOf(raw.trim()) else parts
-    }
-
-    /**
-     * `Maestro di Spada Invaghi` is not an English title. When the gallery
-     * already picked this collector, that OCR is not a different card.
-     */
-    private fun foreignGalleryAgrees(
-        card: IdentifiedCard,
-        frame: ParsedCardText,
-        frameName: String,
-    ): Boolean {
-        if (card.game != Game.MTG) return false
-        val visual = card.visualScore ?: return false
-        // Same floor as GalleryMatcher.MIN_SCORE. Below it the hit is not the gallery top.
-        if (visual < 0.55f) return false
-        if (!looksLikeForeignTitle(frameName)) return false
-        return collectorMatches(card.collectorNumber, frame.collectorNumber)
     }
 
     /** Italian / other printed-language function words, or an accented letter. */

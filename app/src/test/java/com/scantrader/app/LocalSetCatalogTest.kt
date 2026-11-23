@@ -150,8 +150,9 @@ class LocalSetCatalogTest {
                 Game.MTG,
                 ParsedCardText(nameGuess = "Ravening Warg", collectorNumber = "36", setCode = "eld"),
             )
-            // The cached printing is Elrond. The title disagrees, so it must not be accepted.
-            assertTrue(wrong.isEmpty())
+            // The cached printing is Elrond. The title disagrees: it is not an id hit
+            // any more, only the low id-only score the gallery has to confirm.
+            assertTrue(wrong.all { it.name == "Elrond" && (it.ocrScore ?: 1f) < 0.8f })
             assertTrue(idCalls.any { it == "eld/36" })
 
             idCalls.clear()

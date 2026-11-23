@@ -1,5 +1,8 @@
 package com.scantrader.app.data.catalog
 
+import com.scantrader.app.data.catalog.language.LanguageInput
+import com.scantrader.app.data.catalog.language.LanguageStrategies
+import com.scantrader.app.data.catalog.language.MagicLanguageStrategy
 import com.scantrader.app.data.model.CardLanguage
 import com.scantrader.app.data.model.Game
 import com.scantrader.app.data.model.IdentifiedCard
@@ -8,7 +11,8 @@ import java.util.Locale
 
 /**
  * Picks the confirm-screen language.
- * Magic compares the OCR title with printed names.
+ * Magic goes through [MagicLanguageStrategy] (collector code, then printed words;
+ * the name only breaks a tie). [explain] below is the Pokémon and default rule set.
  * Pokémon also reads rules words and script on the card (stage, weakness, evolve-from).
  * A tie or a weak score falls back to the last choice.
  */
@@ -190,8 +194,12 @@ object CardLanguageDetector {
      * The English catalog name, id, and price stay on the card: Morningtide has
      * no Italian Scryfall object, but the title printed on the card is still Italian.
      */
-    fun applyCopyLanguage(card: IdentifiedCard, ocrName: String?, collectorLang: String? = null): IdentifiedCard =
-        resolveCopyLanguage(card, ocrName, collectorLang).card
+    fun applyCopyLanguage(
+        card: IdentifiedCard,
+        ocrName: String?,
+        collectorLang: String? = null,
+        ocrText: String? = null,
+    ): IdentifiedCard = resolveCopyLanguage(card, ocrName, collectorLang, ocrText).card
 
     data class CopyLanguage(val card: IdentifiedCard, val detection: Detection)
 
@@ -209,33 +217,32 @@ object CardLanguageDetector {
         if (known != null && known != CardLanguage.ENGLISH && !card.printedName.isNullOrBlank()) {
             printed[known] = card.printedName
         }
-        val detection = explain(ocrName, english, printed, ocrText = ocrText, collectorLang = collectorLang)
-        val token = CardLanguage.fromCatalogCode(collectorLang.orEmpty())
-        val englishTitle = detection.language == CardLanguage.ENGLISH &&
-            detection.evidence.contains("name=en")
-        val englishToken = token == CardLanguage.ENGLISH
-        val namedOtherLanguage = detection.language != null &&
-            detection.language != CardLanguage.ENGLISH &&
-            detection.evidence.contains("name=")
-        if ((englishTitle || englishToken) && !namedOtherLanguage) {
-            val chosen = if (detection.language == CardLanguage.ENGLISH) {
-                detection
-            } else {
-                Detection(
-                    CardLanguage.ENGLISH,
-                    listOfNotNull(detection.evidence.ifBlank { null }, "collector=en").joinToString(","),
-                )
-            }
-            val stamped = if (card.printedLang.equals("en", ignoreCase = true)) card else card.copy(printedLang = "en")
-            return CopyLanguage(stamped, chosen)
-        }
+        // Magic: collector code and printed words. The title alone never stamps a language.
+        val detection = MagicLanguageStrategy.explain(
+            LanguageInput(
+                ocrName = ocrName,
+                englishName = english,
+                printed = printed,
+                ocrText = ocrText,
+                collectorLang = collectorLang,
+            ),
+        )
         val code = detection.language?.scryfallLang() ?: return CopyLanguage(card, detection)
         if (code.equals(card.printedLang, ignoreCase = true)) return CopyLanguage(card, detection)
-        if (!card.printedLang.isNullOrBlank() && detection.language == CardLanguage.ENGLISH) {
-            return CopyLanguage(card, detection)
-        }
         return CopyLanguage(card.copy(printedLang = code), detection)
     }
+
+    /** Detection routed through the game's own strategy ([LanguageStrategies]). */
+    fun explainFor(
+        game: Game,
+        ocrName: String?,
+        englishName: String?,
+        printed: Map<CardLanguage, String>,
+        ocrText: String? = null,
+        collectorLang: String? = null,
+    ): Detection = LanguageStrategies.forGame(game).explain(
+        LanguageInput(ocrName, englishName, printed, ocrText, collectorLang),
+    )
 
     /**
      * Magic collector token (`HOB • EN`). EN and the other codes are the print
@@ -513,7 +520,7 @@ object CardLanguageDetector {
 
     /**
      * A language the scan can hand to confirm. A title match, a trusted collector
-     * token, or a rules-title inference counts. An empty or kept result does not.
+     * token, a rules-title inference, or Magic printed words / script counts. An empty or kept result does not.
      */
     fun handedLanguage(detection: Detection?): CardLanguage? {
         val language = detection?.language ?: return null
@@ -521,6 +528,9 @@ object CardLanguageDetector {
         if (evidence.isBlank() || evidence == "none" || evidence == "kept") return null
         val confident = evidence.contains("name=") ||
             evidence.contains("collector=") ||
+            evidence.contains("text=") ||
+            evidence.contains("script=") ||
+            evidence.contains("tiebreak=") ||
             evidence.contains("title=")
         return language.takeIf { confident }
     }
