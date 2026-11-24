@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items as rowItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -203,6 +204,11 @@ fun CollectionScreen(
     val editing = liveEditing ?: heldEditing?.takeIf { editingId != null }
     val preview = cards.firstOrNull { it.id == previewId }
     val sections = browser.result.sections
+    val gridState = rememberLazyGridState()
+    val gridRows = remember(browser.result, browser.controls.sort, collapsed) {
+        collectionGridRows(browser.result, browser.controls.sort, collapsed)
+    }
+    val gridCardCount = remember(gridRows) { gridRows.count { it is CollectionGridRow.Card } }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -331,60 +337,67 @@ fun CollectionScreen(
                         )
                     }
                 } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 104.dp),
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        var lastGame: Game? = null
-                        sections.forEach { section ->
-                            if (browser.result.grouped) {
-                                // un'intestazione per gioco, poi le sue espansioni; tutte e due si chiudono toccandole
-                                val g = section.game
-                                if (g != null && g != lastGame) {
-                                    lastGame = g
-                                    val gameCopies = sections.filter { it.game == g }.sumOf { it.copies }
-                                    item(key = "game-${g.name}", span = { GridItemSpan(maxLineSpan) }, contentType = "game") {
-                                        GameHeader(g, gameCopies, open = "g:${g.name}" !in collapsed) {
-                                            collapsed = collapsed.toggle("g:${g.name}")
-                                        }
+                    val fastScroll = gridCardCount >= CollectionFastScrollMath.MIN_CARDS
+                    Box(Modifier.fillMaxSize()) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 104.dp),
+                            modifier = Modifier.fillMaxSize(),
+                            state = gridState,
+                            // A long collection keeps the right edge free for the fast-scroll bar.
+                            contentPadding = PaddingValues(
+                                start = 12.dp,
+                                top = 12.dp,
+                                bottom = 12.dp,
+                                end = if (fastScroll) 12.dp + CollectionFastScrollWidth else 12.dp,
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            // un'intestazione per gioco, poi le sue espansioni; tutte e due si chiudono toccandole
+                            items(
+                                gridRows,
+                                key = { it.key },
+                                span = { row -> if (row is CollectionGridRow.Card) GridItemSpan(1) else GridItemSpan(maxLineSpan) },
+                                contentType = { row ->
+                                    when (row) {
+                                        is CollectionGridRow.GameHeader -> "game"
+                                        is CollectionGridRow.SetHeader -> "header"
+                                        is CollectionGridRow.Card -> "card"
+                                    }
+                                },
+                            ) { row ->
+                                when (row) {
+                                    is CollectionGridRow.GameHeader -> GameHeader(row.game, row.copies, open = row.open) {
+                                        collapsed = collapsed.toggle(collectionGameCollapseKey(row.game))
+                                    }
+                                    is CollectionGridRow.SetHeader -> SectionHeader(row.section, open = row.open) {
+                                        collapsed = collapsed.toggle(collectionSectionCollapseKey(row.section))
+                                    }
+                                    is CollectionGridRow.Card -> {
+                                        val card = row.card
+                                        GalleryTile(
+                                            card = card,
+                                            selected = if (selecting) card.id in selected else null,
+                                            onClick = {
+                                                if (selecting) {
+                                                    selected = CollectionSelection.toggle(selected, card.id)
+                                                } else {
+                                                    editingId = card.id
+                                                }
+                                            },
+                                            onLongClick = {
+                                                if (selecting) {
+                                                    selected = CollectionSelection.toggle(selected, card.id)
+                                                } else {
+                                                    previewId = card.id
+                                                }
+                                            },
+                                        )
                                     }
                                 }
-                                if (g != null && "g:${g.name}" in collapsed) return@forEach
-                                item(
-                                    key = "section-${section.key}",
-                                    span = { GridItemSpan(maxLineSpan) },
-                                    contentType = "header",
-                                ) {
-                                    SectionHeader(section, open = "s:${section.key}" !in collapsed) {
-                                        collapsed = collapsed.toggle("s:${section.key}")
-                                    }
-                                }
-                                if ("s:${section.key}" in collapsed) return@forEach
-                            }
-                            items(section.cards, key = { it.id }, contentType = { _ -> "card" }) { card ->
-                                GalleryTile(
-                                    card = card,
-                                    selected = if (selecting) card.id in selected else null,
-                                    onClick = {
-                                        if (selecting) {
-                                            selected = CollectionSelection.toggle(selected, card.id)
-                                        } else {
-                                            editingId = card.id
-                                        }
-                                    },
-                                    onLongClick = {
-                                        if (selecting) {
-                                            selected = CollectionSelection.toggle(selected, card.id)
-                                        } else {
-                                            previewId = card.id
-                                        }
-                                    },
-                                )
                             }
                         }
+                        CollectionFastScroll(state = gridState, rows = gridRows, cardCount = gridCardCount)
                     }
                 }
             }
