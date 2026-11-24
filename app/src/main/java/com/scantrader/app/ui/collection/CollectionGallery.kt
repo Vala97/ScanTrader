@@ -277,7 +277,7 @@ private fun matchesCollectionQuery(
     return setNames[collectionSetKey(card)].orEmpty().any { foldMatch(it).contains(needle) }
 }
 
-private fun foldMatch(value: String): String {
+internal fun foldMatch(value: String): String {
     val stripped = Normalizer.normalize(value, Normalizer.Form.NFD)
         .replace(Regex("\\p{M}+"), "")
     return stripped.lowercase(Locale.ITALY)
